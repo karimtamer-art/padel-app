@@ -107,7 +107,10 @@ class _SignUpFlowState extends State<SignUpFlow> {
   }
 
   Future<void> _pickDob() async {
-    DateTime tempDate = _data.dob ?? DateTime(DateTime.now().year - 24);
+    // players must be at least 13 — mirrors the DB's profiles_dob_chk backstop
+    final now = DateTime.now();
+    final latestDob = DateTime(now.year - 13, now.month, now.day);
+    DateTime tempDate = _data.dob ?? DateTime(now.year - 24);
     await showCupertinoModalPopup<void>(
       context: context,
       builder: (_) => Container(
@@ -147,9 +150,9 @@ class _SignUpFlowState extends State<SignUpFlow> {
             Expanded(
               child: CupertinoDatePicker(
                 mode: CupertinoDatePickerMode.date,
-                initialDateTime: _data.dob ?? DateTime(DateTime.now().year - 24),
-                maximumDate: DateTime.now(),
-                minimumDate: DateTime(1940),
+                initialDateTime: _data.dob ?? DateTime(now.year - 24),
+                maximumDate: latestDob,
+                minimumDate: DateTime(now.year - 100, now.month, now.day),
                 onDateTimeChanged: (date) => tempDate = date,
               ),
             ),

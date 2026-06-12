@@ -633,3 +633,106 @@ end $$;
 
 grant execute on function public.generate_draw(uuid) to authenticated;
 grant execute on function public.record_bracket_winner(uuid, uuid, text) to authenticated;
+
+-- ============================================================
+-- Signup hardening — profile auto-create trigger.
+-- Fixes "Database error saving new user" from auth.signUp:
+--   • every column the trigger writes is guaranteed to exist
+--   • check constraints accept every value the app UI offers
+--     (gender 'other', court side 'both')
+--   • the trigger can never abort a signup — on any error it
+--     falls back to a minimal profile row and logs a warning
+-- ============================================================
+
+-- columns the app reads/writes on profiles (no-ops where they exist)
+alter table public.profiles add column if not exists name text;
+alter table public.profiles add column if not exists full_name text;
+alter table public.profiles add column if not exists avatar_url text;
+alter table public.profiles add column if not exists phone text;
+alter table public.profiles add column if not exists bio text;
+alter table public.profiles add column if not exists city text;
+alter table public.profiles add column if not exists dob date;
+alter table public.profiles add column if not exists date_of_birth date;
+alter table public.profiles add column if not exists gender text;
+alter table public.profiles add column if not exists hand text;
+alter table public.profiles add column if not exists preferred_hand text;
+alter table public.profiles add column if not exists court_side text;
+alter table public.profiles add column if not exists preferred_court_side text;
+alter table public.profiles add column if not exists elo int;
+alter table public.profiles add column if not exists level numeric;
+alter table public.profiles add column if not exists tier text;
+alter table public.profiles add column if not exists division_pts int;
+alter table public.profiles add column if not exists placement_played int;
+
+-- the sign-up form offers Male / Female / Other
+alter table public.profiles drop constraint if exists profiles_gender_chk;
+alter table public.profiles add constraint profiles_gender_chk
+  check (gender is null or gender in ('male','female','other'));
+
+-- the sign-up form offers Left / Right / Both
+alter table public.profiles drop constraint if exists profiles_side_chk;
+alter table public.profiles add constraint profiles_side_chk
+  check (preferred_court_side is null or preferred_court_side in ('left','right','both'));
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public as $$
+declare
+  v_name   text;
+  v_dob    date;
+  v_gender text;
+  v_hand   text;
+  v_side   text;
+begin
+  v_name := nullif(trim(coalesce(new.raw_user_meta_data->>'name',
+                                 new.raw_user_meta_data->>'full_name', '')), '');
+  -- bad or out-of-range birth dates become null instead of failing the insert
+  begin
+    v_dob := nullif(new.raw_user_meta_data->>'dob', '')::date;
+  exception when others then
+    v_dob := null;
+  end;
+  if v_dob is not null and (v_dob > current_date - interval '13 years'
+                         or v_dob < current_date - interval '100 years') then
+    v_dob := null;
+  end if;
+  v_gender := nullif(new.raw_user_meta_data->>'gender', '');
+  if v_gender not in ('male','female','other') then v_gender := null; end if;
+  v_hand := nullif(new.raw_user_meta_data->>'hand', '');
+  if v_hand not in ('right','left') then v_hand := null; end if;
+  v_side := nullif(new.raw_user_meta_data->>'court_side', '');
+  if v_side not in ('left','right','both') then v_side := null; end if;
+
+  begin
+    insert into public.profiles
+      (id, name, full_name, avatar_url, phone, bio,
+       dob, date_of_birth, gender,
+       hand, preferred_hand, court_side, preferred_court_side,
+       elo, level, tier, division_pts, placement_played)
+    values
+      (new.id, v_name, v_name,
+       new.raw_user_meta_data->>'avatar_url',
+       nullif(new.raw_user_meta_data->>'phone', ''),
+       nullif(new.raw_user_meta_data->>'bio', ''),
+       v_dob, v_dob, v_gender,
+       coalesce(v_hand, 'right'), v_hand,
+       coalesce(v_side, 'both'), v_side,
+       1000, 1.0, 'bronze', 0, 0)
+    on conflict (id) do nothing;
+  exception when others then
+    -- never block the signup: log and create a bare row instead
+    raise warning 'handle_new_user: % — inserting minimal profile for %', sqlerrm, new.id;
+    begin
+      insert into public.profiles (id) values (new.id) on conflict (id) do nothing;
+    exception when others then
+      raise warning 'handle_new_user minimal insert also failed: %', sqlerrm;
+    end;
+  end;
+  return new;
+end $$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
