@@ -6,10 +6,8 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
-import 'package:padel_clay/backend/models/ranking_scale.dart';
 import 'tournament_detail_screen.dart';
 
-/// Rankings (live podium + leaderboard) and Tournaments (live list).
 class TournamentsScreen extends StatefulWidget {
   const TournamentsScreen({super.key});
   @override
@@ -17,8 +15,6 @@ class TournamentsScreen extends StatefulWidget {
 }
 
 class _TournamentsScreenState extends State<TournamentsScreen> {
-  int _tab = 0; // 0 rankings, 1 tournaments
-  List<Map<String, dynamic>> _leaderboard = [];
   List<Map<String, dynamic>> _tournaments = [];
   bool _loading = true;
 
@@ -31,14 +27,10 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
   }
 
   Future<void> _load() async {
-    final results = await Future.wait([
-      TournamentService.fetchLeaderboard(),
-      TournamentService.fetchTournaments(),
-    ]);
+    final tournaments = await TournamentService.fetchTournaments();
     if (!mounted) return;
     setState(() {
-      _leaderboard = results[0];
-      _tournaments = results[1];
+      _tournaments = tournaments;
       _loading = false;
     });
   }
@@ -48,21 +40,6 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     return Column(
       children: [
         const ScreenBar(title: 'Compete', big: true),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 4, AppSpacing.screen, 12),
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: AppColors.field,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Row(children: [
-              _seg('Rankings', 0),
-              _seg('Tournaments', 1),
-            ]),
-          ),
-        ),
         Expanded(
           child: RefreshIndicator(
             color: AppColors.primary,
@@ -71,145 +48,10 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
                 ? const Center(
                     child: CircularProgressIndicator(
                         strokeWidth: 2.4, color: AppColors.primary))
-                : _tab == 0
-                    ? _rankings()
-                    : _tournamentList(),
+                : _tournamentList(),
           ),
         ),
       ],
-    );
-  }
-
-  Widget _seg(String label, int i) => Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _tab = i),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: _tab == i ? AppColors.surface : Colors.transparent,
-                borderRadius: BorderRadius.circular(9),
-                boxShadow: _tab == i ? kCardShadow : null),
-            child: Text(label,
-                style: AppText.bodyStrong(_tab == i ? AppColors.ink : AppColors.inkSoft)
-                    .copyWith(fontSize: 13)),
-          ),
-        ),
-      );
-
-  // ── Rankings ─────────────────────────────────────────────────────────────
-
-  Widget _rankings() {
-    if (_leaderboard.isEmpty) {
-      return _emptyList(Icons.leaderboard_outlined, 'No ranked players yet',
-          'Rankings appear once players complete competitive matches.');
-    }
-    final podium = _leaderboard.take(3).toList();
-    final rest = _leaderboard.skip(3).toList();
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 120),
-      children: [
-        if (podium.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 8, AppSpacing.screen, 16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(child: podium.length > 1 ? _podium(podium[1], 2) : const SizedBox()),
-                const SizedBox(width: 10),
-                Expanded(child: _podium(podium[0], 1)),
-                const SizedBox(width: 10),
-                Expanded(child: podium.length > 2 ? _podium(podium[2], 3) : const SizedBox()),
-              ],
-            ),
-          ),
-        Padding(
-          padding: AppSpacing.screenH,
-          child: AppCard(
-            padding: EdgeInsets.zero,
-            child: Column(children: [
-              for (int i = 0; i < rest.length; i++)
-                _rankRow(rest[i], i + 4, divider: i > 0),
-            ]),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _podium(Map<String, dynamic> p, int place) {
-    final name = (p['name'] as String?) ?? 'Player';
-    final elo = (p['elo'] as num?)?.toInt() ?? 1000;
-    final level = (p['level'] as num?)?.toDouble() ??
-        RankingScale.levelFromElo(elo);
-    final isMe = p['id'] == _uid;
-    final color = switch (place) {
-      1 => AppColors.gold,
-      2 => AppColors.platinum,
-      _ => AppColors.accent,
-    };
-    final initials = name.trim().split(RegExp(r'\s+')).take(2)
-        .map((w) => w.isEmpty ? '' : w[0]).join().toUpperCase();
-    return Container(
-      padding: EdgeInsets.fromLTRB(8, place == 1 ? 18 : 12, 8, 12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: isMe ? AppColors.primary : AppColors.line,
-            width: isMe ? 1.5 : 1),
-        boxShadow: kCardShadow,
-      ),
-      child: Column(children: [
-        AppAvatar(initials.isEmpty ? 'P' : initials,
-            size: place == 1 ? 52 : 42, color: color, ring: 2),
-        const SizedBox(height: 7),
-        Text('#$place', style: AppText.stat(14, color)),
-        const SizedBox(height: 2),
-        Text(name.split(' ').first,
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
-        Text('Lv ${RankingScale.fmtLevel(level)}',
-            style: AppText.small().copyWith(fontSize: 11)),
-      ]),
-    );
-  }
-
-  Widget _rankRow(Map<String, dynamic> p, int rank, {bool divider = false}) {
-    final name = (p['name'] as String?) ?? 'Player';
-    final elo = (p['elo'] as num?)?.toInt() ?? 1000;
-    final level = (p['level'] as num?)?.toDouble() ??
-        RankingScale.levelFromElo(elo);
-    final isMe = p['id'] == _uid;
-    final initials = name.trim().split(RegExp(r'\s+')).take(2)
-        .map((w) => w.isEmpty ? '' : w[0]).join().toUpperCase();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: isMe ? AppColors.primary.withValues(alpha: 0.06) : null,
-        border: divider ? const Border(top: BorderSide(color: AppColors.line)) : null,
-      ),
-      child: Row(children: [
-        SizedBox(width: 30, child: Text('$rank', style: AppText.stat(14, AppColors.inkSoft))),
-        AppAvatar(initials.isEmpty ? 'P' : initials, size: 34, ring: 1.5,
-            color: isMe ? AppColors.primary : AppColors.gold),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(isMe ? '$name (You)' : name,
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
-            Text(
-                '${RankingScale.divisionFor(level).name} · ${RankingScale.tierFor(level)}',
-                style: AppText.small().copyWith(fontSize: 11)),
-          ]),
-        ),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(RankingScale.fmtLevel(level), style: AppText.stat(15)),
-          Text('$elo ELO',
-              style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 9.5)),
-        ]),
-      ]),
     );
   }
 
