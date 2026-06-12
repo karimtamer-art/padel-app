@@ -341,7 +341,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     return SizedBox(
-      height: 196,
+      height: 176,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: AppSpacing.screenH,
@@ -525,7 +525,7 @@ class _TournamentTile extends StatelessWidget {
           const SizedBox(height: 6),
           Text(_fmtRange(t['start_date'] as String?, t['end_date'] as String?),
               style: AppText.small().copyWith(fontSize: 12)),
-          const SizedBox(height: 12),
+          const Spacer(),
           Row(children: [
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

@@ -144,7 +144,7 @@ class _NavBar extends StatelessWidget {
   // The create button floats above the bar by this much; the Stack reserves
   // the space so the whole circle stays tappable (OverflowBox would clip hits).
   static const double _fabSize = 64;
-  static const double _fabOverlap = 30;
+  static const double _fabOverlap = 18;
 
   @override
   Widget build(BuildContext context) {
