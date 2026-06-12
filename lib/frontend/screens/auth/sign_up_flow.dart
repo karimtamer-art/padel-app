@@ -76,6 +76,11 @@ class _SignUpFlowState extends State<SignUpFlow> {
     if (_data.password != _data.confirm)  return 'Passwords do not match.';
     if (_data.dob == null)                return 'Please select your date of birth.';
     if (_data.gender.isEmpty)             return 'Please select your gender.';
+    // require a usable phone here, or the auth gate re-asks it in onboarding
+    final digits = _data.phone.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length < 10 || digits.length > 12) {
+      return 'Please enter a valid mobile number (e.g. 01001234567).';
+    }
     return null;
   }
 

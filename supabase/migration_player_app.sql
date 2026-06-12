@@ -736,3 +736,9 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- PostgREST upserts put the primary key in the conflict-update column list,
+-- so own-row upserts (onboarding save) need UPDATE(id) on top of the
+-- column grants from 0004. Harmless: the update policy's WITH CHECK pins
+-- the row to auth.uid(), so id can never be changed to another user's.
+grant update (id) on public.profiles to authenticated;
