@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoDatePicker, CupertinoDatePickerMode, CupertinoButton;
 import 'package:flutter/material.dart';
 import '../theme/admin_colors.dart';
 import '../data/admin_service.dart';
@@ -458,9 +459,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         _field('Venue', venueC, hint: 'Gezira Sporting Club'),
         const SizedBox(height: 14),
         Row(children: [
-          Expanded(child: _field('Start date', startC, hint: 'YYYY-MM-DD')),
+          Expanded(child: _dateField('Start date', startC)),
           const SizedBox(width: 12),
-          Expanded(child: _field('End date', endC, hint: 'YYYY-MM-DD')),
+          Expanded(child: _dateField('End date', endC)),
         ]),
         const SizedBox(height: 14),
         _field('Prize pool', prizeC, prefix: 'EGP'),
@@ -519,6 +520,92 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               ]);
         }),
       ]),
+    );
+  }
+
+  Widget _dateField(String label, TextEditingController c) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: AdminText.strong(AdminColors.inkSoft)),
+      const SizedBox(height: 7),
+      TextField(
+        controller: c,
+        readOnly: true,
+        onTap: () => _pickDate(c),
+        style: AdminText.body(),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Tap to pick',
+          suffixIcon: const Icon(Icons.calendar_today_outlined,
+              size: 16, color: AdminColors.inkFaint),
+          filled: true,
+          fillColor: AdminColors.surfaceAlt,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide: const BorderSide(color: AdminColors.line)),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide:
+                  const BorderSide(color: AdminColors.primary, width: 1.6)),
+        ),
+      ),
+    ]);
+  }
+
+  Future<void> _pickDate(TextEditingController c) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final min = DateTime(2020);
+    final max = DateTime(DateTime.now().year + 3, 12, 31);
+    var initial = DateTime.tryParse(c.text) ?? DateTime.now();
+    if (initial.isBefore(min)) initial = min;
+    if (initial.isAfter(max)) initial = max;
+    var temp = initial;
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        height: 320,
+        decoration: const BoxDecoration(
+          color: AdminColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 14, 12, 12),
+              decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: AdminColors.lineSoft))),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Pick a date', style: AdminText.strong()),
+                  CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    onPressed: () {
+                      c.text =
+                          '${temp.year}-${temp.month.toString().padLeft(2, '0')}-${temp.day.toString().padLeft(2, '0')}';
+                      Navigator.pop(ctx);
+                    },
+                    child: Text('Done',
+                        style: AdminText.strong(AdminColors.primary)),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: CupertinoDatePicker(
+                mode: CupertinoDatePickerMode.date,
+                initialDateTime: initial,
+                minimumDate: min,
+                maximumDate: max,
+                onDateTimeChanged: (d) => temp = d,
+              ),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 

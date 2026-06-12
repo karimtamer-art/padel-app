@@ -40,6 +40,13 @@ class PadelApp extends StatelessWidget {
       title: 'Padel Egypt',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      // Tap anywhere outside a text field to dismiss the keyboard — covers
+      // every screen and bottom sheet in the app.
+      builder: (context, child) => GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        child: child,
+      ),
       home: AuthGate(authService: auth, profileService: profiles),
     );
   }
