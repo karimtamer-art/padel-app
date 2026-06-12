@@ -1,0 +1,190 @@
+import 'package:flutter/material.dart';
+import '../theme/admin_colors.dart';
+import '../widgets/admin_kit.dart';
+import '../data/admin_service.dart';
+
+class AdminMatchesScreen extends StatefulWidget {
+  const AdminMatchesScreen({super.key});
+  @override
+  State<AdminMatchesScreen> createState() => _AdminMatchesScreenState();
+}
+
+class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
+  List<Map<String, dynamic>> _matches = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final data = await AdminService.fetchMatches();
+      if (mounted) setState(() { _matches = data; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  static Color _statusColor(String? s) {
+    switch (s) {
+      case 'open': return AdminColors.success;
+      case 'full': return AdminColors.warn;
+      case 'completed': return AdminColors.inkSoft;
+      case 'cancelled': return AdminColors.danger;
+      default: return AdminColors.inkSoft;
+    }
+  }
+
+  static String _statusLabel(String? s) {
+    switch (s) {
+      case 'open': return 'Open';
+      case 'full': return 'Full';
+      case 'completed': return 'Completed';
+      case 'cancelled': return 'Cancelled';
+      default: return s ?? 'Unknown';
+    }
+  }
+
+  static String _fmtDate(String? iso) {
+    if (iso == null) return '—';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return '${months[dt.month - 1]} ${dt.day}  ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+    } catch (_) {
+      return iso.substring(0, 10);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(color: AdminColors.primary));
+    }
+    if (_error != null) {
+      return RefreshIndicator(
+        color: AdminColors.primary,
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 40),
+          children: [
+            _emptyState('No matches yet',
+                'Pull down to refresh or tap retry.'),
+            const SizedBox(height: 16),
+            Center(child: AdminButton('Retry', onPressed: _load)),
+          ],
+        ),
+      );
+    }
+
+    final open = _matches.where((m) => m['status'] == 'open').length;
+    final completed = _matches.where((m) => m['status'] == 'completed').length;
+
+    return RefreshIndicator(
+      color: AdminColors.primary,
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 40),
+        children: [
+          KpiGrid([
+            StatCard(icon: Icons.sports_tennis_rounded, tone: AdminColors.primary, label: 'Total matches', value: '${_matches.length}'),
+            StatCard(icon: Icons.lock_open_outlined, tone: AdminColors.success, label: 'Open', value: '$open'),
+            StatCard(icon: Icons.check_circle_outline_rounded, tone: AdminColors.inkSoft, label: 'Completed', value: '$completed'),
+            const StatCard(icon: Icons.people_outline_rounded, tone: AdminColors.info, label: 'Max players', value: '4'),
+          ]),
+          const SizedBox(height: 16),
+          AdminSection('Match history', sub: '${_matches.length} matches'),
+          if (_matches.isEmpty)
+            _emptyState('No matches yet', 'Matches will appear here once players start booking courts.')
+          else
+            for (final m in _matches) _card(m),
+        ],
+      ),
+    );
+  }
+
+  Widget _card(Map<String, dynamic> m) {
+    final status = m['status'] as String?;
+    final format = m['match_type'] as String? ?? 'casual';
+    final scheduled = _fmtDate(m['scheduled_at'] as String?);
+    final duration = (m['duration_minutes'] as num?)?.toInt() ?? 90;
+    final creator = (m['profiles'] as Map?)?['name'] as String?;
+    final statusColor = _statusColor(status);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: AdminCard(
+        padding: const EdgeInsets.all(12),
+        child: Row(children: [
+          Container(
+            width: 44, height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AdminColors.wash(statusColor, 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(Icons.sports_tennis_rounded, size: 20, color: statusColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Expanded(
+                  child: Text(
+                    format[0].toUpperCase() + format.substring(1),
+                    style: AdminText.strong(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AdminColors.wash(statusColor, 0.14),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(_statusLabel(status),
+                      style: AdminText.sans(11, FontWeight.w700, statusColor)),
+                ),
+              ]),
+              const SizedBox(height: 3),
+              Text(scheduled, style: AdminText.small()),
+              const SizedBox(height: 2),
+              Row(children: [
+                Text('$duration min', style: AdminText.mono(10.5, FontWeight.w500, AdminColors.inkFaint)),
+                if (creator != null) ...[
+                  Text('  ·  ', style: AdminText.small()),
+                  Text(creator, style: AdminText.small()),
+                ],
+              ]),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _emptyState(String title, String sub) => Padding(
+        padding: const EdgeInsets.only(top: 48),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 56, height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AdminColors.surfaceAlt,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.sports_tennis_rounded, size: 26, color: AdminColors.inkFaint),
+          ),
+          const SizedBox(height: 14),
+          Text(title, style: AdminText.h2()),
+          const SizedBox(height: 6),
+          Text(sub, textAlign: TextAlign.center, style: AdminText.small()),
+        ]),
+      );
+}

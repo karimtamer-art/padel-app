@@ -1,0 +1,221 @@
+workflows:
+  ios-unsigned:
+    name: iOS Unsigned IPA
+    environment:
+      flutter: stable
+      xcode: latest
+
+    scripts:
+      - name: Get packages
+        script: |
+          flutter pub get
+          flutter precache --ios
+
+      - name: Install CocoaPods
+        script: |
+          cd ios && pod install --repo-update
+
+      - name: Patch Flutter config files
+        script: |
+          python3 << 'PYEOF'
+          import os, re, subprocess
+
+          flutter_root = os.environ.get('FLUTTER_ROOT') or \
+              os.path.dirname(os.path.dirname(
+                  subprocess.check_output(['which', 'flutter']).decode().strip()))
+          project_dir = os.getcwd()
+
+          with open('pubspec.yaml') as f:
+              pubspec = f.read()
+          m = re.search(r'^version:\s*(.+)$', pubspec, re.MULTILINE)
+          version = m.group(1).strip() if m else '1.0.0+1'
+          build_name   = version.split('+')[0]
+          build_number = version.split('+')[1] if '+' in version else '1'
+
+          spm_pkg = f'{project_dir}/ios/Flutter/ephemeral/Packages/.packages/FlutterFramework'
+
+          xcconfig = '\n'.join([
+              '// This is a generated file; do not edit or check into version control.',
+              f'FLUTTER_ROOT={flutter_root}',
+              f'FLUTTER_APPLICATION_PATH={project_dir}',
+              f'FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH={spm_pkg}',
+              'COCOAPODS_PARALLEL_CODE_SIGN=true',
+              'FLUTTER_TARGET=lib/main.dart',
+              'FLUTTER_BUILD_DIR=build',
+              f'FLUTTER_BUILD_NAME={build_name}',
+              f'FLUTTER_BUILD_NUMBER={build_number}',
+              'EXCLUDED_ARCHS[sdk=iphonesimulator*]=i386',
+              'EXCLUDED_ARCHS[sdk=iphoneos*]=armv7',
+              'DART_OBFUSCATION=false',
+              'TRACK_WIDGET_CREATION=true',
+              'TREE_SHAKE_ICONS=false',
+              'PACKAGE_CONFIG=.dart_tool/package_config.json',
+          ]) + '\n'
+
+          env_sh = '\n'.join([
+              '#!/bin/sh',
+              '# This is a generated file; do not edit or check into version control.',
+              f'export "FLUTTER_ROOT={flutter_root}"',
+              f'export "FLUTTER_APPLICATION_PATH={project_dir}"',
+              f'export "FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH={spm_pkg}"',
+              'export "COCOAPODS_PARALLEL_CODE_SIGN=true"',
+              'export "FLUTTER_TARGET=lib/main.dart"',
+              'export "FLUTTER_BUILD_DIR=build"',
+              f'export "FLUTTER_BUILD_NAME={build_name}"',
+              f'export "FLUTTER_BUILD_NUMBER={build_number}"',
+              'export "DART_OBFUSCATION=false"',
+              'export "TRACK_WIDGET_CREATION=true"',
+              'export "TREE_SHAKE_ICONS=false"',
+              'export "PACKAGE_CONFIG=.dart_tool/package_config.json"',
+          ]) + '\n'
+
+          native_env = '\n'.join([
+              f'FLUTTER_ROOT={flutter_root}',
+              f'FLUTTER_APPLICATION_PATH={project_dir}',
+              f'FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH={spm_pkg}',
+              'COCOAPODS_PARALLEL_CODE_SIGN=true',
+              'FLUTTER_TARGET=lib/main.dart',
+              'FLUTTER_BUILD_DIR=build',
+              f'FLUTTER_BUILD_NAME={build_name}',
+              f'FLUTTER_BUILD_NUMBER={build_number}',
+              'DART_OBFUSCATION=false',
+              'TRACK_WIDGET_CREATION=true',
+              'TREE_SHAKE_ICONS=false',
+              'PACKAGE_CONFIG=.dart_tool/package_config.json',
+          ]) + '\n'
+
+          with open('ios/Flutter/Generated.xcconfig', 'w') as f:
+              f.write(xcconfig)
+          with open('ios/Flutter/flutter_export_environment.sh', 'w') as f:
+              f.write(env_sh)
+          os.chmod('ios/Flutter/flutter_export_environment.sh', 0o755)
+          with open('ios/Flutter/ephemeral/flutter_native_integration.env', 'w') as f:
+              f.write(native_env)
+
+          print(f'FLUTTER_ROOT={flutter_root}')
+          print(f'FLUTTER_APPLICATION_PATH={project_dir}')
+          PYEOF
+
+      - name: Build Runner.app (unsigned)
+        script: |
+          # flutter build ios is NOT used here. In Flutter 3.44, xcode_backend.dart
+          # (the new backend) calls flutter assemble internally; calling flutter build ios
+          # first adds a separate pass that fails due to the no-team post-build check.
+          # We drive xcodebuild directly with all signing fully disabled.
+          DERIVED="$(pwd)/build/ios/derived"
+
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$DERIVED" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+            2>&1
+
+          echo ""
+          echo "=== find build -name Runner.app ==="
+          find build -name "Runner.app" -type d 2>/dev/null || echo "(none)"
+
+          echo ""
+          echo "=== find build -name App.framework ==="
+          find build -name "App.framework" -type d 2>/dev/null || echo "(none)"
+
+          echo ""
+          echo "=== ls DerivedData build products ==="
+          ls -la "$DERIVED/Build/Products/Release-iphoneos/" 2>/dev/null || echo "(path not found)"
+
+          APP="$DERIVED/Build/Products/Release-iphoneos/Runner.app"
+          [ -d "$APP" ] || (echo "ERROR: Runner.app missing in DerivedData"; exit 1)
+
+          APP_FW="$APP/Frameworks/App.framework/App"
+          if [ ! -f "$APP_FW" ]; then
+            echo "ERROR: App.framework missing -- Dart compile failed"
+            echo "Runner.app contents:"
+            ls -la "$APP/"
+            ls -la "$APP/Frameworks/" 2>/dev/null || echo "(no Frameworks/)"
+            exit 1
+          fi
+
+          echo "OK: App.framework $(du -sh "$APP_FW" | cut -f1)"
+          du -sh "$APP"
+
+      - name: Package IPA
+        script: |
+          APP="$(pwd)/build/ios/derived/Build/Products/Release-iphoneos/Runner.app"
+          [ -d "$APP" ] || (echo "Runner.app missing"; exit 1)
+          rm -rf build/ios/ipa
+          mkdir -p build/ios/ipa/Payload
+          ditto "$APP" build/ios/ipa/Payload/Runner.app
+
+          # Restore executable bits on the main binary and all framework binaries.
+          # Flutter's Dart AOT toolchain outputs App.framework/App as 644 (it treats
+          # the Mach-O as a shared-library object, not an executable). ditto copies
+          # that 644 faithfully. We fix every framework binary here so the IPA is
+          # always self-consistent regardless of which framework produced what.
+          chmod 755 build/ios/ipa/Payload/Runner.app/Runner
+          find build/ios/ipa/Payload/Runner.app/Frameworks \
+               -maxdepth 2 -name "*.framework" -type d | \
+            while IFS= read -r fw; do
+              bin="$fw/$(basename "$fw" .framework)"
+              [ -f "$bin" ] && chmod 755 "$bin"
+            done
+
+          # chmod 644 so plutil can write — Xcode build output files are often read-only
+          find build/ios/ipa/Payload -name "*.plist" -exec chmod 644 {} \;
+          # Convert binary plists to XML — AltStore throws NSCocoaErrorDomain 3840 on binary plists
+          find build/ios/ipa/Payload -name "*.plist" -exec plutil -convert xml1 {} \;
+
+          # Validate that App.framework/App is executable before zipping
+          APP_BIN="build/ios/ipa/Payload/Runner.app/Frameworks/App.framework/App"
+          ls -l "$APP_BIN"
+          if [ ! -x "$APP_BIN" ]; then
+            echo "ERROR: App.framework/App is not executable — aborting build"
+            exit 1
+          fi
+          echo "PASS: App.framework/App is executable"
+
+          cd build/ios/ipa
+          # -X excludes __MACOSX extended attribute entries that confuse AltStore
+          /usr/bin/zip -qrX Runner-unsigned.ipa Payload
+          ls -lh Runner-unsigned.ipa
+
+          # Verify the zip preserved executable permissions for all Mach-O binaries
+          python3 - <<'PYEOF'
+          import zipfile, stat, sys
+          failures = []
+          checked = []
+          with zipfile.ZipFile('Runner-unsigned.ipa') as z:
+              for info in z.infolist():
+                  name = info.filename
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  # Check the main binary and every framework binary
+                  is_fw_binary = (
+                      name.endswith('App.framework/App') or
+                      name.endswith('Runner.app/Runner') or
+                      (name.endswith('/Flutter') and 'Flutter.framework' in name)
+                  )
+                  if is_fw_binary:
+                      readable = stat.filemode(mode)
+                      checked.append(f"  {readable}  {name}")
+                      if not (mode & stat.S_IXUSR):
+                          failures.append(name)
+          print("IPA binary permissions:")
+          for line in checked:
+              print(line)
+          if failures:
+              print(f"ERROR: {len(failures)} binary(s) lost executable bit inside IPA:")
+              for f in failures:
+                  print(f"  {f}")
+              sys.exit(1)
+          print("PASS: all checked binaries are executable inside IPA")
+          PYEOF
+
+    artifacts:
+      - build/ios/ipa/Runner-unsigned.ipa
