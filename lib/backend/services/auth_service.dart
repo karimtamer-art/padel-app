@@ -121,10 +121,10 @@ class AuthService {
           'name': data.name.trim(),
           'phone': data.phone.trim(),
           'bio': data.bio.trim(),
-          'dob': data.dob?.toIso8601String().split('T').first ?? '',
+          'date_of_birth': data.dob?.toIso8601String().split('T').first ?? '',
           'gender': data.gender,
-          'hand': data.hand,
-          'court_side': data.side,
+          'preferred_hand': data.hand,
+          'preferred_court_side': data.side,
         },
       );
       if (res.user?.identities?.isEmpty ?? false) {

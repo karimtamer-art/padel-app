@@ -103,42 +103,24 @@ class OnboardingProfile {
         isAdmin: isAdmin ?? this.isAdmin,
       );
 
-  /// Reads both old column names (dob/hand/court_side — always present) and
-  /// new names (date_of_birth/preferred_hand/preferred_court_side — added by
-  /// migration 0002) so the model works before and after the migration.
   factory OnboardingProfile.fromJson(Map<String, dynamic> j) {
     DateTime? dob;
-    final raw = j['date_of_birth'] ?? j['dob'];
+    final raw = j['date_of_birth'];
     if (raw is String && raw.isNotEmpty) dob = DateTime.tryParse(raw);
     if (raw is DateTime) dob = raw;
     return OnboardingProfile(
       dateOfBirth: dob,
       gender: Gender.fromId(j['gender'] as String?),
-      hand: Hand.fromId((j['preferred_hand'] ?? j['hand']) as String?),
-      side: CourtSidePref.fromId(
-          (j['preferred_court_side'] ?? j['court_side']) as String?),
+      hand: Hand.fromId(j['preferred_hand'] as String?),
+      side: CourtSidePref.fromId(j['preferred_court_side'] as String?),
       phone: j['phone'] as String?,
       isAdmin: j['is_admin'] as bool? ?? false,
     );
   }
 
-  /// Writes to both the old column names (dob/hand/court_side — used by the
-  /// rest of the app) and the new names added by migration 0002
-  /// (date_of_birth/preferred_hand/preferred_court_side — so the server-computed
-  /// onboarding_completed flag flips to true). updated_at is intentionally
-  /// omitted — the touch_updated_at trigger sets it automatically on UPDATE.
   Map<String, dynamic> toUpsert(String userId, {String? name}) => {
         'id': userId,
-        // 'name' is NOT NULL on profiles — only the signup trigger normally
-        // sets it, but OAuth providers that withhold the name (e.g. Apple on
-        // repeat sign-ins) can leave the row missing it, so this upsert must
-        // supply a fallback or the insert violates the not-null constraint.
         'name': (name != null && name.trim().isNotEmpty) ? name.trim() : 'Player',
-        // old columns (always exist)
-        'dob': dateOfBirth == null ? null : _ymd(dateOfBirth!),
-        'hand': hand?.id,
-        'court_side': side?.id,
-        // new columns added by migration 0002
         'date_of_birth': dateOfBirth == null ? null : _ymd(dateOfBirth!),
         'gender': gender?.id,
         'preferred_hand': hand?.id,

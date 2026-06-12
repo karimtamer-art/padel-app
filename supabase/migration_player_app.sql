@@ -635,28 +635,23 @@ grant execute on function public.generate_draw(uuid) to authenticated;
 grant execute on function public.record_bracket_winner(uuid, uuid, text) to authenticated;
 
 -- ============================================================
--- Signup hardening — profile auto-create trigger.
--- Fixes "Database error saving new user" from auth.signUp:
---   • every column the trigger writes is guaranteed to exist
---   • check constraints accept every value the app UI offers
---     (gender 'other', court side 'both')
---   • the trigger can never abort a signup — on any error it
---     falls back to a minimal profile row and logs a warning
+-- Profile column cleanup + signup hardening
+--   • Drop legacy duplicate columns (dob/hand/court_side/full_name)
+--   • Canonical names: date_of_birth, preferred_hand,
+--     preferred_court_side, name
+--   • Widen constraints to accept all UI values
+--   • Trigger is bulletproof — signup never aborts on profile error
 -- ============================================================
 
--- columns the app reads/writes on profiles (no-ops where they exist)
+-- ensure canonical columns exist (no-ops if already there)
 alter table public.profiles add column if not exists name text;
-alter table public.profiles add column if not exists full_name text;
 alter table public.profiles add column if not exists avatar_url text;
 alter table public.profiles add column if not exists phone text;
 alter table public.profiles add column if not exists bio text;
 alter table public.profiles add column if not exists city text;
-alter table public.profiles add column if not exists dob date;
 alter table public.profiles add column if not exists date_of_birth date;
 alter table public.profiles add column if not exists gender text;
-alter table public.profiles add column if not exists hand text;
 alter table public.profiles add column if not exists preferred_hand text;
-alter table public.profiles add column if not exists court_side text;
 alter table public.profiles add column if not exists preferred_court_side text;
 alter table public.profiles add column if not exists elo int;
 alter table public.profiles add column if not exists level numeric;
@@ -664,16 +659,35 @@ alter table public.profiles add column if not exists tier text;
 alter table public.profiles add column if not exists division_pts int;
 alter table public.profiles add column if not exists placement_played int;
 
--- the sign-up form offers Male / Female / Other
+-- migrate data from legacy columns before dropping them
+update public.profiles set date_of_birth   = dob        where date_of_birth is null and dob is not null;
+update public.profiles set preferred_hand  = hand       where preferred_hand is null and hand is not null;
+update public.profiles set preferred_court_side = court_side where preferred_court_side is null and court_side is not null;
+update public.profiles set name = full_name where (name is null or name = '') and full_name is not null;
+
+-- drop legacy duplicate columns
+alter table public.profiles drop column if exists dob;
+alter table public.profiles drop column if exists hand;
+alter table public.profiles drop column if exists court_side;
+alter table public.profiles drop column if exists full_name;
+
+-- widen constraints to match all UI choices
 alter table public.profiles drop constraint if exists profiles_gender_chk;
 alter table public.profiles add constraint profiles_gender_chk
   check (gender is null or gender in ('male','female','other'));
 
--- the sign-up form offers Left / Right / Both
 alter table public.profiles drop constraint if exists profiles_side_chk;
 alter table public.profiles add constraint profiles_side_chk
   check (preferred_court_side is null or preferred_court_side in ('left','right','both'));
 
+-- also grant update on these columns that were added by cleanup
+grant update (preferred_hand, preferred_court_side, date_of_birth)
+  on public.profiles to authenticated;
+
+-- grant update(id) so PostgREST upserts (onboarding save) work
+grant update (id) on public.profiles to authenticated;
+
+-- rebuild trigger with canonical column names only
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -687,9 +701,8 @@ declare
 begin
   v_name := nullif(trim(coalesce(new.raw_user_meta_data->>'name',
                                  new.raw_user_meta_data->>'full_name', '')), '');
-  -- bad or out-of-range birth dates become null instead of failing the insert
   begin
-    v_dob := nullif(new.raw_user_meta_data->>'dob', '')::date;
+    v_dob := nullif(new.raw_user_meta_data->>'date_of_birth', '')::date;
   exception when others then
     v_dob := null;
   end;
@@ -699,29 +712,27 @@ begin
   end if;
   v_gender := nullif(new.raw_user_meta_data->>'gender', '');
   if v_gender not in ('male','female','other') then v_gender := null; end if;
-  v_hand := nullif(new.raw_user_meta_data->>'hand', '');
+  v_hand := nullif(new.raw_user_meta_data->>'preferred_hand', '');
   if v_hand not in ('right','left') then v_hand := null; end if;
-  v_side := nullif(new.raw_user_meta_data->>'court_side', '');
+  v_side := nullif(new.raw_user_meta_data->>'preferred_court_side', '');
   if v_side not in ('left','right','both') then v_side := null; end if;
 
   begin
     insert into public.profiles
-      (id, name, full_name, avatar_url, phone, bio,
-       dob, date_of_birth, gender,
-       hand, preferred_hand, court_side, preferred_court_side,
+      (id, name, avatar_url, phone, bio,
+       date_of_birth, gender, preferred_hand, preferred_court_side,
        elo, level, tier, division_pts, placement_played)
     values
-      (new.id, v_name, v_name,
+      (new.id, v_name,
        new.raw_user_meta_data->>'avatar_url',
        nullif(new.raw_user_meta_data->>'phone', ''),
        nullif(new.raw_user_meta_data->>'bio', ''),
-       v_dob, v_dob, v_gender,
-       coalesce(v_hand, 'right'), v_hand,
-       coalesce(v_side, 'both'), v_side,
+       v_dob, v_gender,
+       coalesce(v_hand, 'right'),
+       coalesce(v_side, 'both'),
        1000, 1.0, 'bronze', 0, 0)
     on conflict (id) do nothing;
   exception when others then
-    -- never block the signup: log and create a bare row instead
     raise warning 'handle_new_user: % — inserting minimal profile for %', sqlerrm, new.id;
     begin
       insert into public.profiles (id) values (new.id) on conflict (id) do nothing;
@@ -736,9 +747,3 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
-
--- PostgREST upserts put the primary key in the conflict-update column list,
--- so own-row upserts (onboarding save) need UPDATE(id) on top of the
--- column grants from 0004. Harmless: the update policy's WITH CHECK pins
--- the row to auth.uid(), so id can never be changed to another user's.
-grant update (id) on public.profiles to authenticated;

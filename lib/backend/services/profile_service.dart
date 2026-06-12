@@ -16,7 +16,7 @@ class ProfileService {
 
   // Both old and new column names — fromJson reads whichever are non-null.
   static const _onbCols =
-      'dob, hand, court_side, date_of_birth, gender, preferred_hand, preferred_court_side, phone, is_admin';
+      'date_of_birth, gender, preferred_hand, preferred_court_side, phone, is_admin';
 
   /// Current user's profile, or `null` if the row doesn't exist yet.
   Future<OnboardingProfile?> fetch(String userId) async {
@@ -54,7 +54,7 @@ class ProfileService {
   static SupabaseClient get _db => Supabase.instance.client;
 
   static const _profileCols =
-      'id, name, phone, bio, dob, gender, hand, court_side, city, avatar_url, '
+      'id, name, phone, bio, date_of_birth, gender, preferred_hand, preferred_court_side, city, avatar_url, '
       'elo, tier, division_pts, level, placement_played, created_at';
 
   static Future<Map<String, dynamic>?> getProfile(String uid) async {
@@ -199,8 +199,8 @@ class ProfileService {
           'id': user.id,
           'name': name,
           'avatar_url': meta['avatar_url'] as String?,
-          'hand': 'right',
-          'court_side': 'both',
+          'preferred_hand': 'right',
+          'preferred_court_side': 'both',
           'elo': 1000,
           'level': 1.0,
           'placement_played': 0,

@@ -77,11 +77,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _phoneCtrl.text = data['phone'] as String? ?? '';
     _bioCtrl.text   = data['bio']   as String? ?? '';
     _cityCtrl.text  = data['city']  as String? ?? '';
-    _hand   = data['hand']       as String? ?? 'right';
-    _side   = data['court_side'] as String? ?? 'both';
-    _gender = data['gender']     as String? ?? '';
+    _hand   = data['preferred_hand']       as String? ?? 'right';
+    _side   = data['preferred_court_side'] as String? ?? 'both';
+    _gender = data['gender']               as String? ?? '';
 
-    final dobStr = data['dob'] as String?;
+    final dobStr = data['date_of_birth'] as String?;
     if (dobStr != null) {
       _dob = DateTime.tryParse(dobStr);
       if (_dob != null) _dobCtrl.text = _fmtDate(_dob!);
@@ -154,10 +154,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       'phone':      _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
       'bio':        _bioCtrl.text.trim(),
       'city':       _cityCtrl.text.trim().isEmpty ? null : _cityCtrl.text.trim(),
-      'hand':       _hand,
-      'court_side': _side,
-      'gender':     _gender.isEmpty ? null : _gender,
-      'dob':        _dob?.toIso8601String().split('T').first,
+      'preferred_hand':       _hand,
+      'preferred_court_side': _side,
+      'gender':               _gender.isEmpty ? null : _gender,
+      'date_of_birth':        _dob?.toIso8601String().split('T').first,
     };
 
     final err = await ProfileService.updateProfile(uid, updates);
