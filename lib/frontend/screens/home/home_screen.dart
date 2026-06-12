@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart';
+import 'package:padel_clay/backend/services/tournament_service.dart';
 import '../matches/find_match_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
@@ -82,15 +83,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _fetchTournaments() async {
-    try {
-      final rows = await _db
-          .from('tournaments')
-          .select('id, name, venue_name, status, start_date, capacity, entry_fee')
-          .inFilter('status', ['open', 'upcoming'])
-          .order('start_date')
-          .limit(3);
-      if (mounted) _tournaments = List<Map<String, dynamic>>.from(rows as List);
-    } catch (_) {}
+    final rows = await TournamentService.fetchTournaments();
+    final visible = rows.where((t) {
+      final entries = ((t['tournament_entries'] as List?) ?? const [])
+          .where((e) => e['status'] != 'withdrawn')
+          .length;
+      final ds = TournamentService.tournamentStatus(t, entries);
+      return ds != 'completed' && ds != 'cancelled';
+    }).take(5).toList();
+    if (mounted) _tournaments = visible;
   }
 
   Future<void> _openFindMatch(BuildContext c) async {
@@ -152,7 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _upcomingMatches(context),
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Tournaments',
-                    action: 'Browse', onAction: widget.onSeeTournaments),
+                    action: 'View All', onAction: widget.onSeeTournaments),
                 _tournamentsSection(),
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Store', action: 'Browse', onAction: widget.onSeeStore),
@@ -339,15 +340,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-    return Padding(
-      padding: AppSpacing.screenH,
-      child: AppCard(
-        padding: EdgeInsets.zero,
-        child: Column(children: [
-          for (int i = 0; i < _tournaments.length; i++)
-            _TournamentTile(_tournaments[i], divider: i > 0,
-                onTap: () => _openTournament(context, _tournaments[i]['id'] as String)),
-        ]),
+    return SizedBox(
+      height: 196,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: AppSpacing.screenH,
+        children: [
+          for (final t in _tournaments)
+            _TournamentTile(t,
+                onTap: () => _openTournament(context, t['id'] as String)),
+        ],
       ),
     );
   }
@@ -451,74 +453,100 @@ class _MatchTile extends StatelessWidget {
 
 class _TournamentTile extends StatelessWidget {
   final Map<String, dynamic> t;
-  final bool divider;
   final VoidCallback? onTap;
-  const _TournamentTile(this.t, {this.divider = false, this.onTap});
+  const _TournamentTile(this.t, {this.onTap});
 
-  static String _fmtDate(String? d) {
-    if (d == null) return '—';
-    try {
-      final dt = DateTime.parse(d);
-      const months = ['Jan','Feb','Mar','Apr','May','Jun',
-                      'Jul','Aug','Sep','Oct','Nov','Dec'];
-      return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
-    } catch (_) {
-      return d;
+  static String _fmtRange(String? startIso, String? endIso) {
+    final s = startIso == null ? null : DateTime.tryParse(startIso)?.toLocal();
+    if (s == null) return 'TBD';
+    const months = ['January','February','March','April','May','June',
+                    'July','August','September','October','November','December'];
+    final e = endIso == null ? null : DateTime.tryParse(endIso)?.toLocal();
+    if (e == null || (e.year == s.year && e.month == s.month && e.day == s.day)) {
+      return '${months[s.month - 1]} ${s.day}';
     }
+    if (e.year == s.year && e.month == s.month) {
+      return '${months[s.month - 1]} ${s.day} – ${e.day}';
+    }
+    return '${months[s.month - 1]} ${s.day} – ${months[e.month - 1]} ${e.day}';
+  }
+
+  static String _egp(int n) {
+    final s = n.toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return 'EGP $buf';
   }
 
   @override
   Widget build(BuildContext context) {
     final name = t['name'] as String? ?? 'Tournament';
-    final venue = t['venue_name'] as String? ?? '';
-    final status = t['status'] as String? ?? 'upcoming';
-    final startDate = _fmtDate(t['start_date'] as String?);
-    final fee = (t['entry_fee'] as num?)?.toDouble() ?? 0;
-    final feeLabel = fee > 0 ? 'EGP ${fee.toStringAsFixed(0)}' : 'Free';
-    final statusColor = status == 'open' ? AppColors.success : AppColors.warn;
-    final statusLabel = status[0].toUpperCase() + status.substring(1).replaceAll('_', ' ');
+    final entries = ((t['tournament_entries'] as List?) ?? const [])
+        .where((e) => e['status'] != 'withdrawn')
+        .length;
+    final ds = TournamentService.tournamentStatus(t, entries);
+    final cap = (t['capacity'] as num?)?.toInt() ?? 0;
+    final remaining = cap > 0 ? (cap - entries).clamp(0, cap) : null;
+    final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
+    final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
+    final canRegister = ds == 'open' || ds == 'postponed';
+    final sc = switch (ds) {
+      'open' || 'live' => AppColors.success,
+      'full' || 'postponed' => AppColors.gold,
+      _ => AppColors.inkSoft,
+    };
+    final statusLabel = switch (ds) {
+      'open' => 'Open',
+      'live' => 'Live',
+      'full' => 'Full',
+      'postponed' => 'Postponed',
+      _ => ds,
+    };
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-          border: divider
-              ? const Border(top: BorderSide(color: AppColors.line))
-              : null),
-      child: Row(children: [
-        Container(
-          width: 40, height: 40,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: AppColors.warn.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(11),
-          ),
-          child: const Icon(Icons.emoji_events_outlined,
-              size: 20, color: AppColors.warn),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              AppTag(statusLabel, color: statusColor),
-              const SizedBox(width: 6),
-              AppTag(feeLabel, color: AppColors.inkSoft),
-            ]),
-            const SizedBox(height: 4),
-            Text(name,
-                style: AppText.bodyStrong().copyWith(fontSize: 13),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 2),
-            Text(venue.isNotEmpty ? '$startDate  ·  $venue' : startDate,
-                style: AppText.small().copyWith(fontSize: 11.5),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
+    return Container(
+      width: 250,
+      margin: const EdgeInsets.only(right: 12),
+      child: AppCard(
+        onTap: onTap,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.emoji_events_rounded, size: 16, color: AppColors.gold),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(name,
+                  style: AppText.bodyStrong().copyWith(fontSize: 13.5),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            AppTag(statusLabel, color: sc),
           ]),
-        ),
-        const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.inkFaint),
-      ]),
-    ));
+          const SizedBox(height: 6),
+          Text(_fmtRange(t['start_date'] as String?, t['end_date'] as String?),
+              style: AppText.small().copyWith(fontSize: 12)),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(prize > 0 ? _egp(prize) : (fee > 0 ? _egp(fee) : 'Free'),
+                    style: AppText.stat(16, AppColors.primary)),
+                Text(prize > 0 ? 'Prize Pool' : 'Entry / Pair',
+                    style: AppText.small().copyWith(fontSize: 10.5)),
+              ]),
+            ),
+            if (remaining != null)
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('$remaining left', style: AppText.stat(14)),
+                Text('of $cap', style: AppText.small().copyWith(fontSize: 10.5)),
+              ]),
+          ]),
+          const SizedBox(height: 12),
+          AppButton(canRegister ? 'Register' : 'View',
+              full: true, height: 38, onPressed: onTap),
+        ]),
+      ),
+    );
   }
 }
 
