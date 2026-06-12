@@ -428,7 +428,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         icon: Icons.check_rounded,
         onPressed: () async {
           if (nameC.text.trim().isEmpty) return;
-          Navigator.pop(context);
           final data = <String, dynamic>{
             'name': nameC.text.trim(),
             'venue_name': venueC.text.trim(),
@@ -445,11 +444,14 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'status': status,
           };
           if (!isNew) data['id'] = t['id'];
-          await AdminService.upsertTournament(data);
+          final err = await AdminService.upsertTournament(data);
+          if (!mounted) return;
+          Navigator.pop(context);
           await _load();
           if (mounted) {
-            adminToast(context,
-                isNew ? '"${nameC.text.trim()}" created' : 'Tournament updated');
+            adminToast(context, err != null
+                ? 'Error: $err'
+                : isNew ? '"${nameC.text.trim()}" created' : 'Tournament updated');
           }
         },
       ),

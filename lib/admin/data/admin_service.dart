@@ -128,8 +128,15 @@ class AdminService {
     return List<Map<String, dynamic>>.from(res as List);
   }
 
-  static Future<void> upsertTournament(Map<String, dynamic> data) async {
-    await _db.from('tournaments').upsert(data, onConflict: 'id');
+  static Future<String?> upsertTournament(Map<String, dynamic> data) async {
+    try {
+      await _db.from('tournaments').upsert(data, onConflict: 'id');
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   static Future<void> deleteTournament(String id) async {

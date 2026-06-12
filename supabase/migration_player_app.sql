@@ -449,6 +449,20 @@ alter table public.tournaments add column if not exists format text not null def
 alter table public.tournaments alter column status set default 'auto';
 alter table public.tournaments add column if not exists best_of int not null default 3;
 
+-- widen constraints so the app's values are accepted
+alter table public.tournaments drop constraint if exists tournaments_format_chk;
+alter table public.tournaments add constraint tournaments_format_chk
+  check (format in ('knockout','round_robin','group_knockout','double_elim'));
+
+alter table public.tournaments drop constraint if exists tournaments_status_chk;
+alter table public.tournaments add constraint tournaments_status_chk
+  check (status in ('upcoming','open','in_progress','completed','cancelled','auto','postponed'));
+
+-- admin can read all profiles (needed for dashboard player count)
+drop policy if exists "profiles: admin read all" on public.profiles;
+create policy "profiles: admin read all" on public.profiles
+  for select using (public.is_admin());
+
 alter table public.tournament_entries add column if not exists partner_id uuid references public.profiles(id);
 
 -- Bracket matches. slot is 0-based within the round.

@@ -292,33 +292,39 @@ Future<T?> adminSheet<T>(BuildContext context, {required String title, String? s
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => Container(
-      height: MediaQuery.of(context).size.height * heightFactor,
-      decoration: const BoxDecoration(color: AdminColors.surface, borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      child: Column(children: [
-        Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: AdminColors.line, borderRadius: BorderRadius.circular(2))),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 12, 6),
-          child: Row(children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(title, style: AdminText.h2()),
-                if (sub != null) ...[const SizedBox(height: 2), Text(sub, style: AdminText.small())],
+    builder: (ctx) {
+      final keyboardHeight = MediaQuery.of(ctx).viewInsets.bottom;
+      return Padding(
+        padding: EdgeInsets.only(bottom: keyboardHeight),
+        child: Container(
+          height: MediaQuery.of(context).size.height * heightFactor,
+          decoration: const BoxDecoration(color: AdminColors.surface, borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+          child: Column(children: [
+            Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(color: AdminColors.line, borderRadius: BorderRadius.circular(2))),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 12, 6),
+              child: Row(children: [
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(title, style: AdminText.h2()),
+                    if (sub != null) ...[const SizedBox(height: 2), Text(sub, style: AdminText.small())],
+                  ]),
+                ),
+                IconButton(icon: const Icon(Icons.close_rounded, color: AdminColors.inkSoft), onPressed: () => Navigator.pop(ctx)),
               ]),
             ),
-            IconButton(icon: const Icon(Icons.close_rounded, color: AdminColors.inkSoft), onPressed: () => Navigator.pop(context)),
+            const Divider(height: 16, color: AdminColors.lineSoft),
+            Expanded(child: SingleChildScrollView(padding: const EdgeInsets.fromLTRB(18, 4, 18, 18), child: body)),
+            if (footer != null)
+              Container(
+                padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
+                decoration: const BoxDecoration(color: AdminColors.surfaceAlt, border: Border(top: BorderSide(color: AdminColors.lineSoft))),
+                child: footer,
+              ),
           ]),
         ),
-        const Divider(height: 16, color: AdminColors.lineSoft),
-        Expanded(child: SingleChildScrollView(padding: const EdgeInsets.fromLTRB(18, 4, 18, 18), child: body)),
-        if (footer != null)
-          Container(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
-            decoration: const BoxDecoration(color: AdminColors.surfaceAlt, border: Border(top: BorderSide(color: AdminColors.lineSoft))),
-            child: footer,
-          ),
-      ]),
-    ),
+      );
+    },
   );
 }
