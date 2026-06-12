@@ -141,24 +141,63 @@ class _NavBar extends StatelessWidget {
   final VoidCallback onCreate;
   const _NavBar({required this.current, required this.onTap, required this.onCreate});
 
+  // The create button floats above the bar by this much; the Stack reserves
+  // the space so the whole circle stays tappable (OverflowBox would clip hits).
+  static const double _fabSize = 64;
+  static const double _fabOverlap = 30;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.bg,
-        border: Border(top: BorderSide(color: AppColors.lineSoft)),
-      ),
-      padding: const EdgeInsets.fromLTRB(6, 8, 6, 26),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          _item(0, Icons.home_outlined, 'Home'),
-          _item(1, Icons.emoji_events_outlined, 'Tournaments'),
-          _createButton(),
-          _item(3, Icons.shopping_bag_outlined, 'Store'),
-          _item(4, Icons.account_circle_outlined, 'You'),
-        ],
-      ),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: _fabOverlap),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: AppColors.bg,
+              border: Border(top: BorderSide(color: AppColors.lineSoft)),
+            ),
+            padding: const EdgeInsets.fromLTRB(6, 8, 6, 26),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _item(0, Icons.home_outlined, 'Home'),
+                _item(1, Icons.emoji_events_outlined, 'Tournaments'),
+                _createSlot(),
+                _item(3, Icons.shopping_bag_outlined, 'Store'),
+                _item(4, Icons.account_circle_outlined, 'You'),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: GestureDetector(
+              onTap: onCreate,
+              child: Container(
+                width: _fabSize,
+                height: _fabSize,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.4),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8)),
+                  ],
+                ),
+                child: const Icon(Icons.add_rounded,
+                    color: AppColors.primaryInk, size: 32),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -173,10 +212,10 @@ class _NavBar extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(7),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
               decoration: BoxDecoration(
                 color: on ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(icon, size: 22, color: c),
             ),
@@ -194,39 +233,13 @@ class _NavBar extends StatelessWidget {
     );
   }
 
-  Widget _createButton() {
+  Widget _createSlot() {
     return Expanded(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            height: 32,
-            child: OverflowBox(
-              minHeight: 54,
-              maxHeight: 54,
-              alignment: Alignment.bottomCenter,
-              child: GestureDetector(
-                onTap: onCreate,
-                child: Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.bg, width: 5),
-                    boxShadow: [
-                      BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.45),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6)),
-                    ],
-                  ),
-                  child: const Icon(Icons.add_rounded, color: AppColors.primaryInk, size: 28),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 5),
+          // reserved space under the floating create button
+          const SizedBox(height: 38),
           Text('Create',
               style: AppText.tag(AppColors.primary)
                   .copyWith(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 0.1)),
