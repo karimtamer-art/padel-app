@@ -59,7 +59,7 @@ class TournamentService {
       final rows = await _db
           .from('tournament_entries')
           .select('id, status, partner_name, created_at, '
-              'tournaments(id, name, venue_name, status, start_date, entry_fee)')
+              'tournaments(id, name, venue_name, status, start_date, end_date, capacity, entry_fee)')
           .eq('player_id', uid)
           .order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(rows as List);
@@ -78,12 +78,14 @@ class TournamentService {
     try {
       final t = await _db
           .from('tournaments')
-          .select('capacity, status, min_elo, tournament_entries(count)')
+          .select('capacity, status, start_date, min_elo, tournament_entries(count)')
           .eq('id', tournamentId)
           .single();
       final status = (t['status'] as String?) ?? '';
-      if (status != 'open' && status != 'upcoming') {
-        return 'Registration is closed for this tournament.';
+      if (status == 'cancelled') return 'Registration is closed — this tournament has been cancelled.';
+      final startDt = DateTime.tryParse((t['start_date'] as String?) ?? '');
+      if (startDt != null && !DateTime.now().isBefore(startDt)) {
+        return 'Registration is closed — this tournament has already started.';
       }
       final cap = (t['capacity'] as num?)?.toInt() ?? 0;
       final entries = (t['tournament_entries'] as List?) ?? const [];
@@ -178,6 +180,25 @@ class TournamentService {
     } catch (e) {
       return e.toString();
     }
+  }
+
+  /// Derives the effective display status from a tournament map + entry count.
+  /// The `status` DB column is only authoritative for 'cancelled' / 'postponed'.
+  /// Everything else is computed from dates and capacity so legacy rows
+  /// ('upcoming', 'open', 'completed', 'auto') all behave correctly.
+  static String tournamentStatus(Map<String, dynamic> t, int entryCount) {
+    final col = (t['status'] as String?) ?? '';
+    if (col == 'cancelled') return 'cancelled';
+    if (col == 'postponed') return 'postponed';
+    final now = DateTime.now();
+    final start = DateTime.tryParse((t['start_date'] as String?) ?? '');
+    final end = DateTime.tryParse((t['end_date'] as String?) ?? '');
+    final deadline = end ?? start;
+    if (deadline != null && now.isAfter(deadline)) return 'completed';
+    if (start != null && !now.isBefore(start)) return 'live';
+    final cap = (t['capacity'] as num?)?.toInt() ?? 0;
+    if (cap > 0 && entryCount >= cap) return 'full';
+    return 'open';
   }
 
   /// Live leaderboard: top players by ELO (admins excluded).

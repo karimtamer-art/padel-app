@@ -72,22 +72,26 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
   }
 
   Widget _tournamentCard(Map<String, dynamic> t) {
-    final status = (t['status'] as String?) ?? 'upcoming';
     final entries = ((t['tournament_entries'] as List?) ?? const [])
         .where((e) => e['status'] != 'withdrawn')
         .toList();
-    final cap = (t['capacity'] as num?)?.toInt() ?? 0;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final registered = entries.any((e) => e['player_id'] == _uid);
-    final full = cap > 0 && entries.length >= cap;
-    final sc = full || status == 'completed'
-        ? AppColors.inkSoft
-        : status == 'open'
-            ? AppColors.success
-            : AppColors.gold;
-    final statusLabel = full && status == 'open'
-        ? 'Full'
-        : status[0].toUpperCase() + status.substring(1).replaceAll('_', ' ');
+    final ds = TournamentService.tournamentStatus(t, entries.length);
+    final sc = switch (ds) {
+      'open' || 'live' => AppColors.success,
+      'full' || 'postponed' => AppColors.gold,
+      _ => AppColors.inkSoft,
+    };
+    final statusLabel = switch (ds) {
+      'open' => 'Open',
+      'live' => 'Live',
+      'full' => 'Full',
+      'completed' => 'Completed',
+      'cancelled' => 'Cancelled',
+      'postponed' => 'Postponed',
+      _ => ds,
+    };
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -105,7 +109,7 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
               const AppTag('Registered', color: AppColors.primary),
             ],
             const Spacer(),
-            Text(cap > 0 ? '${entries.length}/$cap' : '${entries.length}',
+            Text(((t['capacity'] as num?)?.toInt() ?? 0) > 0 ? '${entries.length}/${(t['capacity'] as num).toInt()}' : '${entries.length}',
                 style: AppText.stat(14)),
             const SizedBox(width: 3),
             Text('teams', style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10)),

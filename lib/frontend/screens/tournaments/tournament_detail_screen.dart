@@ -81,13 +81,13 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
 
   bool get _registered => _entries.any((e) => e['player_id'] == _uid);
   int get _cap => (_t?['capacity'] as num?)?.toInt() ?? 0;
-  bool get _full => _cap > 0 && _entries.length >= _cap;
-  String get _status => (_t?['status'] as String?) ?? 'upcoming';
   int get _minElo => (_t?['min_elo'] as num?)?.toInt() ?? 0;
   int get _fee => (_t?['entry_fee'] as num?)?.toInt() ?? 0;
-  bool get _isDoubleElim => (_t?['format'] as String? ?? 'double_elim') == 'double_elim';
-  bool get _canRegister =>
-      !_registered && !_full && (_status == 'open' || _status == 'upcoming');
+  String get _derivedStatus => TournamentService.tournamentStatus(_t ?? {}, _entries.length);
+  bool get _canRegister {
+    final ds = _derivedStatus;
+    return !_registered && (ds == 'open' || ds == 'postponed');
+  }
 
   void _snack(String msg, {Color? color}) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -243,14 +243,21 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
 
   Widget _hero() {
     final s = _start;
-    final sc = _full || _status == 'completed'
-        ? AppColors.inkSoft
-        : _status == 'open'
-            ? AppColors.success
-            : AppColors.gold;
-    final statusLabel = _full && _status == 'open'
-        ? 'Full'
-        : _status[0].toUpperCase() + _status.substring(1).replaceAll('_', ' ');
+    final ds = _derivedStatus;
+    final sc = switch (ds) {
+      'open' || 'live' => AppColors.success,
+      'full' || 'postponed' => AppColors.gold,
+      _ => AppColors.inkSoft,
+    };
+    final statusLabel = switch (ds) {
+      'open' => 'Open',
+      'live' => 'Live',
+      'full' => 'Full',
+      'completed' => 'Completed',
+      'cancelled' => 'Cancelled',
+      'postponed' => 'Postponed',
+      _ => ds,
+    };
     return Container(
       padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 6, 16, 18),
       decoration: const BoxDecoration(
@@ -612,23 +619,21 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         Row(children: [
           Text('Knockout bracket', style: AppText.cardTitle().copyWith(fontSize: 17)),
           const SizedBox(width: 8),
-          AppTag(_isDoubleElim ? 'DOUBLE ELIMINATION' : 'SINGLE ELIMINATION',
-              color: AppColors.accent),
+          const AppTag('DOUBLE ELIMINATION', color: AppColors.accent),
         ]),
         const SizedBox(height: 12),
-        if (_isDoubleElim)
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: AppColors.field,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Row(children: [
-              _bracketSeg('Winners', 0),
-              _bracketSeg('Losers', 1),
-            ]),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.line),
           ),
+          child: Row(children: [
+            _bracketSeg('Winners', 0),
+            _bracketSeg('Losers', 1),
+          ]),
+        ),
         const SizedBox(height: 16),
         if (_bracket.isEmpty)
           AppCard(
@@ -671,16 +676,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
             ),
           ),
         const SizedBox(height: 16),
-        if (_isDoubleElim)
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.inkFaint),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                  "Lose once and you drop to the Losers bracket — two losses and you're out. Every pair is guaranteed at least two matches.",
-                  style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
-            ),
-          ]),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.inkFaint),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+                "Lose once and you drop to the Losers bracket — two losses and you're out. Every pair is guaranteed at least two matches.",
+                style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
+          ),
+        ]),
       ],
     );
   }
@@ -812,13 +816,13 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               : AppButton(
                   _busy
                       ? 'Registering…'
-                      : _full
-                          ? 'Tournament Full'
-                          : _status == 'completed'
-                              ? 'Tournament Ended'
-                              : needPartner
-                                  ? 'Pick a partner first'
-                                  : 'Register Pair',
+                      : switch (_derivedStatus) {
+                          'full' => 'Tournament Full',
+                          'completed' => 'Tournament Ended',
+                          'cancelled' => 'Registration Closed',
+                          'live' => 'Tournament in Progress',
+                          _ => needPartner ? 'Pick a partner first' : 'Register Pair',
+                        },
                   full: true, height: 52,
                   icon: needPartner ? Icons.arrow_forward_rounded : Icons.emoji_events_rounded,
                   onPressed: (_canRegister && !needPartner && !_busy) ? _register : null),

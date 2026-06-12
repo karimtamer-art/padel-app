@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/admin_colors.dart';
 import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
+import 'package:padel_clay/backend/services/tournament_service.dart';
 
 class AdminTournamentsScreen extends StatefulWidget {
   const AdminTournamentsScreen({super.key});
@@ -85,8 +86,10 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final active =
-        _list.where((t) => !['completed', 'cancelled'].contains(t['status'])).length;
+    final active = _list.where((t) {
+      final ds = TournamentService.tournamentStatus(t, _entryCount(t));
+      return ds != 'completed' && ds != 'cancelled';
+    }).length;
     final totalEntries = _list.fold<int>(0, (s, t) => s + _entryCount(t));
     final totalPrize = _list.fold<int>(
         0, (s, t) => s + ((t['prize_pool'] as num?)?.toInt() ?? 0));
@@ -159,7 +162,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final registered = _entryCount(t);
     final capacity = (t['capacity'] as num?)?.toInt() ?? 0;
     final fill = capacity > 0 ? (registered / capacity).clamp(0.0, 1.0) : 0.0;
-    final status = t['status'] as String? ?? 'upcoming';
+    final status = TournamentService.tournamentStatus(t, registered);
     final revenue = registered * ((t['entry_fee'] as num?)?.toInt() ?? 0);
 
     return Padding(
@@ -406,8 +409,11 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final descC = TextEditingController(text: t?['description'] ?? '');
     final minEloC =
         TextEditingController(text: t?['min_elo']?.toString() ?? '0');
-    String format = t?['format'] as String? ?? 'double_elim';
-    String status = t?['status'] as String? ?? 'upcoming';
+    const String format = 'double_elim';
+    final rawStatus = t?['status'] as String? ?? 'auto';
+    String status = (rawStatus == 'upcoming' || rawStatus == 'open' || rawStatus == 'completed')
+        ? 'auto'
+        : rawStatus;
 
     adminSheet(
       context,
@@ -472,12 +478,11 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             hint: 'e.g. 1500 = Lv 3.5+ (Division B and above)'),
         const SizedBox(height: 14),
         StatefulBuilder(builder: (context, setSheet) {
-          Widget choice(String label, String value, String group,
-              void Function(String) onPick) {
-            final on = group == value;
+          Widget choice(String label, String value) {
+            final on = status == value;
             return Expanded(
               child: GestureDetector(
-                onTap: () => setSheet(() => onPick(value)),
+                onTap: () => setSheet(() => status = value),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 9),
                   margin: const EdgeInsets.only(right: 8),
@@ -499,22 +504,18 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
           return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Format', style: AdminText.strong(AdminColors.inkSoft)),
-                const SizedBox(height: 7),
-                Row(children: [
-                  choice('Double elim', 'double_elim', format,
-                      (v) => format = v),
-                  choice('Single elim', 'single_elim', format,
-                      (v) => format = v),
-                ]),
-                const SizedBox(height: 14),
                 Text('Status', style: AdminText.strong(AdminColors.inkSoft)),
                 const SizedBox(height: 7),
                 Row(children: [
-                  choice('Upcoming', 'upcoming', status, (v) => status = v),
-                  choice('Open', 'open', status, (v) => status = v),
-                  choice('Completed', 'completed', status, (v) => status = v),
+                  choice('Auto (by dates)', 'auto'),
+                  choice('Postponed', 'postponed'),
+                  choice('Cancelled', 'cancelled'),
                 ]),
+                const SizedBox(height: 6),
+                Text(
+                  'Normally leave on Auto — to extend or delay, just change the dates.',
+                  style: AdminText.small(AdminColors.inkFaint),
+                ),
               ]);
         }),
       ]),

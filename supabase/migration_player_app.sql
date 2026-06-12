@@ -445,7 +445,8 @@ alter table public.tournaments add column if not exists description text;
 alter table public.tournaments add column if not exists end_date date;
 alter table public.tournaments add column if not exists prize_pool int;
 alter table public.tournaments add column if not exists min_elo int not null default 0;
-alter table public.tournaments add column if not exists format text not null default 'double_elim'; -- single_elim | double_elim
+alter table public.tournaments add column if not exists format text not null default 'double_elim';
+alter table public.tournaments alter column status set default 'auto';
 alter table public.tournaments add column if not exists best_of int not null default 3;
 
 alter table public.tournament_entries add column if not exists partner_id uuid references public.profiles(id);
@@ -531,7 +532,6 @@ begin
     end if;
   end loop;
 
-  update tournaments set status = 'open' where id = p_tournament_id and status = 'upcoming';
   return null;
 end $$;
 

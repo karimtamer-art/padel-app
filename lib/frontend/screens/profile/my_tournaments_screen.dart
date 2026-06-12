@@ -35,12 +35,9 @@ class _MyTournamentsScreenState extends State<MyTournamentsScreen> {
   }
 
   bool _isPast(Map<String, dynamic> e) {
-    final t = e['tournaments'] as Map?;
-    final status = t?['status'] as String?;
-    if (status == 'completed' || status == 'cancelled') return true;
-    final iso = t?['start_date'] as String?;
-    final dt = iso == null ? null : DateTime.tryParse(iso);
-    return dt != null && dt.isBefore(DateTime.now().subtract(const Duration(days: 1)));
+    final t = (e['tournaments'] as Map?)?.cast<String, dynamic>() ?? {};
+    final ds = TournamentService.tournamentStatus(t, 0);
+    return ds == 'completed' || ds == 'cancelled';
   }
 
   @override
@@ -132,19 +129,27 @@ class _MyTournamentsScreenState extends State<MyTournamentsScreen> {
       );
 
   Widget _entryCard(Map<String, dynamic> e) {
-    final t = (e['tournaments'] as Map?) ?? {};
-    final status = (t['status'] as String?) ?? 'upcoming';
+    final t = ((e['tournaments'] as Map?)?.cast<String, dynamic>()) ?? {};
     final withdrawn = e['status'] == 'withdrawn';
+    final ds = TournamentService.tournamentStatus(t, 0);
     final sc = withdrawn
         ? AppColors.inkFaint
-        : status == 'open'
-            ? AppColors.success
-            : status == 'completed'
-                ? AppColors.inkSoft
-                : AppColors.gold;
+        : switch (ds) {
+            'open' || 'live' => AppColors.success,
+            'full' || 'postponed' => AppColors.gold,
+            _ => AppColors.inkSoft,
+          };
     final label = withdrawn
         ? 'Withdrawn'
-        : status[0].toUpperCase() + status.substring(1).replaceAll('_', ' ');
+        : switch (ds) {
+            'open' => 'Open',
+            'live' => 'Live',
+            'full' => 'Full',
+            'completed' => 'Completed',
+            'cancelled' => 'Cancelled',
+            'postponed' => 'Postponed',
+            _ => ds,
+          };
     final partner = e['partner_name'] as String?;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
