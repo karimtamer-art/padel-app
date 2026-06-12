@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
+import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import 'tournament_detail_screen.dart';
 
 class TournamentsScreen extends StatefulWidget {
@@ -75,7 +76,6 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     final entries = ((t['tournament_entries'] as List?) ?? const [])
         .where((e) => e['status'] != 'withdrawn')
         .toList();
-    final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final registered = entries.any((e) => e['player_id'] == _uid);
     final ds = TournamentService.tournamentStatus(t, entries.length);
     final sc = switch (ds) {
@@ -92,55 +92,100 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
       'postponed' => 'Postponed',
       _ => ds,
     };
+    final cap = (t['capacity'] as num?)?.toInt() ?? 0;
+    final remaining = cap > 0 ? (cap - entries.length).clamp(0, cap) : null;
+    final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
+    final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
+    final minElo = (t['min_elo'] as num?)?.toInt() ?? 0;
+    final venue = (t['venue_name'] as String?) ?? '';
+    final canRegister = !registered && (ds == 'open' || ds == 'postponed');
+
+    Future<void> open() async {
+      await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => TournamentDetailScreen(tournamentId: t['id'] as String)));
+      _load();
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AppCard(
-        onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => TournamentDetailScreen(tournamentId: t['id'] as String)));
-          _load();
-        },
+        onTap: open,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
+            const Icon(Icons.emoji_events_rounded, size: 18, color: AppColors.gold),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text((t['name'] as String?) ?? 'Tournament',
+                  style: AppText.bodyStrong().copyWith(fontSize: 15.5),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
             AppTag(statusLabel, color: sc),
-            if (registered) ...[
-              const SizedBox(width: 6),
-              const AppTag('Registered', color: AppColors.primary),
-            ],
-            const Spacer(),
-            Text(((t['capacity'] as num?)?.toInt() ?? 0) > 0 ? '${entries.length}/${(t['capacity'] as num).toInt()}' : '${entries.length}',
-                style: AppText.stat(14)),
-            const SizedBox(width: 3),
-            Text('teams', style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10)),
           ]),
-          const SizedBox(height: 10),
-          Text((t['name'] as String?) ?? 'Tournament',
-              style: AppText.bodyStrong().copyWith(fontSize: 15),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 3),
-          Text((t['venue_name'] as String?) ?? '—',
-              style: AppText.small().copyWith(fontSize: 12.5)),
-          const SizedBox(height: 8),
+          const SizedBox(height: 9),
           Row(children: [
             const Icon(Icons.calendar_today_rounded, size: 13, color: AppColors.inkFaint),
             const SizedBox(width: 5),
-            Text(_fmtDate(t['start_date'] as String?),
-                style: AppText.small().copyWith(fontSize: 12)),
+            Text(_fmtRange(t['start_date'] as String?, t['end_date'] as String?),
+                style: AppText.small().copyWith(fontSize: 12.5)),
+          ]),
+          const SizedBox(height: 10),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            if (venue.isNotEmpty) AppTag(venue),
+            if (minElo > 0)
+              AppTag('Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo(minElo))}+'),
+            if (registered) const AppTag('Registered', color: AppColors.primary),
+          ]),
+          const SizedBox(height: 14),
+          Row(children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(prize > 0 ? _egp(prize) : (fee > 0 ? _egp(fee) : 'Free'),
+                  style: AppText.stat(18, AppColors.primary)),
+              Text(prize > 0 ? 'Prize Pool' : 'Entry / Pair',
+                  style: AppText.small().copyWith(fontSize: 11)),
+            ]),
+            const SizedBox(width: 18),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(remaining != null ? '$remaining left' : '${entries.length} pairs',
+                  style: AppText.stat(16,
+                      remaining != null && remaining <= cap * 0.25
+                          ? AppColors.success
+                          : AppColors.ink)),
+              Text(remaining != null ? 'of $cap spots' : 'registered',
+                  style: AppText.small().copyWith(fontSize: 11)),
+            ]),
             const Spacer(),
-            Text(fee > 0 ? 'EGP $fee entry' : 'Free entry',
-                style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 12.5)),
+            AppButton(canRegister ? 'Register' : 'View',
+                height: 42,
+                variant: canRegister ? AppBtnVariant.solid : AppBtnVariant.outline,
+                onPressed: open),
           ]),
         ]),
       ),
     );
   }
 
-  static String _fmtDate(String? iso) {
-    final dt = iso == null ? null : DateTime.tryParse(iso)?.toLocal();
-    if (dt == null) return 'TBD';
+  static String _egp(int n) {
+    final s = n.toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return 'EGP $buf';
+  }
+
+  static String _fmtRange(String? startIso, String? endIso) {
+    final s = startIso == null ? null : DateTime.tryParse(startIso)?.toLocal();
+    if (s == null) return 'TBD';
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+    final e = endIso == null ? null : DateTime.tryParse(endIso)?.toLocal();
+    if (e == null || (e.year == s.year && e.month == s.month && e.day == s.day)) {
+      return '${months[s.month - 1]} ${s.day}, ${s.year}';
+    }
+    if (e.year == s.year && e.month == s.month) {
+      return '${months[s.month - 1]} ${s.day} – ${e.day}';
+    }
+    return '${months[s.month - 1]} ${s.day} – ${months[e.month - 1]} ${e.day}';
   }
 
   Widget _emptyList(IconData icon, String title, String sub) => ListView(
