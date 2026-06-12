@@ -66,26 +66,29 @@ class AdminService {
     return counts;
   }
 
-  static Future<Map<String, int>> fetchDashboardCounts() async {
+  static Future<int> _tableCount(String table) async {
     try {
-      final players =
-          await _db.from('profiles').select('id').count();
-      final courts =
-          await _db.from('courts').select('id').count();
-      final tournaments =
-          await _db.from('tournaments').select('id').count();
-      final matches =
-          await _db.from('matches').select('id').count();
-      return {
-        'players': players.count,
-        'courts': courts.count,
-        'tournaments': tournaments.count,
-        'matches': matches.count,
-      };
+      final res = await _db.from(table).select('id');
+      return (res as List).length;
     } catch (e) {
-      debugPrint('[AdminService] fetchDashboardCounts: $e');
-      return {'players': 0, 'courts': 0, 'tournaments': 0, 'matches': 0};
+      debugPrint('[AdminService] $table count error: $e');
+      return 0;
     }
+  }
+
+  static Future<Map<String, int>> fetchDashboardCounts() async {
+    final results = await Future.wait([
+      _tableCount('profiles'),
+      _tableCount('courts'),
+      _tableCount('tournaments'),
+      _tableCount('matches'),
+    ]);
+    return {
+      'players': results[0],
+      'courts': results[1],
+      'tournaments': results[2],
+      'matches': results[3],
+    };
   }
 
   // ── Courts ────────────────────────────────────────────────────
@@ -123,7 +126,7 @@ class AdminService {
   static Future<List<Map<String, dynamic>>> fetchTournaments() async {
     final res = await _db
         .from('tournaments')
-        .select('*, tournament_entries(count)')
+        .select('*, tournament_entries(id)')
         .order('start_date', ascending: false);
     return List<Map<String, dynamic>>.from(res as List);
   }

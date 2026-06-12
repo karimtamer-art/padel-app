@@ -33,9 +33,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
   static int _entryCount(Map row) {
     final entries = row['tournament_entries'];
-    if (entries is List && entries.isNotEmpty) {
-      return ((entries[0] as Map)['count'] as num?)?.toInt() ?? 0;
-    }
+    if (entries is List) return entries.length;
     return 0;
   }
 
