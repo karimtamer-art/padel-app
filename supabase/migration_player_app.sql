@@ -379,6 +379,16 @@ alter table public.tournament_entries enable row level security;
 alter table public.orders             enable row level security;
 alter table public.ranking_history    enable row level security;
 
+-- Older numbered migrations left a mutually-recursive pair of SELECT policies:
+-- "matches: read own or open" subqueries match_players, and "match_players: read"
+-- subqueries matches. Evaluating either makes Postgres evaluate the other, which
+-- re-enters the first → "infinite recursion detected in policy" (42P17) on any
+-- read of matches/match_players. The app's model is that matches and their
+-- participants are publicly readable (the "*readable*" policies just below), so
+-- drop the recursive pair outright.
+drop policy if exists "matches: read own or open" on public.matches;
+drop policy if exists "match_players: read"       on public.match_players;
+
 do $$ begin
   create policy "matches readable" on public.matches for select using (true);
 exception when duplicate_object then null; end $$;
@@ -551,6 +561,34 @@ create or replace function public._is_admin()
 returns boolean language sql stable security definer set search_path = public as $$
   select coalesce((select is_admin from profiles where id = auth.uid()), false);
 $$;
+
+-- ── Admin dashboard stats ──────────────────────────────────────
+-- Aggregate counts + division breakdown for the admin Dashboard. SECURITY DEFINER
+-- + _is_admin() gate so the numbers don't depend on per-table SELECT policies
+-- resolving for the admin role (the prior RLS-only "admin read all" approach
+-- returned 0 on the live DB). count(*) is exact — unlike fetching ids client-side,
+-- which silently caps at PostgREST's 1000-row limit. Players excludes admins to
+-- match the Players management screen.
+create or replace function public.admin_dashboard_counts()
+returns json
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public._is_admin() then
+    return json_build_object('error', 'admins_only');
+  end if;
+  return json_build_object(
+    'players',     (select count(*) from public.profiles where coalesce(is_admin, false) = false),
+    'matches',     (select count(*) from public.matches),
+    'courts',      (select count(*) from public.courts),
+    'tournaments', (select count(*) from public.tournaments),
+    'divisions',   (select coalesce(json_object_agg(tier, c), '{}'::json) from (
+                      select coalesce(tier, 'bronze') as tier, count(*) as c
+                        from public.profiles
+                       where coalesce(is_admin, false) = false
+                       group by 1) t)
+  );
+end $$;
+grant execute on function public.admin_dashboard_counts() to authenticated;
 
 -- ============================================================
 -- RPC: generate_draw — (re)builds winners-bracket round 1 from

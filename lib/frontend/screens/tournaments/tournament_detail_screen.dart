@@ -116,15 +116,44 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   Future<void> _withdraw() async {
     final sure = await showDialog<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: Text('Withdraw?', style: AppText.cardTitle().copyWith(fontSize: 17)),
-        content: Text('Your spot opens for another pair. Entry fees are handled by the organisers.',
-            style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 14)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Stay in')),
-          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Withdraw')),
-        ],
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (c) => Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(24, 26, 24, 20),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Withdraw?',
+                  style: AppText.stat(24, AppColors.ink).copyWith(letterSpacing: -0.4)),
+              const SizedBox(height: 10),
+              Text(
+                  'Your spot opens for another pair. Entry fees are handled by the organisers.',
+                  style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 14, height: 1.5)),
+              const SizedBox(height: 22),
+              AppButton('Stay in',
+                  full: true, height: 52, onPressed: () => Navigator.pop(c, false)),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(c, true),
+                  child: Text('Withdraw my pair',
+                      style: AppText.bodyStrong(AppColors.danger)
+                          .copyWith(fontSize: 14, fontWeight: FontWeight.w800)),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
     if (sure != true || !mounted) return;

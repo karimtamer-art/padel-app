@@ -33,17 +33,17 @@ class AdminService {
 
   // ── Dashboard stats ───────────────────────────────────────────
 
+  /// Per-tier player breakdown for the Division split card. Backed by the same
+  /// admin RPC as the counts (bypasses RLS), so it can't be filtered to empty.
   static Future<Map<String, int>> fetchDivisionCounts() async {
-    final res = await _db
-        .from('profiles')
-        .select('tier')
-        .eq('is_admin', false);
-    final counts = <String, int>{};
-    for (final row in List<Map<String, dynamic>>.from(res as List)) {
-      final tier = (row['tier'] as String?) ?? 'bronze';
-      counts[tier] = (counts[tier] ?? 0) + 1;
+    try {
+      final res = await _db.rpc('admin_dashboard_counts');
+      final divisions = ((res as Map?)?['divisions'] as Map?) ?? const {};
+      return divisions.map((k, v) => MapEntry(k as String, (v as num).toInt()));
+    } catch (e) {
+      debugPrint('[AdminService] fetchDivisionCounts: $e');
+      return {};
     }
-    return counts;
   }
 
   static Future<List<int>> fetchWeeklyMatchCounts() async {
@@ -66,29 +66,23 @@ class AdminService {
     return counts;
   }
 
-  static Future<int> _tableCount(String table) async {
-    try {
-      final res = await _db.from(table).select('id');
-      return (res as List).length;
-    } catch (e) {
-      debugPrint('[AdminService] $table count error: $e');
-      return 0;
-    }
-  }
-
+  /// Top-line counts for the Dashboard KPI cards. Backed by a SECURITY DEFINER
+  /// RPC doing exact count(*) — not capped at PostgREST's row limit and not
+  /// dependent on per-table SELECT policies resolving for the admin.
   static Future<Map<String, int>> fetchDashboardCounts() async {
-    final results = await Future.wait([
-      _tableCount('profiles'),
-      _tableCount('courts'),
-      _tableCount('tournaments'),
-      _tableCount('matches'),
-    ]);
-    return {
-      'players': results[0],
-      'courts': results[1],
-      'tournaments': results[2],
-      'matches': results[3],
-    };
+    try {
+      final res = await _db.rpc('admin_dashboard_counts');
+      final m = (res as Map?) ?? const {};
+      return {
+        'players': (m['players'] as num?)?.toInt() ?? 0,
+        'courts': (m['courts'] as num?)?.toInt() ?? 0,
+        'tournaments': (m['tournaments'] as num?)?.toInt() ?? 0,
+        'matches': (m['matches'] as num?)?.toInt() ?? 0,
+      };
+    } catch (e) {
+      debugPrint('[AdminService] fetchDashboardCounts: $e');
+      return {};
+    }
   }
 
   // ── Courts ────────────────────────────────────────────────────
