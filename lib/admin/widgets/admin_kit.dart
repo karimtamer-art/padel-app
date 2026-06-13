@@ -81,13 +81,20 @@ class StatCard extends StatelessWidget {
                     style: AdminText.mono(11, FontWeight.w800, delta! >= 0 ? AdminColors.success : AdminColors.danger)),
               ]),
           ]),
-          const SizedBox(height: 10),
-          Text(label.toUpperCase(), style: AdminText.kicker(), maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 8),
+          Text(label.toUpperCase(),
+              style: AdminText.kicker().copyWith(height: 1.1),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 5),
-          Text(value, style: AdminText.sans(22, FontWeight.w800, AdminColors.ink, ls: -0.6)),
+          Text(value,
+              style: AdminText.sans(22, FontWeight.w800, AdminColors.ink,
+                  ls: -0.6, height: 1.0),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
           if (foot.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(foot, style: AdminText.small(), maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 4),
+            Text(foot,
+                style: AdminText.small().copyWith(height: 1.1),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
           ],
         ],
       ),
@@ -100,13 +107,17 @@ class KpiGrid extends StatelessWidget {
   const KpiGrid(this.children, {super.key});
   @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
+    // Fixed per-card height (not aspect ratio) so cards with a `foot` line
+    // never overflow regardless of column width.
+    return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
-      childAspectRatio: 1.45,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        mainAxisExtent: 132,
+      ),
       children: children,
     );
   }

@@ -591,6 +591,114 @@ end $$;
 grant execute on function public.admin_dashboard_counts() to authenticated;
 
 -- ============================================================
+-- STORE: products, costs, gallery images, and the product-images bucket.
+-- Ported into this canonical migration (previously only in the numbered
+-- migrations 0003/0004) so a clean re-run keeps the store, and shaped as a
+-- generic commerce backend a future website store can share. Idempotent: on
+-- the live DB the base tables already exist, so create-if-not-exists is a
+-- no-op there and the add-column statements apply the web-sharing fields.
+-- ============================================================
+
+-- updated_at touch trigger fn (used by products)
+create or replace function public.touch_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+
+create table if not exists public.products (
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null,
+  brand        text,
+  category     text not null default 'accessories',
+  description  text,
+  price        numeric(10,2) not null,
+  stock        int not null default 0,
+  stock_status text generated always as (
+                 case when stock = 0 then 'out'
+                      when stock <= 5 then 'low'
+                      else 'in' end) stored,
+  image_url    text,
+  is_visible   boolean not null default true,
+  on_sale      boolean not null default false,
+  sale_price   numeric(10,2),
+  rating       numeric(3,2),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+-- web-sharing columns (no-ops once present): slug for website URLs, sku, currency
+alter table public.products add column if not exists slug text;
+alter table public.products add column if not exists sku text;
+alter table public.products add column if not exists currency text not null default 'EGP';
+create unique index if not exists products_slug_key on public.products (lower(slug)) where slug is not null;
+create index if not exists idx_products_category on public.products (category);
+
+alter table public.products drop constraint if exists products_category_chk;
+alter table public.products add constraint products_category_chk
+  check (category in ('rackets','shoes','apparel','balls','accessories'));
+alter table public.products drop constraint if exists products_stock_chk;
+alter table public.products add constraint products_stock_chk check (stock >= 0);
+
+alter table public.products enable row level security;
+drop policy if exists "products: read visible" on public.products;
+create policy "products: read visible" on public.products
+  for select using (is_visible = true or public._is_admin());
+drop policy if exists "products: admin write" on public.products;
+create policy "products: admin write" on public.products
+  for all using (public._is_admin()) with check (public._is_admin());
+
+drop trigger if exists trg_products_touch on public.products;
+create trigger trg_products_touch before update on public.products
+  for each row execute function public.touch_updated_at();
+
+-- admin-only wholesale cost, kept out of the public products row
+create table if not exists public.product_costs (
+  product_id uuid primary key references public.products(id) on delete cascade,
+  cost numeric(10,2)
+);
+alter table public.product_costs enable row level security;
+drop policy if exists "product_costs: admin only" on public.product_costs;
+create policy "product_costs: admin only" on public.product_costs
+  for all using (public._is_admin()) with check (public._is_admin());
+
+-- multiple images per product (gallery); products.image_url stays as the
+-- denormalised primary/thumbnail so the grid loads one small image per product.
+create table if not exists public.product_images (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  url text not null,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_product_images_product on public.product_images (product_id, sort_order);
+alter table public.product_images enable row level security;
+drop policy if exists "product_images: read" on public.product_images;
+create policy "product_images: read" on public.product_images
+  for select using (exists (
+    select 1 from public.products p
+    where p.id = product_id and (p.is_visible or public._is_admin())));
+drop policy if exists "product_images: admin write" on public.product_images;
+create policy "product_images: admin write" on public.product_images
+  for all using (public._is_admin()) with check (public._is_admin());
+
+grant select on public.products, public.product_images to anon, authenticated;
+grant select, insert, update, delete on public.products, public.product_images to authenticated;
+grant select, insert, update, delete on public.product_costs to authenticated;
+
+-- public Storage bucket for product images — app + website share the URLs.
+-- Public read comes from the bucket flag; writes are admin-only via the policy.
+insert into storage.buckets (id, name, public)
+  values ('product-images', 'product-images', true)
+  on conflict (id) do update set public = true;
+drop policy if exists "product-images admin write" on storage.objects;
+create policy "product-images admin write" on storage.objects
+  for all to authenticated
+  using (bucket_id = 'product-images' and public._is_admin())
+  with check (bucket_id = 'product-images' and public._is_admin());
+
+-- ============================================================
 -- RPC: generate_draw — (re)builds winners-bracket round 1 from
 -- registered entries, seeded by pair average level (1 v lowest,
 -- 2 v second-lowest, …). Byes auto-advance the seed.

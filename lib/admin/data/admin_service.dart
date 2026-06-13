@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -199,7 +200,11 @@ class AdminService {
     return List<Map<String, dynamic>>.from(res as List);
   }
 
-  static Future<void> upsertProduct(Map<String, dynamic> data) async {
+  /// Upserts a product and returns its id. Any field in [data] is written
+  /// through (name, brand, category, description, price, stock, on_sale,
+  /// sale_price, is_visible, slug, sku, …); `cost` is split into the
+  /// admin-only product_costs table.
+  static Future<String> upsertProduct(Map<String, dynamic> data) async {
     final cost = data['cost'];
     final productData = Map<String, dynamic>.from(data)..remove('cost');
     final res = await _db
@@ -207,16 +212,98 @@ class AdminService {
         .upsert(productData, onConflict: 'id')
         .select('id')
         .single();
+    final id = res['id'] as String;
     if (cost != null) {
       await _db.from('product_costs').upsert({
-        'product_id': res['id'] as String,
+        'product_id': id,
         'cost': cost,
       }, onConflict: 'product_id');
     }
+    return id;
   }
 
   static Future<void> deleteProduct(String id) async {
     await _db.from('products').delete().eq('id', id);
+  }
+
+  // ── Product images / storage ──────────────────────────────────
+
+  static const _bucket = 'product-images';
+
+  /// Uploads [bytes] to the public product-images bucket, records the row in
+  /// product_images, and returns its public URL. The first image of a product
+  /// also becomes the primary (`products.image_url`). [ext] is the extension
+  /// without a dot, e.g. 'jpg'.
+  static Future<String> uploadProductImage(
+      String productId, Uint8List bytes, String ext) async {
+    final safeExt = ext.toLowerCase() == 'jpeg' ? 'jpg' : ext.toLowerCase();
+    final path =
+        'products/$productId/${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(99999)}.$safeExt';
+    await _db.storage.from(_bucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+              contentType: 'image/${safeExt == 'jpg' ? 'jpeg' : safeExt}',
+              upsert: true),
+        );
+    final url = _db.storage.from(_bucket).getPublicUrl(path);
+
+    final existing = await _db
+        .from('product_images')
+        .select('id')
+        .eq('product_id', productId);
+    final count = (existing as List).length;
+    await _db.from('product_images').insert({
+      'product_id': productId,
+      'url': url,
+      'sort_order': count,
+    });
+    if (count == 0) {
+      await _db.from('products').update({'image_url': url}).eq('id', productId);
+    }
+    return url;
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchProductImages(
+      String productId) async {
+    final res = await _db
+        .from('product_images')
+        .select('id, url, sort_order')
+        .eq('product_id', productId)
+        .order('sort_order');
+    return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  /// Removes an image (row + Storage object) and, if it was the primary,
+  /// promotes the next remaining image (or clears `image_url`).
+  static Future<void> removeProductImage(
+      String productId, String imageId, String url) async {
+    await _db.from('product_images').delete().eq('id', imageId);
+    const marker = '/$_bucket/';
+    final i = url.indexOf(marker);
+    if (i != -1) {
+      final storagePath = url.substring(i + marker.length);
+      try {
+        await _db.storage.from(_bucket).remove([storagePath]);
+      } catch (e) {
+        debugPrint('[AdminService] removeProductImage storage: $e');
+      }
+    }
+    final prod = await _db
+        .from('products')
+        .select('image_url')
+        .eq('id', productId)
+        .maybeSingle();
+    if (prod != null && prod['image_url'] == url) {
+      final remaining = await fetchProductImages(productId);
+      await _db.from('products').update({
+        'image_url': remaining.isEmpty ? null : remaining.first['url'],
+      }).eq('id', productId);
+    }
+  }
+
+  static Future<void> setPrimaryImage(String productId, String url) async {
+    await _db.from('products').update({'image_url': url}).eq('id', productId);
   }
 
   // ── Orders ────────────────────────────────────────────────────

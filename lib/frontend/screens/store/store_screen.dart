@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
+import 'product_detail_screen.dart';
 
 class StoreScreen extends StatefulWidget {
   final int cart;
@@ -18,6 +19,8 @@ class StoreScreen extends StatefulWidget {
 
 class _StoreScreenState extends State<StoreScreen> {
   String _cat = 'All';
+  final _searchCtrl = TextEditingController();
+  String _query = '';
   List<Map<String, dynamic>> _products = [];
   bool _loading = true;
 
@@ -45,12 +48,18 @@ class _StoreScreenState extends State<StoreScreen> {
     _loadProducts();
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadProducts() async {
     setState(() => _loading = true);
     try {
       final rows = await Supabase.instance.client
           .from('products')
-          .select('id, name, brand, category, price, sale_price, on_sale, stock_status, rating, is_visible')
+          .select('id, name, brand, category, description, image_url, price, sale_price, on_sale, stock_status, rating, is_visible')
           .eq('is_visible', true)
           .order('created_at', ascending: false);
       if (mounted) {
@@ -75,9 +84,20 @@ class _StoreScreenState extends State<StoreScreen> {
     }
   }
 
-  List<Map<String, dynamic>> get _filtered => _cat == 'All'
-      ? _products
-      : _products.where((p) => _normCat(p['category'] as String?) == _cat).toList();
+  List<Map<String, dynamic>> get _filtered {
+    final q = _query.trim().toLowerCase();
+    return _products.where((p) {
+      if (_cat != 'All' && _normCat(p['category'] as String?) != _cat) {
+        return false;
+      }
+      if (q.isNotEmpty) {
+        final name = (p['name'] as String? ?? '').toLowerCase();
+        final brand = (p['brand'] as String? ?? '').toLowerCase();
+        if (!name.contains(q) && !brand.contains(q)) return false;
+      }
+      return true;
+    }).toList();
+  }
 
   // Convert a Supabase row to the mock Product model used by the cart
   Product _toProduct(Map<String, dynamic> row) {
@@ -179,8 +199,30 @@ class _StoreScreenState extends State<StoreScreen> {
           child: Row(children: [
             const Icon(Icons.search_rounded, size: 18, color: AppColors.inkFaint),
             const SizedBox(width: 10),
-            Text('Search equipment, brands…',
-                style: AppText.body(AppColors.inkFaint)),
+            Expanded(
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _query = v),
+                textInputAction: TextInputAction.search,
+                style: AppText.body().copyWith(fontSize: 14),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  hintText: 'Search equipment, brands…',
+                  hintStyle: AppText.body(AppColors.inkFaint),
+                ),
+              ),
+            ),
+            if (_query.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  _searchCtrl.clear();
+                  setState(() => _query = '');
+                  FocusScope.of(context).unfocus();
+                },
+                child: const Icon(Icons.close_rounded,
+                    size: 18, color: AppColors.inkFaint),
+              ),
           ]),
         ),
       );
@@ -308,19 +350,45 @@ class _StoreScreenState extends State<StoreScreen> {
     final stockStatus = row['stock_status'] as String? ?? 'in';
     final outOfStock = stockStatus == 'out';
     final lowStock = stockStatus == 'low';
+    final imageUrl = row['image_url'] as String?;
+
+    const topRadius = BorderRadius.vertical(top: Radius.circular(AppRadius.card));
 
     return AppCard(
       padding: EdgeInsets.zero,
+      onTap: () => _openProduct(row),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Stack(children: [
-            StripedPlaceholder(
-              height: 108,
-              icon: icon,
-              color: outOfStock ? AppColors.inkFaint : color,
-              radius: const BorderRadius.vertical(top: Radius.circular(AppRadius.card)),
-            ),
+            if (imageUrl != null && imageUrl.isNotEmpty)
+              ClipRRect(
+                borderRadius: topRadius,
+                child: Image.network(
+                  imageUrl,
+                  height: 108,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  // decode small to keep the grid light
+                  cacheWidth: 320,
+                  loadingBuilder: (_, child, progress) => progress == null
+                      ? child
+                      : Container(height: 108, color: AppColors.field),
+                  errorBuilder: (_, __, ___) => StripedPlaceholder(
+                    height: 108,
+                    icon: icon,
+                    color: outOfStock ? AppColors.inkFaint : color,
+                    radius: topRadius,
+                  ),
+                ),
+              )
+            else
+              StripedPlaceholder(
+                height: 108,
+                icon: icon,
+                color: outOfStock ? AppColors.inkFaint : color,
+                radius: topRadius,
+              ),
             if (onSale && salePrice != null && price > 0)
               Positioned(
                 top: 8, right: 8,
@@ -421,6 +489,15 @@ class _StoreScreenState extends State<StoreScreen> {
               style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
         ]),
       );
+
+  void _openProduct(Map<String, dynamic> row) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ProductDetailScreen(
+        product: row,
+        onAddToCart: () => widget.onAdd(_toProduct(row)),
+      ),
+    ));
+  }
 
   void _openTradeIn() {
     showModalBottomSheet(
