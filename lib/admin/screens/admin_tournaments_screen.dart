@@ -77,6 +77,19 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     return 'EGP $v';
   }
 
+  static String _lvLabel(dynamic minElo, dynamic maxElo) {
+    double lvFmt(dynamic elo) {
+      final v = ((((elo as num?)?.toInt() ?? 800) - 800) / 200.0).clamp(0.0, 7.0);
+      return (v / 0.5).round() * 0.5;
+    }
+    final minLv = lvFmt(minElo);
+    final maxInt = (maxElo as num?)?.toInt() ?? 0;
+    if (maxInt > 0) {
+      return '${minLv.toStringAsFixed(1)}–${lvFmt(maxElo).toStringAsFixed(1)}';
+    }
+    return '${minLv.toStringAsFixed(1)}+';
+  }
+
   static String _egpShort(int n) {
     if (n >= 1000000) return 'EGP ${(n / 1000000).toStringAsFixed(1)}M';
     if (n >= 1000) return 'EGP ${(n / 1000).toStringAsFixed(0)}K';
@@ -226,8 +239,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                     if (t['prize_pool'] != null)
                       _tag(Icons.military_tech_outlined,
                           _egpShort((t['prize_pool'] as num).toInt())),
-                    if (t['min_elo'] != null)
-                      _tag(null, 'Min ${t['min_elo']}'),
+                    if (((t['min_elo'] as num?)?.toInt() ?? 0) > 0)
+                      _tag(Icons.shield_outlined,
+                          'Lv ${_lvLabel(t['min_elo'], t['max_elo'])}'),
                   ]),
                 ]),
               ),
@@ -406,19 +420,35 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final feeC = TextEditingController(text: t?['entry_fee']?.toString() ?? '');
     final capC = TextEditingController(text: t?['capacity']?.toString() ?? '');
     final descC = TextEditingController(text: t?['description'] ?? '');
-    final minEloC =
-        TextEditingController(text: t?['min_elo']?.toString() ?? '0');
     const String format = 'double_elim';
     final rawStatus = t?['status'] as String? ?? 'auto';
     String status = (rawStatus == 'upcoming' || rawStatus == 'open' || rawStatus == 'completed')
         ? 'auto'
         : rawStatus;
 
+    // Eligibility — derive mode from existing data
+    final existingMin = (t?['min_elo'] as num?)?.toInt() ?? 0;
+    final existingMax = (t?['max_elo'] as num?)?.toInt();
+    String eligMode;
+    double minLevel;
+    double maxLevel;
+    if (existingMin <= 0 && existingMax == null) {
+      eligMode = 'open'; minLevel = 1.0; maxLevel = 7.0;
+    } else if (existingMax != null && existingMax > 0) {
+      eligMode = 'range';
+      minLevel = (((existingMin - 800) / 200.0).clamp(1.0, 7.0) / 0.5).round() * 0.5;
+      maxLevel = (((existingMax - 800) / 200.0).clamp(1.0, 7.0) / 0.5).round() * 0.5;
+    } else {
+      eligMode = 'min';
+      minLevel = (((existingMin - 800) / 200.0).clamp(1.0, 7.0) / 0.5).round() * 0.5;
+      maxLevel = 7.0;
+    }
+
     adminSheet(
       context,
       title: isNew ? 'Create tournament' : 'Edit ${t['name']}',
       sub: isNew ? 'Goes live once published' : '',
-      heightFactor: 0.82,
+      heightFactor: 0.9,
       footer: AdminButton(
         isNew ? 'Create & publish' : 'Save changes',
         full: true,
@@ -437,7 +467,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'capacity': int.tryParse(capC.text),
             'description':
                 descC.text.trim().isEmpty ? null : descC.text.trim(),
-            'min_elo': int.tryParse(minEloC.text) ?? 0,
+            'min_elo': eligMode == 'open' ? 0 : (800 + (minLevel * 200)).round(),
+            'max_elo': eligMode == 'range' ? (800 + (maxLevel * 200)).round() : null,
             'format': format,
             'status': status,
           };
@@ -475,18 +506,15 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         _field('About / description', descC,
             hint: 'Shown to players on the tournament page', maxLines: 3),
         const SizedBox(height: 14),
-        _field('Minimum ELO (0 = open to all)', minEloC, suffix: 'elo',
-            hint: 'e.g. 1500 = Lv 3.5+ (Division B and above)'),
-        const SizedBox(height: 14),
-        StatefulBuilder(builder: (context, setSheet) {
-          Widget choice(String label, String value) {
+        StatefulBuilder(builder: (ctx, setSheet) {
+          Widget statusBtn(String label, String value) {
             final on = status == value;
             return Expanded(
               child: GestureDetector(
                 onTap: () => setSheet(() => status = value),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 9),
-                  margin: const EdgeInsets.only(right: 8),
+                  margin: const EdgeInsets.only(right: 6),
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: on ? AdminColors.primary : AdminColors.surfaceAlt,
@@ -495,29 +523,119 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                         color: on ? AdminColors.primary : AdminColors.line),
                   ),
                   child: Text(label,
-                      style: AdminText.sans(12, FontWeight.w800,
+                      style: AdminText.sans(11, FontWeight.w800,
                           on ? Colors.white : AdminColors.inkSoft)),
                 ),
               ),
             );
           }
 
-          return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Status', style: AdminText.strong(AdminColors.inkSoft)),
-                const SizedBox(height: 7),
-                Row(children: [
-                  choice('Auto (by dates)', 'auto'),
-                  choice('Postponed', 'postponed'),
-                  choice('Cancelled', 'cancelled'),
-                ]),
-                const SizedBox(height: 6),
-                Text(
-                  'Normally leave on Auto — to extend or delay, just change the dates.',
-                  style: AdminText.small(AdminColors.inkFaint),
+          Widget eligBtn(String label, String value) {
+            final on = eligMode == value;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => setSheet(() => eligMode = value),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  margin: const EdgeInsets.only(right: 6),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: on ? AdminColors.primary : AdminColors.surfaceAlt,
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(
+                        color: on ? AdminColors.primary : AdminColors.line),
+                  ),
+                  child: Text(label,
+                      style: AdminText.sans(11, FontWeight.w800,
+                          on ? Colors.white : AdminColors.inkSoft)),
                 ),
-              ]);
+              ),
+            );
+          }
+
+          Widget levelDrop(String label, double current, void Function(double) onChange) {
+            const lvls = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0];
+            String divName(double l) {
+              if (l < 2.0) return 'Bronze';
+              if (l < 3.5) return 'Silver';
+              if (l < 5.0) return 'Gold';
+              return 'Elite';
+            }
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: AdminText.strong(AdminColors.inkSoft)),
+              const SizedBox(height: 7),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AdminColors.surfaceAlt,
+                  borderRadius: AdminUI.fieldR,
+                  border: Border.all(color: AdminColors.line),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<double>(
+                    value: current,
+                    isExpanded: true,
+                    dropdownColor: AdminColors.surface,
+                    style: AdminText.body(),
+                    onChanged: (v) { if (v != null) onChange(v); },
+                    items: [
+                      for (final l in lvls)
+                        DropdownMenuItem(
+                          value: l,
+                          child: Text(
+                            'Lv ${l.toStringAsFixed(1)}  ·  ${divName(l)}',
+                            style: AdminText.body(),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ]);
+          }
+
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // ── Status ────────────────────────────────────────────
+            Text('Status', style: AdminText.strong(AdminColors.inkSoft)),
+            const SizedBox(height: 7),
+            Row(children: [
+              statusBtn('Auto (by dates)', 'auto'),
+              statusBtn('Postponed', 'postponed'),
+              statusBtn('Cancelled', 'cancelled'),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+              'Normally leave on Auto — to extend or delay, just change the dates.',
+              style: AdminText.small(AdminColors.inkFaint),
+            ),
+            const SizedBox(height: 16),
+            // ── Eligibility ───────────────────────────────────────
+            Text('Player eligibility', style: AdminText.strong(AdminColors.inkSoft)),
+            const SizedBox(height: 7),
+            Row(children: [
+              eligBtn('Open to all', 'open'),
+              eligBtn('Min level', 'min'),
+              eligBtn('Level range', 'range'),
+            ]),
+            if (eligMode != 'open') ...[
+              const SizedBox(height: 10),
+              if (eligMode == 'range')
+                Row(children: [
+                  Expanded(child: levelDrop('From level', minLevel,
+                      (v) => setSheet(() => minLevel = v))),
+                  const SizedBox(width: 12),
+                  Expanded(child: levelDrop('To level', maxLevel,
+                      (v) => setSheet(() => maxLevel = v))),
+                ])
+              else
+                levelDrop('Minimum level', minLevel,
+                    (v) => setSheet(() => minLevel = v)),
+            ] else ...[
+              const SizedBox(height: 6),
+              Text('Any player level can register.',
+                  style: AdminText.small(AdminColors.inkFaint)),
+            ],
+          ]);
         }),
       ]),
     );

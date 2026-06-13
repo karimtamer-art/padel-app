@@ -448,6 +448,7 @@ alter table public.tournaments add column if not exists min_elo int not null def
 alter table public.tournaments add column if not exists format text not null default 'double_elim';
 alter table public.tournaments alter column status set default 'auto';
 alter table public.tournaments add column if not exists best_of int not null default 3;
+alter table public.tournaments add column if not exists max_elo int;
 
 -- widen constraints so the app's values are accepted
 alter table public.tournaments drop constraint if exists tournaments_format_chk;

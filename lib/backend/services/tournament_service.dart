@@ -9,12 +9,12 @@ class TournamentService {
 
   static const _cols =
       'id, name, venue_name, status, start_date, end_date, capacity, '
-      'entry_fee, prize_pool, description, min_elo, format, best_of, '
+      'entry_fee, prize_pool, description, min_elo, max_elo, format, best_of, '
       'tournament_entries(id, player_id, partner_id, partner_name, status, '
       '  profiles!tournament_entries_player_id_fkey(name, elo, level, tier))';
 
   static const _colsPlain =
-      'id, name, venue_name, status, start_date, capacity, entry_fee';
+      'id, name, venue_name, status, start_date, end_date, capacity, entry_fee, min_elo, max_elo';
 
   /// All visible tournaments, soonest first. Falls back to a plain query
   /// (no entries join) so the tab still works before the migration runs.
@@ -46,8 +46,18 @@ class TournamentService {
           await _db.from('tournaments').select(_cols).eq('id', id).maybeSingle();
       return row == null ? null : Map<String, dynamic>.from(row);
     } catch (e) {
-      debugPrint('[TournamentService] fetchTournament: $e');
-      return null;
+      debugPrint('[TournamentService] fetchTournament (rich): $e — falling back');
+      try {
+        final row = await _db
+            .from('tournaments')
+            .select(_colsPlain)
+            .eq('id', id)
+            .maybeSingle();
+        return row == null ? null : Map<String, dynamic>.from(row);
+      } catch (e2) {
+        debugPrint('[TournamentService] fetchTournament (plain): $e2');
+        return null;
+      }
     }
   }
 
@@ -78,7 +88,7 @@ class TournamentService {
     try {
       final t = await _db
           .from('tournaments')
-          .select('capacity, status, start_date, min_elo, tournament_entries(count)')
+          .select('capacity, status, start_date, min_elo, max_elo, tournament_entries(id, status)')
           .eq('id', tournamentId)
           .single();
       final status = (t['status'] as String?) ?? '';
@@ -88,22 +98,27 @@ class TournamentService {
         return 'Registration is closed — this tournament has already started.';
       }
       final cap = (t['capacity'] as num?)?.toInt() ?? 0;
-      final entries = (t['tournament_entries'] as List?) ?? const [];
-      final count = entries.isNotEmpty
-          ? (entries.first['count'] as num?)?.toInt() ?? 0
-          : 0;
+      final allEntries = (t['tournament_entries'] as List?) ?? const [];
+      final count = allEntries
+          .where((e) => (e['status'] as String?) != 'withdrawn')
+          .length;
       if (cap > 0 && count >= cap) return 'This tournament is full.';
 
       // eligibility
       final minElo = (t['min_elo'] as num?)?.toInt() ?? 0;
-      if (minElo > 0) {
+      final maxElo = (t['max_elo'] as num?)?.toInt();
+      if (minElo > 0 || (maxElo != null && maxElo > 0)) {
         final me = await _db
             .from('profiles')
             .select('elo')
             .eq('id', uid)
             .single();
-        if (((me['elo'] as num?)?.toInt() ?? 1000) < minElo) {
+        final myElo = (me['elo'] as num?)?.toInt() ?? 1000;
+        if (minElo > 0 && myElo < minElo) {
           return "This event has a minimum level you haven't reached yet.";
+        }
+        if (maxElo != null && maxElo > 0 && myElo > maxElo) {
+          return "Your level is above the maximum for this event.";
         }
       }
 

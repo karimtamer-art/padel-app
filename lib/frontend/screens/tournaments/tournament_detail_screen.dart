@@ -82,6 +82,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   bool get _registered => _entries.any((e) => e['player_id'] == _uid);
   int get _cap => (_t?['capacity'] as num?)?.toInt() ?? 0;
   int get _minElo => (_t?['min_elo'] as num?)?.toInt() ?? 0;
+  int? get _maxElo => (_t?['max_elo'] as num?)?.toInt();
   int get _fee => (_t?['entry_fee'] as num?)?.toInt() ?? 0;
   String get _derivedStatus => TournamentService.tournamentStatus(_t ?? {}, _entries.length);
   bool get _canRegister {
@@ -370,7 +371,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               remaining != null ? '$remaining of $_cap' : '${_entries.length} pairs',
               remaining != null ? 'remaining' : 'registered')),
         ]),
-        if (_minElo > 0) ...[
+        if (_minElo > 0 || _maxElo != null) ...[
           const SizedBox(height: 22),
           Text('ELIGIBILITY', style: AppText.kicker(AppColors.primary)),
           const SizedBox(height: 4),
@@ -451,12 +452,27 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       );
 
   Widget _eligibilityCard() {
-    final lv = RankingScale.levelFromElo(_minElo);
-    // divisions at or above the minimum level
-    final divs = RankingScale.divisions
-        .where((d) => d.max >= lv)
-        .map((d) => d.metalName)
-        .toList();
+    final minLv = _minElo > 0 ? RankingScale.levelFromElo(_minElo) : null;
+    final maxElo = _maxElo;
+    final maxLv = (maxElo != null && maxElo > 0) ? RankingScale.levelFromElo(maxElo) : null;
+    final isRange = minLv != null && maxLv != null;
+
+    String subtitle;
+    if (isRange) {
+      subtitle = 'Lv ${RankingScale.fmtLevel(minLv)} – ${RankingScale.fmtLevel(maxLv)} only';
+    } else if (minLv != null) {
+      subtitle = 'Minimum Lv ${RankingScale.fmtLevel(minLv)} and above';
+    } else {
+      subtitle = 'Maximum Lv ${RankingScale.fmtLevel(maxLv!)}';
+    }
+
+    // which divisions are eligible
+    final eligDivs = RankingScale.divisions.where((d) {
+      final aboveMin = minLv == null || d.max >= minLv;
+      final belowMax = maxLv == null || d.min <= maxLv;
+      return aboveMin && belowMax;
+    }).map((d) => d.metalName).toList();
+
     return AppCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -470,16 +486,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Minimum Lv ${RankingScale.fmtLevel(lv)}',
-                  style: AppText.bodyStrong().copyWith(fontSize: 15)),
-              Text('Open to the divisions below',
+              Text(subtitle, style: AppText.bodyStrong().copyWith(fontSize: 15)),
+              Text('Eligible divisions shown below',
                   style: AppText.small().copyWith(fontSize: 12)),
             ]),
           ),
         ]),
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [
-          for (final d in divs) AppTag(d, color: AppColors.gold),
+          for (final d in eligDivs) AppTag(d, color: AppColors.gold),
         ]),
       ]),
     );

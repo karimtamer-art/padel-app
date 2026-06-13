@@ -97,6 +97,7 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final minElo = (t['min_elo'] as num?)?.toInt() ?? 0;
+    final maxElo = (t['max_elo'] as num?)?.toInt();
     final venue = (t['venue_name'] as String?) ?? '';
     final canRegister = !registered && (ds == 'open' || ds == 'postponed');
 
@@ -131,7 +132,9 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
           const SizedBox(height: 10),
           Wrap(spacing: 6, runSpacing: 6, children: [
             if (venue.isNotEmpty) AppTag(venue),
-            if (minElo > 0)
+            if (minElo > 0 && maxElo != null && maxElo > 0)
+              AppTag('Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo(minElo))}–${RankingScale.fmtLevel(RankingScale.levelFromElo(maxElo))}')
+            else if (minElo > 0)
               AppTag('Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo(minElo))}+'),
             if (registered) const AppTag('Registered', color: AppColors.primary),
           ]),
