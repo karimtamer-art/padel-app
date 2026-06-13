@@ -14,7 +14,7 @@ class TournamentService {
       '  profiles!tournament_entries_player_id_fkey(name, elo, level, tier))';
 
   static const _colsPlain =
-      'id, name, venue_name, status, start_date, end_date, capacity, entry_fee, min_elo, max_elo';
+      'id, name, venue_name, status, start_date, end_date, capacity, entry_fee, min_elo';
 
   /// All visible tournaments, soonest first. Falls back to a plain query
   /// (no entries join) so the tab still works before the migration runs.

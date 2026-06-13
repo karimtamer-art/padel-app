@@ -464,6 +464,32 @@ drop policy if exists "profiles: admin read all" on public.profiles;
 create policy "profiles: admin read all" on public.profiles
   for select using (public.is_admin());
 
+-- Ensure FK constraints exist with the exact names PostgREST resolves hints by.
+-- These may be missing if tables were created without FKs or via the dashboard.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'matches_created_by_fkey') then
+    alter table public.matches
+      add constraint matches_created_by_fkey
+      foreign key (created_by) references public.profiles(id);
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'tournament_entries_player_id_fkey') then
+    alter table public.tournament_entries
+      add constraint tournament_entries_player_id_fkey
+      foreign key (player_id) references public.profiles(id) on delete cascade;
+  end if;
+end $$;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'tournament_entries_partner_id_fkey') then
+    alter table public.tournament_entries
+      add constraint tournament_entries_partner_id_fkey
+      foreign key (partner_id) references public.profiles(id);
+  end if;
+end $$;
+
 alter table public.tournament_entries add column if not exists partner_id uuid references public.profiles(id);
 
 -- Bracket matches. slot is 0-based within the round.
@@ -762,3 +788,6 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Reload PostgREST schema cache so new FK constraints are visible immediately.
+notify pgrst, 'reload schema';

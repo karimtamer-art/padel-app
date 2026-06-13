@@ -88,21 +88,38 @@ class ProfileService {
           .eq('id', userId)
           .single();
 
-      final rawMatches = await _db
-          .from('match_players')
-          .select('''
-            team, elo_before, elo_after,
-            matches!inner(
-              id, status, match_type, scheduled_at, winner_team,
-              score_team_a, score_team_b, created_by,
-              profiles!matches_created_by_fkey(name)
-            )
-          ''')
-          .eq('player_id', userId)
-          .order('created_at', ascending: false)
-          .limit(50);
+      // Try with creator profile join; fall back without it if FK hint missing.
+      List rawMatches;
+      try {
+        rawMatches = await _db
+            .from('match_players')
+            .select('''
+              team, elo_before, elo_after,
+              matches!inner(
+                id, status, match_type, scheduled_at, winner_team,
+                score_team_a, score_team_b, created_by,
+                profiles!matches_created_by_fkey(name)
+              )
+            ''')
+            .eq('player_id', userId)
+            .order('created_at', ascending: false)
+            .limit(50);
+      } catch (_) {
+        rawMatches = await _db
+            .from('match_players')
+            .select('''
+              team, elo_before, elo_after,
+              matches!inner(
+                id, status, match_type, scheduled_at, winner_team,
+                score_team_a, score_team_b, created_by
+              )
+            ''')
+            .eq('player_id', userId)
+            .order('created_at', ascending: false)
+            .limit(50);
+      }
 
-      final rows = List<Map<String, dynamic>>.from(rawMatches as List);
+      final rows = List<Map<String, dynamic>>.from(rawMatches);
       final completed = rows.where((r) {
         final m = r['matches'] as Map?;
         return m?['status'] == 'completed' && m?['winner_team'] != null;
