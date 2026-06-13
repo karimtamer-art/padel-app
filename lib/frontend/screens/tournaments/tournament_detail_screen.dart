@@ -590,8 +590,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   }
 
   Widget _entryRow(Map<String, dynamic> e, {bool divider = false}) {
-    final prof = e['profiles'] as Map?;
-    final name = (prof?['name'] as String?) ?? 'Player';
+    final name = (e['player_name'] as String?)?.trim().isNotEmpty == true
+        ? (e['player_name'] as String)
+        : 'Player';
     final partner = e['partner_name'] as String?;
     final isMe = e['player_id'] == _uid;
     final label = (partner != null && partner.isNotEmpty) ? '$name / $partner' : name;

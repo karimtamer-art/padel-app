@@ -126,7 +126,8 @@ class AdminService {
   static Future<List<Map<String, dynamic>>> fetchTournaments() async {
     final res = await _db
         .from('tournaments')
-        .select('*, tournament_entries(id)')
+        .select('*, tournament_entries(id, player_id, player_name, '
+            'partner_id, partner_name, status, registered_at)')
         .order('start_date', ascending: false);
     return List<Map<String, dynamic>>.from(res as List);
   }
@@ -182,10 +183,8 @@ class AdminService {
       final rows = await _db
           .from('tournament_matches')
           .select('id, bracket, round, slot, winner_entry, score, '
-              'e1:tournament_entries!tournament_matches_entry1_fkey(id, partner_name, '
-              '  profiles!tournament_entries_player_id_fkey(name)), '
-              'e2:tournament_entries!tournament_matches_entry2_fkey(id, partner_name, '
-              '  profiles!tournament_entries_player_id_fkey(name))')
+              'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_name, partner_name), '
+              'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_name, partner_name)')
           .eq('tournament_id', tournamentId)
           .order('bracket')
           .order('round')

@@ -7,14 +7,20 @@ class TournamentService {
   static SupabaseClient get _db => Supabase.instance.client;
   static String? get _uid => _db.auth.currentUser?.id;
 
+  // Entries read names from the denormalised player_name/partner_name columns
+  // instead of a profiles join — that join relied on an FK *hint* that doesn't
+  // always resolve, and when it failed the whole tournament query fell back to
+  // a no-entries result (so "am I registered?" / spot counts broke).
   static const _cols =
       'id, name, venue_name, status, start_date, end_date, capacity, '
       'entry_fee, prize_pool, description, min_elo, max_elo, format, best_of, '
-      'tournament_entries(id, player_id, partner_id, partner_name, status, '
-      '  profiles!tournament_entries_player_id_fkey(name, elo, level, tier))';
+      'tournament_entries(id, player_id, player_name, partner_id, partner_name, status)';
 
+  // Fallback for a pre-migration DB: no entries join, no max_elo — but still
+  // selects the display fields (prize, about, best_of) so cards/detail render.
   static const _colsPlain =
-      'id, name, venue_name, status, start_date, end_date, capacity, entry_fee, min_elo';
+      'id, name, venue_name, status, start_date, end_date, capacity, '
+      'entry_fee, prize_pool, description, min_elo, best_of';
 
   /// All visible tournaments, soonest first. Falls back to a plain query
   /// (no entries join) so the tab still works before the migration runs.
@@ -68,10 +74,10 @@ class TournamentService {
     try {
       final rows = await _db
           .from('tournament_entries')
-          .select('id, status, partner_name, created_at, '
+          .select('id, status, partner_name, registered_at, '
               'tournaments(id, name, venue_name, status, start_date, end_date, capacity, entry_fee)')
           .eq('player_id', uid)
-          .order('created_at', ascending: false);
+          .order('registered_at', ascending: false);
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (e) {
       debugPrint('[TournamentService] fetchMyEntries: $e');
@@ -80,56 +86,20 @@ class TournamentService {
   }
 
   /// Registers the current user as a pair (partner picked in-app or named).
+  /// All eligibility checks (capacity, level, deadline) run server-side in the
+  /// `register_for_tournament` RPC so a crafted API call can't bypass them.
   /// Returns an error message or null.
   static Future<String?> register(String tournamentId,
       {String? partnerId, String? partnerName}) async {
     final uid = _uid;
     if (uid == null) return 'Not signed in.';
     try {
-      final t = await _db
-          .from('tournaments')
-          .select('capacity, status, start_date, min_elo, max_elo, tournament_entries(id, status)')
-          .eq('id', tournamentId)
-          .single();
-      final status = (t['status'] as String?) ?? '';
-      if (status == 'cancelled') return 'Registration is closed — this tournament has been cancelled.';
-      final startDt = DateTime.tryParse((t['start_date'] as String?) ?? '');
-      if (startDt != null && !DateTime.now().isBefore(startDt)) {
-        return 'Registration is closed — this tournament has already started.';
-      }
-      final cap = (t['capacity'] as num?)?.toInt() ?? 0;
-      final allEntries = (t['tournament_entries'] as List?) ?? const [];
-      final count = allEntries
-          .where((e) => (e['status'] as String?) != 'withdrawn')
-          .length;
-      if (cap > 0 && count >= cap) return 'This tournament is full.';
-
-      // eligibility
-      final minElo = (t['min_elo'] as num?)?.toInt() ?? 0;
-      final maxElo = (t['max_elo'] as num?)?.toInt();
-      if (minElo > 0 || (maxElo != null && maxElo > 0)) {
-        final me = await _db
-            .from('profiles')
-            .select('elo')
-            .eq('id', uid)
-            .single();
-        final myElo = (me['elo'] as num?)?.toInt() ?? 1000;
-        if (minElo > 0 && myElo < minElo) {
-          return "This event has a minimum level you haven't reached yet.";
-        }
-        if (maxElo != null && maxElo > 0 && myElo > maxElo) {
-          return "Your level is above the maximum for this event.";
-        }
-      }
-
-      await _db.from('tournament_entries').upsert({
-        'tournament_id': tournamentId,
-        'player_id': uid,
-        'partner_id': partnerId,
-        'partner_name': partnerName,
-        'status': 'registered',
-      }, onConflict: 'tournament_id,player_id');
-      return null;
+      final res = await _db.rpc('register_for_tournament', params: {
+        'p_tournament_id': tournamentId,
+        'p_partner_id': partnerId,
+        'p_partner_name': partnerName,
+      });
+      return res as String?;
     } on PostgrestException catch (e) {
       if (e.code == '23505') return "You're already registered.";
       return e.message;
@@ -145,12 +115,8 @@ class TournamentService {
       final rows = await _db
           .from('tournament_matches')
           .select('id, bracket, round, slot, winner_entry, score, '
-              'e1:tournament_entries!tournament_matches_entry1_fkey(id, partner_name, '
-              '  profiles!tournament_entries_player_id_fkey(name), '
-              '  partner:profiles!tournament_entries_partner_id_fkey(name)), '
-              'e2:tournament_entries!tournament_matches_entry2_fkey(id, partner_name, '
-              '  profiles!tournament_entries_player_id_fkey(name), '
-              '  partner:profiles!tournament_entries_partner_id_fkey(name))')
+              'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_name, partner_name), '
+              'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_name, partner_name)')
           .eq('tournament_id', tournamentId)
           .order('bracket')
           .order('round')
@@ -172,10 +138,8 @@ class TournamentService {
       return '${parts.first[0]}. ${parts.last}';
     }
 
-    final p1 = short((entry['profiles'] as Map?)?['name'] as String?);
-    final partnerProfile = (entry['partner'] as Map?)?['name'] as String?;
-    final partnerName = entry['partner_name'] as String?;
-    final p2raw = partnerProfile ?? partnerName;
+    final p1 = short(entry['player_name'] as String?);
+    final p2raw = entry['partner_name'] as String?;
     if (p2raw == null || p2raw.trim().isEmpty) return p1;
     return '$p1 / ${short(p2raw)}';
   }

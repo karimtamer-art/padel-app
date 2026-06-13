@@ -32,9 +32,17 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
   }
 
   static int _entryCount(Map row) {
+    return _activeEntries(row).length;
+  }
+
+  /// Registered (non-withdrawn) entry rows for a tournament.
+  static List<Map<String, dynamic>> _activeEntries(Map row) {
     final entries = row['tournament_entries'];
-    if (entries is List) return entries.length;
-    return 0;
+    if (entries is! List) return const [];
+    return entries
+        .where((e) => e is Map && e['status'] != 'withdrawn')
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
   }
 
   static String _month(String? iso) {
@@ -285,7 +293,10 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       );
 
   void _detail(Map<String, dynamic> t) {
-    final registered = _entryCount(t);
+    final entries = _activeEntries(t)
+      ..sort((a, b) => ((a['registered_at'] as String?) ?? '')
+          .compareTo((b['registered_at'] as String?) ?? ''));
+    final registered = entries.length;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final courtFees = (t['court_fees'] as num?)?.toInt() ?? 0;
@@ -297,7 +308,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       context,
       title: t['name'] as String? ?? '—',
       sub: '${t['venue_name'] ?? '—'} · ${_dateRange(t['start_date'] as String?, t['end_date'] as String?)}',
-      heightFactor: 0.7,
+      heightFactor: 0.85,
       footer: Row(children: [
         Expanded(
           child: AdminButton('Edit',
@@ -361,6 +372,67 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                 bold: true),
           ]),
         ),
+        const SizedBox(height: 18),
+        Row(children: [
+          Text('REGISTERED PAIRS', style: AdminText.kicker()),
+          const Spacer(),
+          Text('$registered', style: AdminText.kicker()),
+        ]),
+        const SizedBox(height: 8),
+        if (entries.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(12)),
+            child: Text('No pairs registered yet',
+                style: AdminText.small(AdminColors.inkFaint)),
+          )
+        else
+          Container(
+            decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AdminColors.lineSoft)),
+            child: Column(children: [
+              for (int i = 0; i < entries.length; i++)
+                _pairRow(i + 1, entries[i], divider: i > 0),
+            ]),
+          ),
+      ]),
+    );
+  }
+
+  Widget _pairRow(int seed, Map<String, dynamic> e, {bool divider = false}) {
+    final player = (e['player_name'] as String?)?.trim();
+    final partner = (e['partner_name'] as String?)?.trim();
+    final label = (partner != null && partner.isNotEmpty)
+        ? '${player?.isNotEmpty == true ? player : 'Player'} / $partner'
+        : (player?.isNotEmpty == true ? player! : 'Player');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: divider
+            ? const Border(top: BorderSide(color: AdminColors.lineSoft))
+            : null,
+      ),
+      child: Row(children: [
+        SizedBox(
+          width: 22,
+          child: Text('$seed',
+              style: AdminText.mono(11, FontWeight.w700, AdminColors.inkFaint)),
+        ),
+        Expanded(
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AdminText.sans(13, FontWeight.w700, AdminColors.ink)),
+        ),
+        if (partner == null || partner.isEmpty)
+          Text('solo / no partner',
+              style: AdminText.small(AdminColors.warn)),
       ]),
     );
   }
@@ -799,7 +871,9 @@ class _BracketManagerState extends State<_BracketManager> {
 
   static String _pair(Map<String, dynamic>? e) {
     if (e == null) return 'TBD';
-    final name = ((e['profiles'] as Map?)?['name'] as String?) ?? 'Player';
+    final name = (e['player_name'] as String?)?.trim().isNotEmpty == true
+        ? (e['player_name'] as String)
+        : 'Player';
     final partner = e['partner_name'] as String?;
     final first = name.split(' ').first;
     if (partner == null || partner.trim().isEmpty) return first;

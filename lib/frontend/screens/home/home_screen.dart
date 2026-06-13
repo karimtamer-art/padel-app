@@ -483,16 +483,19 @@ class _TournamentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
     final name = t['name'] as String? ?? 'Tournament';
-    final entries = ((t['tournament_entries'] as List?) ?? const [])
+    final entryList = ((t['tournament_entries'] as List?) ?? const [])
         .where((e) => e['status'] != 'withdrawn')
-        .length;
+        .toList();
+    final entries = entryList.length;
+    final registered = entryList.any((e) => e['player_id'] == uid);
     final ds = TournamentService.tournamentStatus(t, entries);
     final cap = (t['capacity'] as num?)?.toInt() ?? 0;
     final remaining = cap > 0 ? (cap - entries).clamp(0, cap) : null;
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
-    final canRegister = ds == 'open' || ds == 'postponed';
+    final canRegister = !registered && (ds == 'open' || ds == 'postponed');
     final sc = switch (ds) {
       'open' || 'live' => AppColors.success,
       'full' || 'postponed' => AppColors.gold,
@@ -520,7 +523,8 @@ class _TournamentTile extends StatelessWidget {
                   style: AppText.bodyStrong().copyWith(fontSize: 13.5),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
-            AppTag(statusLabel, color: sc),
+            AppTag(registered ? 'Registered' : statusLabel,
+                color: registered ? AppColors.primary : sc),
           ]),
           const SizedBox(height: 6),
           Text(_fmtRange(t['start_date'] as String?, t['end_date'] as String?),
@@ -543,7 +547,9 @@ class _TournamentTile extends StatelessWidget {
           ]),
           const SizedBox(height: 12),
           AppButton(canRegister ? 'Register' : 'View',
-              full: true, height: 38, onPressed: onTap),
+              full: true, height: 38,
+              variant: canRegister ? AppBtnVariant.solid : AppBtnVariant.outline,
+              onPressed: onTap),
         ]),
       ),
     );

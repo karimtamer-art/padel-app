@@ -407,6 +407,13 @@ do $$ begin
   create policy "own history read" on public.ranking_history for select using (auth.uid() = profile_id);
 exception when duplicate_object then null; end $$;
 
+-- Table-level privileges. RLS decides WHICH rows; these grants decide whether the
+-- role may touch the table at all. The pre-existing tournament_entries table never
+-- got insert/update granted, so registration failed with "permission denied".
+grant select, insert, update on public.tournament_entries to authenticated;
+grant select on public.tournament_entries to anon;
+grant select on public.tournament_matches  to authenticated, anon;
+
 grant execute on function public.join_match(uuid, text) to authenticated;
 grant execute on function public.leave_match(uuid) to authenticated;
 grant execute on function public.submit_match_result(uuid, text, text, text) to authenticated;
@@ -459,10 +466,25 @@ alter table public.tournaments drop constraint if exists tournaments_status_chk;
 alter table public.tournaments add constraint tournaments_status_chk
   check (status in ('upcoming','open','in_progress','completed','cancelled','auto','postponed'));
 
+-- tournament_entries.status: the live table's old check constraint predates this
+-- migration and rejects 'registered'. Widen it to the app's values (plus common
+-- legacy ones so existing rows pass).
+alter table public.tournament_entries drop constraint if exists tournament_entries_status_chk;
+alter table public.tournament_entries add constraint tournament_entries_status_chk
+  check (status in ('registered','withdrawn','confirmed','pending','paid','cancelled'));
+
 -- admin can read all profiles (needed for dashboard player count)
 drop policy if exists "profiles: admin read all" on public.profiles;
 create policy "profiles: admin read all" on public.profiles
   for select using (public.is_admin());
+
+-- Hygiene: profiles is never deleted/truncated from the client. DELETE isn't
+-- reachable anyway (no policy) and TRUNCATE isn't exposed over REST, but revoke
+-- them so the role's privileges match what the app actually needs.
+revoke delete, truncate on public.profiles from authenticated, anon;
+
+-- Drop the redundant duplicate insert policy (kept "profiles: insert own").
+drop policy if exists "profiles_insert_own" on public.profiles;
 
 -- Ensure FK constraints exist with the exact names PostgREST resolves hints by.
 -- These may be missing if tables were created without FKs or via the dashboard.
@@ -491,6 +513,19 @@ do $$ begin
 end $$;
 
 alter table public.tournament_entries add column if not exists partner_id uuid references public.profiles(id);
+-- partner_name: live table predates the create-table block, which is skipped when
+-- the table already exists, so this column was never added. Needed for displaying
+-- the second player's name on entries and brackets.
+alter table public.tournament_entries add column if not exists partner_name text;
+-- player_name: denormalised name of the registrant (mirrors partner_name) so an
+-- entry row is self-describing in the DB without joining profiles on player_id.
+alter table public.tournament_entries add column if not exists player_name text;
+
+-- Backfill player_name for existing rows from profiles.
+update public.tournament_entries te
+   set player_name = p.name
+  from public.profiles p
+ where p.id = te.player_id and (te.player_name is null or te.player_name = '');
 
 -- Bracket matches. slot is 0-based within the round.
 create table if not exists public.tournament_matches (
@@ -676,6 +711,85 @@ grant execute on function public.generate_draw(uuid) to authenticated;
 grant execute on function public.record_bracket_winner(uuid, uuid, text) to authenticated;
 
 -- ============================================================
+-- RPC: register_for_tournament — server-side eligibility so a crafted
+-- API call can't bypass the capacity / level / deadline rules. Mirrors
+-- join_match. Caller may only register themselves (uses auth.uid()).
+-- Returns null on success, or a human-readable error message.
+-- ============================================================
+create or replace function public.register_for_tournament(
+  p_tournament_id uuid,
+  p_partner_id    uuid  default null,
+  p_partner_name  text  default null)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid      uuid := auth.uid();
+  v_status   text;
+  v_start    date;
+  v_cap      int;
+  v_min      int;
+  v_max      int;
+  v_count    int;
+  v_my_elo   int;
+  v_my_name  text;
+begin
+  if v_uid is null then
+    return 'Not signed in.';
+  end if;
+
+  select status, start_date, capacity, min_elo, max_elo
+    into v_status, v_start, v_cap, v_min, v_max
+  from public.tournaments where id = p_tournament_id;
+
+  if not found then
+    return 'Tournament not found.';
+  end if;
+  if v_status = 'cancelled' then
+    return 'Registration is closed — this tournament has been cancelled.';
+  end if;
+  if v_start is not null and v_start <= current_date then
+    return 'Registration is closed — this tournament has already started.';
+  end if;
+
+  -- capacity (ignore withdrawn; an existing row for this user is a re-register)
+  select count(*) into v_count
+  from public.tournament_entries
+  where tournament_id = p_tournament_id
+    and status <> 'withdrawn'
+    and player_id <> v_uid;
+  if v_cap > 0 and v_count >= v_cap then
+    return 'This tournament is full.';
+  end if;
+
+  -- eligibility
+  if v_min > 0 or (v_max is not null and v_max > 0) then
+    select coalesce(elo, 1000) into v_my_elo from public.profiles where id = v_uid;
+    if v_min > 0 and v_my_elo < v_min then
+      return 'This event has a minimum level you haven''t reached yet.';
+    end if;
+    if v_max is not null and v_max > 0 and v_my_elo > v_max then
+      return 'Your level is above the maximum for this event.';
+    end if;
+  end if;
+
+  select name into v_my_name from public.profiles where id = v_uid;
+
+  insert into public.tournament_entries
+    (tournament_id, player_id, player_name, partner_id, partner_name, status)
+  values (p_tournament_id, v_uid, v_my_name, p_partner_id, p_partner_name, 'registered')
+  on conflict (tournament_id, player_id) do update
+    set player_name = excluded.player_name,
+        partner_id = excluded.partner_id,
+        partner_name = excluded.partner_name,
+        status = 'registered';
+  return null;
+exception when others then
+  return sqlerrm;
+end $$;
+
+grant execute on function public.register_for_tournament(uuid, uuid, text) to authenticated;
+
+-- ============================================================
 -- Profile column cleanup + signup hardening
 --   • Drop legacy duplicate columns (dob/hand/court_side/full_name)
 --   • Canonical names: date_of_birth, preferred_hand,
@@ -700,13 +814,38 @@ alter table public.profiles add column if not exists tier text;
 alter table public.profiles add column if not exists division_pts int;
 alter table public.profiles add column if not exists placement_played int;
 
--- migrate data from legacy columns before dropping them
-update public.profiles set date_of_birth   = dob        where date_of_birth is null and dob is not null;
-update public.profiles set preferred_hand  = hand       where preferred_hand is null and hand is not null;
-update public.profiles set preferred_court_side = court_side where preferred_court_side is null and court_side is not null;
-update public.profiles set name = full_name where (name is null or name = '') and full_name is not null;
+-- migrate data from legacy columns before dropping them.
+-- Guarded so the section is safe to re-run after the columns are already gone.
+do $$
+declare
+  has_col boolean;
+begin
+  select exists (select 1 from information_schema.columns
+    where table_schema='public' and table_name='profiles' and column_name='dob') into has_col;
+  if has_col then
+    update public.profiles set date_of_birth = dob where date_of_birth is null and dob is not null;
+  end if;
 
--- drop legacy duplicate columns
+  select exists (select 1 from information_schema.columns
+    where table_schema='public' and table_name='profiles' and column_name='hand') into has_col;
+  if has_col then
+    update public.profiles set preferred_hand = hand where preferred_hand is null and hand is not null;
+  end if;
+
+  select exists (select 1 from information_schema.columns
+    where table_schema='public' and table_name='profiles' and column_name='court_side') into has_col;
+  if has_col then
+    update public.profiles set preferred_court_side = court_side where preferred_court_side is null and court_side is not null;
+  end if;
+
+  select exists (select 1 from information_schema.columns
+    where table_schema='public' and table_name='profiles' and column_name='full_name') into has_col;
+  if has_col then
+    update public.profiles set name = full_name where (name is null or name = '') and full_name is not null;
+  end if;
+end $$;
+
+-- drop legacy duplicate columns (no-op once already dropped)
 alter table public.profiles drop column if exists dob;
 alter table public.profiles drop column if exists hand;
 alter table public.profiles drop column if exists court_side;

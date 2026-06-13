@@ -29,10 +29,33 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
 
   Future<void> _load() async {
     final tournaments = await TournamentService.fetchTournaments();
+    _sortActiveFirst(tournaments);
     if (!mounted) return;
     setState(() {
       _tournaments = tournaments;
       _loading = false;
+    });
+  }
+
+  /// Active events (open/live/full/postponed) first by soonest date; finished
+  /// ones (completed/cancelled) sink to the bottom, most recent first.
+  static void _sortActiveFirst(List<Map<String, dynamic>> list) {
+    bool done(Map<String, dynamic> t) {
+      final entries = ((t['tournament_entries'] as List?) ?? const [])
+          .where((e) => e['status'] != 'withdrawn')
+          .length;
+      final ds = TournamentService.tournamentStatus(t, entries);
+      return ds == 'completed' || ds == 'cancelled';
+    }
+
+    list.sort((a, b) {
+      final da = done(a), db = done(b);
+      if (da != db) return da ? 1 : -1;
+      final sa = DateTime.tryParse((a['start_date'] as String?) ?? '');
+      final sb = DateTime.tryParse((b['start_date'] as String?) ?? '');
+      if (sa == null || sb == null) return 0;
+      // active: soonest first; finished: most recent first
+      return da ? sb.compareTo(sa) : sa.compareTo(sb);
     });
   }
 
