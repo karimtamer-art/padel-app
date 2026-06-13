@@ -25,6 +25,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Map<String, dynamic> _original = {};
 
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _usernameCtrl;
   late final TextEditingController _emailCtrl;
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _bioCtrl;
@@ -40,6 +41,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void initState() {
     super.initState();
     _nameCtrl  = TextEditingController();
+    _usernameCtrl = TextEditingController();
     _emailCtrl = TextEditingController();
     _phoneCtrl = TextEditingController();
     _bioCtrl   = TextEditingController();
@@ -56,7 +58,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   void dispose() {
-    for (final c in [_nameCtrl, _emailCtrl, _phoneCtrl, _bioCtrl, _cityCtrl, _dobCtrl]) {
+    for (final c in [_nameCtrl, _usernameCtrl, _emailCtrl, _phoneCtrl, _bioCtrl, _cityCtrl, _dobCtrl]) {
       c.dispose();
     }
     super.dispose();
@@ -74,6 +76,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void _fill(Map<String, dynamic> data) {
     _original = Map.from(data);
     _nameCtrl.text  = data['name']  as String? ?? '';
+    _usernameCtrl.text = data['username'] as String? ?? '';
     _phoneCtrl.text = data['phone'] as String? ?? '';
     _bioCtrl.text   = data['bio']   as String? ?? '';
     _cityCtrl.text  = data['city']  as String? ?? '';
@@ -147,10 +150,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) { _snack('Please enter your name.', error: true); return; }
 
+    final username = _usernameCtrl.text.trim().toLowerCase();
+    if (!_usernameRe.hasMatch(username)) {
+      _snack('Username must be 3–20 characters: letters, numbers, or _.', error: true);
+      return;
+    }
+    // only spend a round-trip if the handle actually changed
+    if (username != (_original['username'] as String?)?.toLowerCase()) {
+      setState(() => _saving = true);
+      final free = await ProfileService.isUsernameAvailable(username);
+      if (!mounted) return;
+      if (!free) {
+        setState(() => _saving = false);
+        _snack('That username is already taken. Try another.', error: true);
+        return;
+      }
+    }
+
     setState(() => _saving = true);
 
     final updates = <String, dynamic>{
       'name':       name,
+      'username':   username,
       'phone':      _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
       'bio':        _bioCtrl.text.trim(),
       'city':       _cityCtrl.text.trim().isEmpty ? null : _cityCtrl.text.trim(),
@@ -185,6 +206,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (parts.isNotEmpty) return parts[0][0].toUpperCase();
     return 'P';
   }
+
+  static final _usernameRe = RegExp(r'^[a-z0-9_]{3,20}$');
 
   static String _fmtDate(DateTime d) {
     const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -247,6 +270,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 // ── Personal ──
                 AuthField(label: 'Full Name', icon: Icons.person_outline_rounded,
                     controller: _nameCtrl, capitalization: TextCapitalization.words),
+                const SizedBox(height: 16),
+                AuthField(label: 'Username', icon: Icons.alternate_email_rounded,
+                    controller: _usernameCtrl,
+                    helper: 'How teammates find you. 3–20 chars: letters, numbers, _'),
                 const SizedBox(height: 16),
                 AuthField(label: 'Email', icon: Icons.mail_outline_rounded,
                     controller: _emailCtrl, keyboard: TextInputType.emailAddress,

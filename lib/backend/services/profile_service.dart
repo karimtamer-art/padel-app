@@ -54,8 +54,22 @@ class ProfileService {
   static SupabaseClient get _db => Supabase.instance.client;
 
   static const _profileCols =
-      'id, name, phone, bio, date_of_birth, gender, preferred_hand, preferred_court_side, city, avatar_url, '
+      'id, name, username, phone, bio, date_of_birth, gender, preferred_hand, preferred_court_side, city, avatar_url, '
       'elo, tier, division_pts, level, placement_played, created_at';
+
+  /// True when [username] is free (and validly formatted). Backed by the
+  /// `username_available` RPC so it works pre-auth during signup. On a network
+  /// error returns true — the unique index is the real guard on write.
+  static Future<bool> isUsernameAvailable(String username) async {
+    try {
+      final res = await _db.rpc('username_available',
+          params: {'p_username': username.trim().toLowerCase()});
+      return res == true;
+    } catch (e) {
+      debugPrint('[ProfileService] isUsernameAvailable: $e');
+      return true;
+    }
+  }
 
   static Future<Map<String, dynamic>?> getProfile(String uid) async {
     try {

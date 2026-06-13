@@ -71,14 +71,19 @@ class MatchService {
   }
 
   /// Player search for the partner picker (excludes self + admins).
+  ///
+  /// Matches on the unique @username handle only — free-text name is ambiguous
+  /// (two "Karim"s) and email is intentionally not exposed. A leading '@' and
+  /// case are ignored. An empty query returns top players by ELO as suggestions.
   static Future<List<Map<String, dynamic>>> searchPlayers(String query) async {
     try {
       var q = _db
           .from('profiles')
-          .select('id, name, elo, level, tier')
+          .select('id, name, username, elo, level, tier')
           .eq('is_admin', false)
           .neq('id', _uid ?? '');
-      if (query.trim().isNotEmpty) q = q.ilike('name', '%${query.trim()}%');
+      final term = query.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+      if (term.isNotEmpty) q = q.ilike('username', '%$term%');
       final rows = await q.order('elo', ascending: false).limit(20);
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (e) {

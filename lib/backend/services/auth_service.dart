@@ -119,6 +119,7 @@ class AuthService {
         password: data.password,
         data: {
           'name': data.name.trim(),
+          'username': data.username.trim().toLowerCase(),
           'phone': data.phone.trim(),
           'bio': data.bio.trim(),
           'date_of_birth': data.dob?.toIso8601String().split('T').first ?? '',

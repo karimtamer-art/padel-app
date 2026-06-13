@@ -813,6 +813,7 @@ alter table public.profiles add column if not exists level numeric;
 alter table public.profiles add column if not exists tier text;
 alter table public.profiles add column if not exists division_pts int;
 alter table public.profiles add column if not exists placement_played int;
+alter table public.profiles add column if not exists username text;
 
 -- migrate data from legacy columns before dropping them.
 -- Guarded so the section is safe to re-run after the columns are already gone.
@@ -867,20 +868,97 @@ grant update (preferred_hand, preferred_court_side, date_of_birth)
 -- grant update(id) so PostgREST upserts (onboarding save) work
 grant update (id) on public.profiles to authenticated;
 
+-- ── Username (searchable handle) ─────────────────────────────────────────────
+-- Players are found by @username in the partner pickers (match + tournament),
+-- since free-text name is ambiguous and email is intentionally not exposed.
+-- Format: 3–20 chars, lowercase letters / digits / underscore. Stored lowercase.
+alter table public.profiles drop constraint if exists profiles_username_chk;
+alter table public.profiles add constraint profiles_username_chk
+  check (username is null or username ~ '^[a-z0-9_]{3,20}$');
+
+-- Generates a unique handle from a seed (usually the display name), falling back
+-- to player<id-fragment> when the seed has too few usable characters. Dedupes by
+-- appending the smallest integer suffix that is still free. Used by the backfill
+-- below and by handle_new_user when signup metadata is missing/invalid/taken.
+create or replace function public._unique_username(p_seed text, p_fallback_id uuid)
+returns text
+language plpgsql
+security definer set search_path = public as $$
+declare
+  base text;
+  cand text;
+  n int := 0;
+begin
+  base := regexp_replace(lower(coalesce(p_seed, '')), '[^a-z0-9]+', '', 'g');
+  if length(base) < 3 then
+    base := 'player' || substr(replace(p_fallback_id::text, '-', ''), 1, 6);
+  end if;
+  base := substr(base, 1, 16);
+  cand := base;
+  while exists (select 1 from public.profiles where lower(username) = cand) loop
+    n := n + 1;
+    cand := substr(base, 1, 16 - length(n::text)) || n::text;
+  end loop;
+  return cand;
+end $$;
+
+-- Backfill existing players so everyone is immediately searchable.
+do $$
+declare r record;
+begin
+  for r in select id, name from public.profiles where username is null loop
+    update public.profiles
+       set username = public._unique_username(r.name, r.id)
+     where id = r.id;
+  end loop;
+end $$;
+
+-- Case-insensitive uniqueness (created after backfill so it can't fail on dupes).
+create unique index if not exists profiles_username_key
+  on public.profiles (lower(username));
+
+-- Players may set/change their own handle — username is not a rating column, so a
+-- plain column grant is safe (the unique index is the real guard).
+grant update (username) on public.profiles to authenticated;
+
+-- Availability check for the signup/edit screens. SECURITY DEFINER so it works
+-- pre-auth (anon, during signup) without exposing the whole profiles table.
+create or replace function public.username_available(p_username text)
+returns boolean
+language sql
+security definer set search_path = public as $$
+  select case
+    when p_username is null
+      or lower(trim(p_username)) !~ '^[a-z0-9_]{3,20}$' then false
+    else not exists (
+      select 1 from public.profiles where lower(username) = lower(trim(p_username)))
+  end;
+$$;
+grant execute on function public.username_available(text) to anon, authenticated;
+
 -- rebuild trigger with canonical column names only
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer set search_path = public as $$
 declare
-  v_name   text;
-  v_dob    date;
-  v_gender text;
-  v_hand   text;
-  v_side   text;
+  v_name     text;
+  v_username text;
+  v_dob      date;
+  v_gender   text;
+  v_hand     text;
+  v_side     text;
 begin
   v_name := nullif(trim(coalesce(new.raw_user_meta_data->>'name',
                                  new.raw_user_meta_data->>'full_name', '')), '');
+
+  -- keep a valid, free handle from signup metadata; otherwise generate one
+  v_username := nullif(lower(trim(coalesce(new.raw_user_meta_data->>'username', ''))), '');
+  if v_username is null
+     or v_username !~ '^[a-z0-9_]{3,20}$'
+     or exists (select 1 from public.profiles where lower(username) = v_username) then
+    v_username := public._unique_username(coalesce(v_username, v_name), new.id);
+  end if;
   begin
     v_dob := nullif(new.raw_user_meta_data->>'date_of_birth', '')::date;
   exception when others then
@@ -899,11 +977,11 @@ begin
 
   begin
     insert into public.profiles
-      (id, name, avatar_url, phone, bio,
+      (id, name, username, avatar_url, phone, bio,
        date_of_birth, gender, preferred_hand, preferred_court_side,
        elo, level, tier, division_pts, placement_played)
     values
-      (new.id, v_name,
+      (new.id, v_name, v_username,
        new.raw_user_meta_data->>'avatar_url',
        nullif(new.raw_user_meta_data->>'phone', ''),
        nullif(new.raw_user_meta_data->>'bio', ''),

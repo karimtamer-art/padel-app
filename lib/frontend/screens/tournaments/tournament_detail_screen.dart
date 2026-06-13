@@ -518,7 +518,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
                   controller: _search,
                   onChanged: _searchPlayers,
                   decoration: InputDecoration(
-                    hintText: 'Search players to team up with…',
+                    hintText: 'Search players by @username…',
                     hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 13.5),
                     border: InputBorder.none,
                   ),
@@ -551,11 +551,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
 
   Widget _playerTile(Map<String, dynamic> p, {bool selected = false}) {
     final name = p['name'] as String? ?? 'Player';
+    final username = p['username'] as String?;
     final elo = (p['elo'] as num?)?.toInt() ?? 1000;
     final lv = (p['level'] as num?)?.toDouble() ?? RankingScale.levelFromElo(elo);
     final initials = name.trim().isEmpty
         ? 'P'
         : name.trim().split(RegExp(r'\s+')).take(2).map((w) => w[0]).join().toUpperCase();
+    final subtitle = (username != null && username.isNotEmpty)
+        ? '@$username'
+        : RankingScale.levelTag(lv);
     return GestureDetector(
       onTap: () => setState(() => _partner = selected ? null : p),
       child: Container(
@@ -573,7 +577,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(name, style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
-              Text(RankingScale.levelTag(lv),
+              Text(subtitle,
                   style: AppText.small().copyWith(fontSize: 11.5)),
             ]),
           ),

@@ -5,11 +5,12 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/backend/services/auth_service.dart';
+import 'package:padel_clay/backend/services/profile_service.dart';
 import 'auth_widgets.dart';
 
 /// Collected onboarding answers.
 class SignUpData {
-  String name = '', email = '', phone = '', password = '', confirm = '', bio = '';
+  String name = '', username = '', email = '', phone = '', password = '', confirm = '', bio = '';
   DateTime? dob;
   String gender = '';
   String hand = 'right';
@@ -34,6 +35,7 @@ class _SignUpFlowState extends State<SignUpFlow> {
 
   // Controllers keep field text when the user navigates between steps.
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _usernameCtrl;
   late final TextEditingController _emailCtrl;
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _passCtrl;
@@ -47,6 +49,7 @@ class _SignUpFlowState extends State<SignUpFlow> {
   void initState() {
     super.initState();
     _nameCtrl    = TextEditingController(text: _data.name);
+    _usernameCtrl = TextEditingController(text: _data.username);
     _emailCtrl   = TextEditingController(text: _data.email);
     _phoneCtrl   = TextEditingController(text: _data.phone);
     _passCtrl    = TextEditingController(text: _data.password);
@@ -57,6 +60,7 @@ class _SignUpFlowState extends State<SignUpFlow> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _usernameCtrl.dispose();
     _emailCtrl.dispose();
     _phoneCtrl.dispose();
     _passCtrl.dispose();
@@ -67,8 +71,15 @@ class _SignUpFlowState extends State<SignUpFlow> {
 
   void _back() => _step == 0 ? widget.onExit() : setState(() => _step--);
 
+  static final _usernameRe = RegExp(r'^[a-z0-9_]{3,20}$');
+
   String? _validateStep0() {
     if (_data.name.trim().isEmpty)        return 'Please enter your full name.';
+    final username = _data.username.trim().toLowerCase();
+    if (username.isEmpty)                 return 'Please choose a username.';
+    if (!_usernameRe.hasMatch(username)) {
+      return 'Username must be 3–20 characters: letters, numbers, or _.';
+    }
     final email = _data.email.trim();
     if (email.isEmpty)                    return 'Please enter your email.';
     if (!email.contains('@') || !email.contains('.')) return 'Please enter a valid email address.';
@@ -90,6 +101,20 @@ class _SignUpFlowState extends State<SignUpFlow> {
       if (err != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(err), backgroundColor: const Color(0xFFB00020)),
+        );
+        return;
+      }
+      // username is unique — check before advancing so the user fixes it here,
+      // not after submitting the whole form.
+      setState(() => _loading = true);
+      final free = await ProfileService.isUsernameAvailable(_data.username);
+      if (!mounted) return;
+      setState(() => _loading = false);
+      if (!free) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('That username is already taken. Try another.'),
+              backgroundColor: Color(0xFFB00020)),
         );
         return;
       }
@@ -253,6 +278,15 @@ class _SignUpFlowState extends State<SignUpFlow> {
           capitalization: TextCapitalization.words,
           controller: _nameCtrl,
           onChanged: (v) => _data.name = v,
+        ),
+        const SizedBox(height: 16),
+        AuthField(
+          label: 'Username',
+          icon: Icons.alternate_email_rounded,
+          hint: 'karim_h',
+          helper: 'How teammates find you. 3–20 chars: letters, numbers, _',
+          controller: _usernameCtrl,
+          onChanged: (v) => _data.username = v,
         ),
         const SizedBox(height: 16),
         AuthField(
