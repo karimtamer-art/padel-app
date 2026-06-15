@@ -90,7 +90,10 @@ class TournamentService {
   /// `register_for_tournament` RPC so a crafted API call can't bypass them.
   /// Returns an error message or null.
   static Future<String?> register(String tournamentId,
-      {String? partnerId, String? partnerName}) async {
+      {String? partnerId,
+      String? partnerName,
+      String? instapaySender,
+      String? instapayProofUrl}) async {
     final uid = _uid;
     if (uid == null) return 'Not signed in.';
     try {
@@ -98,6 +101,8 @@ class TournamentService {
         'p_tournament_id': tournamentId,
         'p_partner_id': partnerId,
         'p_partner_name': partnerName,
+        'p_instapay_sender': instapaySender,
+        'p_instapay_proof_url': instapayProofUrl,
       });
       return res as String?;
     } on PostgrestException catch (e) {
@@ -106,6 +111,18 @@ class TournamentService {
     } catch (e) {
       return e.toString();
     }
+  }
+
+  /// Would withdrawing *now* refund the entry fee? Eligible only strictly
+  /// before the start date — withdrawing on the start day (or later) forfeits.
+  /// Mirrors the server rule in `withdraw_from_tournament`.
+  static bool refundableNow(Map<String, dynamic> t) {
+    final start = DateTime.tryParse((t['start_date'] as String?) ?? '');
+    if (start == null) return true;
+    final now = DateTime.now();
+    final startDay = DateTime(start.year, start.month, start.day);
+    final today = DateTime(now.year, now.month, now.day);
+    return today.isBefore(startDay);
   }
 
   /// Bracket matches for a tournament, with pair names resolved.
@@ -144,21 +161,45 @@ class TournamentService {
     return '$p1 / ${short(p2raw)}';
   }
 
+  /// Withdraws the current user's pair. The refund decision (entry fee back
+  /// only if withdrawing before the start date) is made server-side.
   static Future<String?> withdraw(String tournamentId) async {
     final uid = _uid;
     if (uid == null) return 'Not signed in.';
     try {
-      await _db
-          .from('tournament_entries')
-          .update({'status': 'withdrawn'})
-          .eq('tournament_id', tournamentId)
-          .eq('player_id', uid);
-      return null;
+      final res = await _db.rpc('withdraw_from_tournament',
+          params: {'p_tournament_id': tournamentId});
+      return res as String?;
     } on PostgrestException catch (e) {
       return e.message;
     } catch (e) {
       return e.toString();
     }
+  }
+
+  /// True if [uid] is an active participant in [entries] — either the
+  /// registrant (`player_id`) or the named partner (`partner_id`) — ignoring
+  /// withdrawn rows. A player added as someone's partner counts as "in", so
+  /// they can't register again and their cards show the registered state.
+  static bool isParticipant(List<dynamic>? entries, String? uid) {
+    if (uid == null || entries == null) return false;
+    for (final e in entries) {
+      final m = e as Map;
+      if (m['status'] == 'withdrawn') continue;
+      if (m['player_id'] == uid || m['partner_id'] == uid) return true;
+    }
+    return false;
+  }
+
+  /// True only if [uid] is the registrant (the one who can withdraw the pair).
+  static bool isRegistrant(List<dynamic>? entries, String? uid) {
+    if (uid == null || entries == null) return false;
+    for (final e in entries) {
+      final m = e as Map;
+      if (m['status'] == 'withdrawn') continue;
+      if (m['player_id'] == uid) return true;
+    }
+    return false;
   }
 
   /// Derives the effective display status from a tournament map + entry count.

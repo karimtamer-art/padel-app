@@ -122,9 +122,35 @@ class AdminService {
     final res = await _db
         .from('tournaments')
         .select('*, tournament_entries(id, player_id, player_name, '
-            'partner_id, partner_name, status, registered_at)')
+            'partner_id, partner_name, status, registered_at, '
+            'payment_method, paid_amount, instapay_sender, instapay_proof_url, '
+            'refund_status)')
         .order('start_date', ascending: false);
     return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  /// Confirms a tournament entry's InstaPay transfer (pending → paid).
+  static Future<String?> verifyTournamentEntry(String entryId) =>
+      _updateEntry(entryId, {'status': 'paid'});
+
+  /// Rejects a pending entry (no money received) — frees the spot.
+  static Future<String?> rejectTournamentEntry(String entryId) =>
+      _updateEntry(entryId, {'status': 'withdrawn', 'refund_status': 'none'});
+
+  /// Marks a due refund as processed (admin has sent the money back).
+  static Future<String?> refundTournamentEntry(String entryId) =>
+      _updateEntry(entryId, {'refund_status': 'refunded'});
+
+  static Future<String?> _updateEntry(
+      String entryId, Map<String, dynamic> data) async {
+    try {
+      await _db.from('tournament_entries').update(data).eq('id', entryId);
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   static Future<String?> upsertTournament(Map<String, dynamic> data) async {

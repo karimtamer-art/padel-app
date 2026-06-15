@@ -99,7 +99,8 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     final entries = ((t['tournament_entries'] as List?) ?? const [])
         .where((e) => e['status'] != 'withdrawn')
         .toList();
-    final registered = entries.any((e) => e['player_id'] == _uid);
+    final registered =
+        TournamentService.isParticipant(t['tournament_entries'] as List?, _uid);
     final ds = TournamentService.tournamentStatus(t, entries.length);
     final sc = switch (ds) {
       'open' || 'live' => AppColors.success,

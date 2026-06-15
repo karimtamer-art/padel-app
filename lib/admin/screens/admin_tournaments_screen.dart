@@ -297,6 +297,13 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       ..sort((a, b) => ((a['registered_at'] as String?) ?? '')
           .compareTo((b['registered_at'] as String?) ?? ''));
     final registered = entries.length;
+    final raw = ((t['tournament_entries'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    final refundsDue =
+        raw.where((e) => e['refund_status'] == 'due').toList();
+    final toVerify = entries.where((e) => e['status'] == 'pending').length;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final courtFees = (t['court_fees'] as num?)?.toInt() ?? 0;
@@ -375,6 +382,10 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         const SizedBox(height: 18),
         Row(children: [
           Text('REGISTERED PAIRS', style: AdminText.kicker()),
+          if (toVerify > 0) ...[
+            const SizedBox(width: 8),
+            _payChip('$toVerify to verify', AdminColors.warn),
+          ],
           const Spacer(),
           Text('$registered', style: AdminText.kicker()),
         ]),
@@ -398,20 +409,53 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                 border: Border.all(color: AdminColors.lineSoft)),
             child: Column(children: [
               for (int i = 0; i < entries.length; i++)
-                _pairRow(i + 1, entries[i], divider: i > 0),
+                _pairRow(t, i + 1, entries[i], divider: i > 0),
             ]),
           ),
+        if (refundsDue.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          Row(children: [
+            Text('REFUNDS DUE', style: AdminText.kicker()),
+            const SizedBox(width: 8),
+            _payChip('${refundsDue.length}', AdminColors.danger),
+          ]),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AdminColors.lineSoft)),
+            child: Column(children: [
+              for (int i = 0; i < refundsDue.length; i++)
+                _refundRow(t, refundsDue[i], divider: i > 0),
+            ]),
+          ),
+        ],
       ]),
     );
   }
 
-  Widget _pairRow(int seed, Map<String, dynamic> e, {bool divider = false}) {
+  static String _pairLabel(Map<String, dynamic> e) {
     final player = (e['player_name'] as String?)?.trim();
     final partner = (e['partner_name'] as String?)?.trim();
-    final label = (partner != null && partner.isNotEmpty)
+    return (partner != null && partner.isNotEmpty)
         ? '${player?.isNotEmpty == true ? player : 'Player'} / $partner'
         : (player?.isNotEmpty == true ? player! : 'Player');
-    return Container(
+  }
+
+  Widget _pairRow(Map<String, dynamic> t, int seed, Map<String, dynamic> e,
+      {bool divider = false}) {
+    final partner = (e['partner_name'] as String?)?.trim();
+    final status = e['status'] as String? ?? '';
+    final method = e['payment_method'] as String?;
+    final pending = status == 'pending';
+    final (chipColor, chipLabel) = switch (status) {
+      'pending' => (AdminColors.warn, 'Pay: review'),
+      'paid' => (AdminColors.success, 'Paid'),
+      _ => (AdminColors.inkFaint, ''),
+    };
+    final hasPay = method == 'instapay' || status == 'paid' || pending;
+    final row = Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         border: divider
@@ -425,14 +469,174 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               style: AdminText.mono(11, FontWeight.w700, AdminColors.inkFaint)),
         ),
         Expanded(
-          child: Text(label,
+          child: Text(_pairLabel(e),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: AdminText.sans(13, FontWeight.w700, AdminColors.ink)),
         ),
-        if (partner == null || partner.isEmpty)
-          Text('solo / no partner',
-              style: AdminText.small(AdminColors.warn)),
+        if (hasPay && chipLabel.isNotEmpty) _payChip(chipLabel, chipColor),
+        if (pending) ...[
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded,
+              size: 16, color: AdminColors.inkFaint),
+        ] else if (!hasPay && (partner == null || partner.isEmpty))
+          Text('solo / no partner', style: AdminText.small(AdminColors.warn)),
+      ]),
+    );
+    if (!pending) return row;
+    return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _entryAction(t, e),
+        child: row);
+  }
+
+  Widget _refundRow(Map<String, dynamic> t, Map<String, dynamic> e,
+      {bool divider = false}) {
+    final amount = (e['paid_amount'] as num?)?.toInt() ??
+        (t['entry_fee'] as num?)?.toInt() ??
+        0;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _entryAction(t, e),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          border: divider
+              ? const Border(top: BorderSide(color: AdminColors.lineSoft))
+              : null,
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Text(_pairLabel(e),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AdminText.sans(13, FontWeight.w700, AdminColors.ink)),
+          ),
+          Text(_egp(amount),
+              style: AdminText.sans(13, FontWeight.w800, AdminColors.danger)),
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded,
+              size: 16, color: AdminColors.inkFaint),
+        ]),
+      ),
+    );
+  }
+
+  Widget _payChip(String label, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+            color: AdminColors.wash(color, 0.14),
+            borderRadius: BorderRadius.circular(999)),
+        child: Text(label, style: AdminText.sans(10.5, FontWeight.w700, color)),
+      );
+
+  Widget _matchRow(String label, String value) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+        decoration: BoxDecoration(
+            color: AdminColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(11)),
+        child: Row(children: [
+          Text(label, style: AdminText.small(AdminColors.inkSoft)),
+          const Spacer(),
+          Text(value, style: AdminText.strong()),
+        ]),
+      );
+
+  /// Verify a pending InstaPay entry (with proof) or process a due refund.
+  void _entryAction(Map<String, dynamic> t, Map<String, dynamic> e) {
+    final status = e['status'] as String? ?? '';
+    final pending = status == 'pending';
+    final refundDue = e['refund_status'] == 'due';
+    final sender = e['instapay_sender'] as String?;
+    final proof = e['instapay_proof_url'] as String?;
+    final amount = (e['paid_amount'] as num?)?.toInt() ??
+        (t['entry_fee'] as num?)?.toInt() ??
+        0;
+
+    Future<void> act(Future<String?> Function() fn, String okMsg) async {
+      final err = await fn();
+      if (!mounted) return;
+      Navigator.pop(context); // entry sheet
+      Navigator.pop(context); // tournament detail sheet
+      await _load();
+      if (mounted) adminToast(context, err ?? okMsg, ok: err == null);
+    }
+
+    Widget? footer;
+    if (pending) {
+      footer = Row(children: [
+        Expanded(
+          child: AdminButton('Confirm payment',
+              full: true,
+              height: 50,
+              variant: AdminBtn.success,
+              icon: Icons.check_rounded,
+              onPressed: () => act(
+                  () => AdminService.verifyTournamentEntry(e['id'] as String),
+                  'Payment confirmed — pair is in')),
+        ),
+        const SizedBox(width: 10),
+        AdminButton('Reject',
+            height: 50,
+            variant: AdminBtn.danger,
+            onPressed: () => act(
+                () => AdminService.rejectTournamentEntry(e['id'] as String),
+                'Entry rejected')),
+      ]);
+    } else if (refundDue) {
+      footer = AdminButton('Mark refunded',
+          full: true,
+          height: 50,
+          variant: AdminBtn.success,
+          icon: Icons.check_rounded,
+          onPressed: () => act(
+              () => AdminService.refundTournamentEntry(e['id'] as String),
+              'Refund marked as processed'));
+    }
+
+    adminSheet(
+      context,
+      title: _pairLabel(e),
+      sub: pending
+          ? 'Verify InstaPay transfer'
+          : refundDue
+              ? 'Process refund'
+              : 'Entry',
+      heightFactor: 0.72,
+      footer: footer,
+      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _matchRow('Amount', _egp(amount)),
+        const SizedBox(height: 8),
+        _matchRow(
+            'Sender username', (sender == null || sender.isEmpty) ? '—' : sender),
+        const SizedBox(height: 14),
+        Text('TRANSFER SCREENSHOT', style: AdminText.kicker()),
+        const SizedBox(height: 8),
+        if (proof == null || proof.isEmpty)
+          Text('No screenshot attached.', style: AdminText.small())
+        else
+          FutureBuilder<String?>(
+            future: AdminService.signProofUrl(proof),
+            builder: (ctx, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const SizedBox(
+                    height: 80,
+                    child: Center(
+                        child: CircularProgressIndicator(
+                            color: AdminColors.primary)));
+              }
+              final url = snap.data;
+              if (url == null) {
+                return Text('Could not load screenshot.',
+                    style: AdminText.small());
+              }
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(url,
+                    width: double.infinity, height: 220, fit: BoxFit.cover),
+              );
+            },
+          ),
       ]),
     );
   }

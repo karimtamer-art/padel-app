@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
+import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 
@@ -79,7 +82,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           .where((e) => e['status'] != 'withdrawn')
           .toList();
 
-  bool get _registered => _entries.any((e) => e['player_id'] == _uid);
+  // Registered = in the pair as registrant OR partner. Only the registrant
+  // can withdraw the pair; a partner is "in" but didn't create the entry.
+  bool get _registered =>
+      TournamentService.isParticipant(_t?['tournament_entries'] as List?, _uid);
+  bool get _isRegistrant =>
+      TournamentService.isRegistrant(_t?['tournament_entries'] as List?, _uid);
   int get _cap => (_t?['capacity'] as num?)?.toInt() ?? 0;
   int get _minElo => (_t?['min_elo'] as num?)?.toInt() ?? 0;
   int? get _maxElo => (_t?['max_elo'] as num?)?.toInt();
@@ -96,24 +104,58 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           backgroundColor: color ?? AppColors.ink,
           content: Text(msg)));
 
-  Future<void> _register() async {
+  /// Entry point for the Register button. Free events register straight away;
+  /// paid events collect an InstaPay transfer (sender + proof) first.
+  Future<void> _startRegister() async {
+    if (_fee <= 0) {
+      await _register();
+      return;
+    }
+    final result = await showModalBottomSheet<Map<String, String?>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _TournamentPaymentSheet(
+        amount: _fee,
+        tournamentName: (_t?['name'] as String?) ?? 'this tournament',
+      ),
+    );
+    if (result == null || !mounted) return; // cancelled
+    await _register(
+        instapaySender: result['sender'], instapayProofUrl: result['proof']);
+  }
+
+  Future<void> _register({String? instapaySender, String? instapayProofUrl}) async {
     setState(() => _busy = true);
     final err = await TournamentService.register(
       widget.tournamentId,
       partnerId: _partner?['id'] as String?,
       partnerName: _partner?['name'] as String?,
+      instapaySender: instapaySender,
+      instapayProofUrl: instapayProofUrl,
     );
     if (!mounted) return;
     setState(() => _busy = false);
     if (err != null) {
       _snack(err, color: AppColors.danger);
     } else {
-      _snack("You're in! See you at ${(_t?['venue_name'] as String?) ?? 'the club'}.");
+      _snack(_fee > 0
+          ? "Spot reserved — we'll confirm once your transfer is verified."
+          : "You're in! See you at ${(_t?['venue_name'] as String?) ?? 'the club'}.");
       _load();
     }
   }
 
   Future<void> _withdraw() async {
+    final paidEntry = _fee > 0;
+    final refundable = TournamentService.refundableNow(_t ?? {});
+    final body = !paidEntry
+        ? 'Your spot opens for another pair.'
+        : refundable
+            ? 'Your spot opens up, and your ${_egp(_fee)} entry fee will be '
+                'refunded once an admin processes it.'
+            : 'Withdrawing on the tournament day — your ${_egp(_fee)} entry fee '
+                'is non-refundable.';
     final sure = await showDialog<bool>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.45),
@@ -134,8 +176,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               Text('Withdraw?',
                   style: AppText.stat(24, AppColors.ink).copyWith(letterSpacing: -0.4)),
               const SizedBox(height: 10),
-              Text(
-                  'Your spot opens for another pair. Entry fees are handled by the organisers.',
+              Text(body,
                   style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 14, height: 1.5)),
               const SizedBox(height: 22),
               AppButton('Stay in',
@@ -859,9 +900,14 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         ]),
         const SizedBox(width: 14),
         Expanded(
-          child: _registered
+          child: _isRegistrant
               ? AppButton(_busy ? '…' : 'Withdraw', full: true, height: 52,
                   variant: AppBtnVariant.ghost, onPressed: _busy ? null : _withdraw)
+              : _registered
+              // Added as a partner — already in, can't register again.
+              ? const AppButton("You're in this tournament",
+                  full: true, height: 52, variant: AppBtnVariant.outline,
+                  icon: Icons.check_circle_rounded, onPressed: null)
               : AppButton(
                   _busy
                       ? 'Registering…'
@@ -874,9 +920,233 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
                         },
                   full: true, height: 52,
                   icon: needPartner ? Icons.arrow_forward_rounded : Icons.emoji_events_rounded,
-                  onPressed: (_canRegister && !needPartner && !_busy) ? _register : null),
+                  onPressed: (_canRegister && !needPartner && !_busy) ? _startRegister : null),
         ),
       ]),
+    );
+  }
+}
+
+/// InstaPay payment step for a paid tournament entry. Pops with
+/// `{sender, proof}` on confirm (proof = uploaded storage path or null), or
+/// null if cancelled. Mirrors the store checkout's InstaPay step.
+class _TournamentPaymentSheet extends StatefulWidget {
+  final int amount;
+  final String tournamentName;
+  const _TournamentPaymentSheet(
+      {required this.amount, required this.tournamentName});
+  @override
+  State<_TournamentPaymentSheet> createState() => _TournamentPaymentSheetState();
+}
+
+class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
+  final _sender = TextEditingController();
+  Uint8List? _proofBytes;
+  String _proofExt = 'jpg';
+  String _handle = '';
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    OrderService.fetchInstapayHandle().then((h) {
+      if (mounted) setState(() => _handle = h);
+    });
+    _sender.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _sender.dispose();
+    super.dispose();
+  }
+
+  static String _egp(int n) => 'EGP $n';
+
+  Future<void> _pickProof() async {
+    final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (f == null) return;
+    final bytes = await f.readAsBytes();
+    final ext =
+        f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';
+    if (mounted) {
+      setState(() {
+        _proofBytes = bytes;
+        _proofExt = ext;
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    final sender = _sender.text.trim();
+    if (sender.isEmpty) return;
+    setState(() => _busy = true);
+    String? proofPath;
+    if (_proofBytes != null) {
+      proofPath = await OrderService.uploadPaymentProof(_proofBytes!, _proofExt);
+    }
+    if (!mounted) return;
+    Navigator.pop(context, {'sender': sender, 'proof': proofPath});
+  }
+
+  void _copy(String v) {
+    Clipboard.setData(ClipboardData(text: v));
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating, content: Text('Copied $v')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = _sender.text.trim().isNotEmpty && !_busy;
+    return Container(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      decoration: const BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                          color: AppColors.line,
+                          borderRadius: BorderRadius.circular(2))),
+                ),
+                Text('Pay entry fee', style: AppText.stat(22, AppColors.ink)),
+                const SizedBox(height: 4),
+                Text(
+                    'Transfer to the InstaPay account below, then enter your '
+                    'sending username so we can match the payment.',
+                    style: AppText.small().copyWith(fontSize: 13, height: 1.4)),
+                const SizedBox(height: 18),
+                _copyRow('Send to · InstaPay', _handle.isEmpty ? '…' : _handle,
+                    mono: true),
+                const SizedBox(height: 10),
+                _copyRow('Amount', _egp(widget.amount)),
+                const SizedBox(height: 18),
+                Text('YOUR INSTAPAY USERNAME', style: AppText.kicker()),
+                const SizedBox(height: 7),
+                TextField(
+                  controller: _sender,
+                  style: AppText.body(),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'e.g. yourname@instapay',
+                    filled: true,
+                    fillColor: AppColors.field,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 13, vertical: 13),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: AppColors.line)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(
+                            color: AppColors.primary, width: 1.6)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text('TRANSFER SCREENSHOT (OPTIONAL)', style: AppText.kicker()),
+                const SizedBox(height: 7),
+                _proofTile(),
+                const SizedBox(height: 22),
+                AppButton(_busy ? 'Submitting…' : "I've sent the transfer",
+                    full: true, height: 52, onPressed: ready ? _submit : null),
+                const SizedBox(height: 6),
+                Center(
+                  child: TextButton(
+                    onPressed: _busy ? null : () => Navigator.pop(context),
+                    child: Text('Cancel',
+                        style: AppText.bodyStrong(AppColors.inkSoft)
+                            .copyWith(fontSize: 14)),
+                  ),
+                ),
+              ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _copyRow(String label, String value, {bool mono = false}) {
+    return GestureDetector(
+      onTap: value == '…' ? null : () => _copy(value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+            color: AppColors.field, borderRadius: BorderRadius.circular(12)),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: AppText.small().copyWith(fontSize: 11)),
+              const SizedBox(height: 2),
+              Text(value,
+                  style: mono
+                      ? AppText.bodyStrong().copyWith(
+                          fontFamily: 'monospace', fontSize: 14)
+                      : AppText.bodyStrong().copyWith(fontSize: 15)),
+            ]),
+          ),
+          const Icon(Icons.copy_rounded, size: 16, color: AppColors.inkSoft),
+        ]),
+      ),
+    );
+  }
+
+  Widget _proofTile() {
+    if (_proofBytes != null) {
+      return Stack(children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.memory(_proofBytes!,
+              width: double.infinity, height: 140, fit: BoxFit.cover),
+        ),
+        Positioned(
+          top: 6,
+          right: 6,
+          child: GestureDetector(
+            onTap: () => setState(() => _proofBytes = null),
+            child: Container(
+              width: 26,
+              height: 26,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                  color: AppColors.ink, shape: BoxShape.circle),
+              child: const Icon(Icons.close_rounded,
+                  size: 15, color: AppColors.bg),
+            ),
+          ),
+        ),
+      ]);
+    }
+    return GestureDetector(
+      onTap: _pickProof,
+      child: Container(
+        height: 64,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.field,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.add_photo_alternate_outlined,
+              size: 19, color: AppColors.inkSoft),
+          const SizedBox(width: 8),
+          Text('Attach a screenshot',
+              style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 13)),
+        ]),
+      ),
     );
   }
 }

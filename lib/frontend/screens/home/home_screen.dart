@@ -529,7 +529,8 @@ class _TournamentTile extends StatelessWidget {
         .where((e) => e['status'] != 'withdrawn')
         .toList();
     final entries = entryList.length;
-    final registered = entryList.any((e) => e['player_id'] == uid);
+    final registered =
+        TournamentService.isParticipant(t['tournament_entries'] as List?, uid);
     final ds = TournamentService.tournamentStatus(t, entries);
     final cap = (t['capacity'] as num?)?.toInt() ?? 0;
     final remaining = cap > 0 ? (cap - entries).clamp(0, cap) : null;
@@ -563,8 +564,15 @@ class _TournamentTile extends StatelessWidget {
                   style: AppText.bodyStrong().copyWith(fontSize: 13.5),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
-            AppTag(registered ? 'Registered' : statusLabel,
-                color: registered ? AppColors.primary : sc),
+            // Show "Registered" only while the tournament is still pre-start;
+            // once it's live/full the status (e.g. Live) is the useful label.
+            AppTag(
+                (registered && (ds == 'open' || ds == 'postponed'))
+                    ? 'Registered'
+                    : statusLabel,
+                color: (registered && (ds == 'open' || ds == 'postponed'))
+                    ? AppColors.primary
+                    : sc),
           ]),
           const SizedBox(height: 6),
           Text(_fmtRange(t['start_date'] as String?, t['end_date'] as String?),

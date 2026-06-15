@@ -146,7 +146,13 @@ class _RootScaffoldState extends State<RootScaffold> {
       ),
       bottomNavigationBar: _NavBar(
         current: _tab,
-        onTap: (i) => setState(() => _tab = i),
+        onTap: (i) => setState(() {
+          // Returning to Home refetches it (it's kept alive in the IndexedStack,
+          // so an action on another tab — e.g. withdrawing — wouldn't show
+          // otherwise).
+          if (i == 0 && _tab != 0) _homeRefresh++;
+          _tab = i;
+        }),
         onCreate: _openCreate,
       ),
     );
