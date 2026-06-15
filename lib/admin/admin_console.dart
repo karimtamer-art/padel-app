@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'theme/admin_colors.dart';
 import 'widgets/admin_kit.dart';
+import 'data/admin_service.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/admin_players_screen.dart';
 import 'screens/admin_matches_screen.dart';
@@ -36,6 +38,60 @@ class _NavItem {
 class _AdminConsoleState extends State<AdminConsole> {
   String _active = 'dashboard';
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+  int _orderAlerts = 0; // unread 'admin_order' notifications
+  RealtimeChannel? _notifChannel;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAlerts();
+    _subscribeAlerts();
+  }
+
+  @override
+  void dispose() {
+    if (_notifChannel != null) {
+      Supabase.instance.client.removeChannel(_notifChannel!);
+    }
+    super.dispose();
+  }
+
+  Future<void> _loadAlerts() async {
+    final n = await AdminService.adminUnreadCount();
+    if (mounted) setState(() => _orderAlerts = n);
+  }
+
+  /// Live: bump the badge the instant the new-order trigger inserts an
+  /// 'admin_order' row for this admin. RLS limits the stream to own rows.
+  void _subscribeAlerts() {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
+    _notifChannel = Supabase.instance.client
+        .channel('admin-order-alerts-$uid')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'notifications',
+          filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq, column: 'user_id', value: uid),
+          callback: (payload) {
+            if (payload.newRecord['type'] == 'admin_order' && mounted) {
+              setState(() => _orderAlerts++);
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  /// Tapping the bell jumps to Payments (where orders are confirmed) and
+  /// clears the badge.
+  Future<void> _openAlerts() async {
+    setState(() {
+      _active = 'payments';
+      _orderAlerts = 0;
+    });
+    await AdminService.markAdminNotificationsRead();
+  }
 
   // Nav mirrors the design screenshot exactly
   static const _nav = <_NavItem>[
@@ -124,6 +180,8 @@ class _AdminConsoleState extends State<AdminConsole> {
                 if (meta[1].isNotEmpty)
                   Text(meta[1], style: AdminText.small()),
               ])),
+              _bellBtn(),
+              const SizedBox(width: 8),
               _squareBtn(Icons.logout_rounded, widget.onExit ?? () {}),
             ]),
             const SizedBox(height: 10),
@@ -160,6 +218,45 @@ class _AdminConsoleState extends State<AdminConsole> {
               border: Border.all(color: AdminColors.line)),
           child: Icon(icon, size: 19, color: AdminColors.ink),
         ),
+      );
+
+  /// Order-alert bell with an unread badge. Discreet — it's just a bell in the
+  /// admin top bar; only admins ever reach this screen.
+  Widget _bellBtn() => GestureDetector(
+        onTap: _openAlerts,
+        child: Stack(clipBehavior: Clip.none, children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: AdminColors.surface,
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: AdminColors.line)),
+            child: Icon(
+                _orderAlerts > 0
+                    ? Icons.notifications_active_rounded
+                    : Icons.notifications_none_rounded,
+                size: 19,
+                color: _orderAlerts > 0 ? AdminColors.primary : AdminColors.ink),
+          ),
+          if (_orderAlerts > 0)
+            Positioned(
+              top: -5,
+              right: -5,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                constraints: const BoxConstraints(minWidth: 18),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: AdminColors.danger,
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(color: AdminColors.canvas, width: 1.5)),
+                child: Text(_orderAlerts > 99 ? '99+' : '$_orderAlerts',
+                    style: AdminText.sans(10, FontWeight.w800, Colors.white)),
+              ),
+            ),
+        ]),
       );
 }
 

@@ -409,6 +409,39 @@ class AdminService {
     }
   }
 
+  // ── Admin notifications (private per-admin order alerts) ──────
+
+  /// Unread 'admin_order' notifications for the signed-in admin (badge count).
+  static Future<int> adminUnreadCount() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return 0;
+    try {
+      final res = await _db
+          .from('notifications')
+          .select('id')
+          .eq('user_id', uid)
+          .eq('type', 'admin_order')
+          .eq('read', false);
+      return (res as List).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Clears the admin's order-alert badge.
+  static Future<void> markAdminNotificationsRead() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      await _db
+          .from('notifications')
+          .update({'read': true})
+          .eq('user_id', uid)
+          .eq('type', 'admin_order')
+          .eq('read', false);
+    } catch (_) {}
+  }
+
   // ── Repair requests ───────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> fetchRepairs() async {
