@@ -1,12 +1,56 @@
+import 'dart:math';
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/mock_data.dart' show CartLine;
 
 /// Store checkout. Writes to the `orders` table the admin console reads
-/// (Admin → Payments). Payment method is cash-on-delivery until a gateway
-/// (Paymob / Fawry) is integrated — see WHATS_CHANGED.md.
+/// (Admin → Payments). Two payment methods: cash-on-delivery and InstaPay —
+/// a manual peer-to-peer transfer the buyer makes to the merchant handle,
+/// uploads a screenshot for, and an admin verifies by hand. There is no
+/// automated gateway (Paymob / Fawry stays a separate, server-side task).
 class OrderService {
   OrderService._();
   static SupabaseClient get _db => Supabase.instance.client;
+
+  static const _proofBucket = 'payment-proofs';
+
+  /// The merchant InstaPay handle buyers transfer to. Read from the
+  /// admin-editable `app_settings` row; falls back to a sane default.
+  static Future<String> fetchInstapayHandle() async {
+    try {
+      final row = await _db
+          .from('app_settings')
+          .select('value')
+          .eq('key', 'instapay_handle')
+          .maybeSingle();
+      final v = (row?['value'] as String?)?.trim();
+      if (v != null && v.isNotEmpty) return v;
+    } catch (_) {}
+    return 'padelpro@instapay';
+  }
+
+  /// Uploads an InstaPay transfer screenshot to the private proofs bucket and
+  /// returns its storage path (not a URL — admins sign it to view). Returns
+  /// `null` on failure; the order can still be placed without a proof.
+  static Future<String?> uploadPaymentProof(Uint8List bytes, String ext) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return null;
+    final safeExt = ext.toLowerCase() == 'jpeg' ? 'jpg' : ext.toLowerCase();
+    final path =
+        'proofs/$uid/${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(99999)}.$safeExt';
+    try {
+      await _db.storage.from(_proofBucket).uploadBinary(
+            path,
+            bytes,
+            fileOptions: FileOptions(
+                contentType: 'image/${safeExt == 'jpg' ? 'jpeg' : safeExt}',
+                upsert: true),
+          );
+      return path;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Returns `(error, orderId)`.
   static Future<(String?, String?)> placeOrder({
@@ -16,6 +60,10 @@ class OrderService {
     required int discount,
     required int total,
     String? promoCode,
+    String paymentMethod = 'cod', // 'cod' | 'instapay'
+    Map<String, dynamic>? address,
+    String? instapaySender,
+    String? instapayProofPath,
   }) async {
     final uid = _db.auth.currentUser?.id;
     if (uid == null) return ('Not signed in.', null);
@@ -40,8 +88,12 @@ class OrderService {
             'discount': discount,
             'total': total,
             'promo_code': promoCode,
-            'payment_method': 'cod',
+            'payment_method': paymentMethod,
             'status': 'pending',
+            if (address != null) 'address': address,
+            if (instapaySender != null && instapaySender.isNotEmpty)
+              'instapay_sender': instapaySender,
+            if (instapayProofPath != null) 'instapay_proof_url': instapayProofPath,
           })
           .select('id')
           .single();

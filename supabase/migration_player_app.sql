@@ -1152,5 +1152,122 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- ============================================================
+-- CHECKOUT v2 — saved delivery addresses, InstaPay manual
+-- transfers, and the admin-editable merchant handle. All blocks
+-- are idempotent so the file stays safe to re-run.
+-- ============================================================
+
+-- Saved delivery addresses — detailed Egyptian format, keyed by user_id.
+-- This matches the pre-existing live table; the create is a no-op there and
+-- only seeds the same shape on a fresh database.
+create table if not exists public.addresses (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  label text,
+  full_name text not null,
+  phone text not null,
+  governorate text not null,
+  city text not null,
+  area text,
+  street text not null,
+  building text,
+  apartment text,
+  landmark text,
+  is_default boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+-- Backfill the optional columns onto an older/partial live table so the app's
+-- reads/writes resolve. Required columns are assumed present on any real table.
+alter table public.addresses add column if not exists label text;
+alter table public.addresses add column if not exists area text;
+alter table public.addresses add column if not exists building text;
+alter table public.addresses add column if not exists apartment text;
+alter table public.addresses add column if not exists landmark text;
+alter table public.addresses add column if not exists is_default boolean not null default false;
+create index if not exists idx_addresses_user on public.addresses (user_id);
+alter table public.addresses enable row level security;
+do $$ begin
+  create policy "addresses: own read" on public.addresses for select using (auth.uid() = user_id);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "addresses: own write" on public.addresses for all
+    using (auth.uid() = user_id) with check (auth.uid() = user_id);
+exception when duplicate_object then null; end $$;
+grant select, insert, update, delete on public.addresses to authenticated;
+
+-- The live `orders` table predates this migration's create block (so that
+-- block was skipped). Backfill every column the checkout writes — nullable /
+-- defaulted so existing rows survive — then the delivery + InstaPay fields.
+alter table public.orders add column if not exists items jsonb;
+alter table public.orders add column if not exists subtotal int;
+alter table public.orders add column if not exists shipping int default 0;
+alter table public.orders add column if not exists discount int default 0;
+alter table public.orders add column if not exists total int;
+alter table public.orders add column if not exists promo_code text;
+alter table public.orders add column if not exists payment_method text default 'cod';
+alter table public.orders add column if not exists status text default 'pending';
+alter table public.orders add column if not exists address jsonb;
+alter table public.orders add column if not exists instapay_sender text;
+alter table public.orders add column if not exists instapay_proof_url text;
+
+-- Admins manage every order (verify InstaPay, advance fulfilment). The
+-- existing player policies only cover own-row read + insert.
+do $$ begin
+  create policy "orders: admin read" on public.orders for select using (public._is_admin());
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "orders: admin update" on public.orders for update
+    using (public._is_admin()) with check (public._is_admin());
+exception when duplicate_object then null; end $$;
+-- Table-level privilege (separate from RLS): without this the role is rejected
+-- before any policy is evaluated → "permission denied for table orders".
+grant select, insert, update on public.orders to authenticated;
+-- Named FK so PostgREST can resolve the admin join profiles!orders_player_id_fkey.
+-- A drifted live table may have an unnamed/missing FK; add the named one.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'orders_player_id_fkey') then
+    alter table public.orders
+      add constraint orders_player_id_fkey
+      foreign key (player_id) references public.profiles(id);
+  end if;
+end $$;
+
+-- Key/value app settings (admin-editable). The InstaPay merchant handle
+-- lives here so the receiving account can change without a rebuild.
+create table if not exists public.app_settings (
+  key text primary key,
+  value text,
+  updated_at timestamptz not null default now()
+);
+insert into public.app_settings (key, value)
+  values ('instapay_handle', 'padelpro@instapay')
+  on conflict (key) do nothing;
+alter table public.app_settings enable row level security;
+do $$ begin
+  create policy "app_settings: read" on public.app_settings for select using (true);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "app_settings: admin write" on public.app_settings for all
+    using (public._is_admin()) with check (public._is_admin());
+exception when duplicate_object then null; end $$;
+grant select on public.app_settings to anon, authenticated;
+grant insert, update on public.app_settings to authenticated;
+
+-- Private bucket for InstaPay transfer screenshots. Players upload; only
+-- admins read them back (via signed URLs in the admin console).
+insert into storage.buckets (id, name, public)
+  values ('payment-proofs', 'payment-proofs', false)
+  on conflict (id) do update set public = false;
+drop policy if exists "payment-proofs upload" on storage.objects;
+create policy "payment-proofs upload" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'payment-proofs');
+drop policy if exists "payment-proofs admin read" on storage.objects;
+create policy "payment-proofs admin read" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'payment-proofs' and public._is_admin());
+
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

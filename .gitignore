@@ -56,3 +56,6 @@ app.*.map.json
 
 # Claude Code memory (local AI assistant state)
 .claude/
+
+# Desktop admin console (local-only tool; not part of the app build)
+desktop_admin/

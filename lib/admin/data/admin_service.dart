@@ -310,12 +310,80 @@ class AdminService {
 
   static Future<List<Map<String, dynamic>>> fetchOrders(
       {int limit = 50}) async {
-    final res = await _db
-        .from('orders')
-        .select('*, profiles!orders_player_id_fkey(name)')
-        .order('created_at', ascending: false)
-        .limit(limit);
-    return List<Map<String, dynamic>>.from(res as List);
+    // Try the customer-name join; fall back to a plain select if the FK hint
+    // can't resolve (a drifted orders table may lack the named constraint), so
+    // the orders list never blanks out — names just degrade to 'Unknown'.
+    try {
+      final res = await _db
+          .from('orders')
+          .select('*, profiles!orders_player_id_fkey(name)')
+          .order('created_at', ascending: false)
+          .limit(limit);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] fetchOrders join failed, retrying plain: $e');
+      final res = await _db
+          .from('orders')
+          .select('*')
+          .order('created_at', ascending: false)
+          .limit(limit);
+      return List<Map<String, dynamic>>.from(res as List);
+    }
+  }
+
+  /// Advances an order: pending → paid (InstaPay verified / cash collected) →
+  /// shipped/delivered, or refunded. Error string or null.
+  static Future<String?> updateOrderStatus(String id, String status) async {
+    try {
+      await _db.from('orders').update({'status': status}).eq('id', id);
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Signs a private payment-proof storage path so the admin can view the
+  /// InstaPay screenshot. Returns null if there's no proof or signing fails.
+  static Future<String?> signProofUrl(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    try {
+      return await _db.storage.from('payment-proofs').createSignedUrl(path, 3600);
+    } catch (e) {
+      debugPrint('[AdminService] signProofUrl: $e');
+      return null;
+    }
+  }
+
+  // ── App settings (key/value) ──────────────────────────────────
+
+  static Future<String?> getSetting(String key) async {
+    try {
+      final row = await _db
+          .from('app_settings')
+          .select('value')
+          .eq('key', key)
+          .maybeSingle();
+      return row?['value'] as String?;
+    } catch (e) {
+      debugPrint('[AdminService] getSetting: $e');
+      return null;
+    }
+  }
+
+  static Future<String?> setSetting(String key, String value) async {
+    try {
+      await _db.from('app_settings').upsert(
+        {'key': key, 'value': value, 'updated_at': DateTime.now().toIso8601String()},
+        onConflict: 'key',
+      );
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   // ── Repair requests ───────────────────────────────────────────
