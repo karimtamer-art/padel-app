@@ -31,6 +31,7 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
   List<Map<String, dynamic>> _products = [];
   bool _loading = true;
   String _stockFilter = 'all';
+  bool _hideLowBadge = false; // app_settings 'hide_low_stock' — store-wide
 
   static const _dbCats = ['rackets', 'shoes', 'apparel', 'balls', 'accessories'];
 
@@ -76,11 +77,26 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
   Future<void> _load() async {
     if (!_loading) setState(() => _loading = true);
     final data = await AdminService.fetchProducts();
+    final hideLow = await AdminService.getSetting('hide_low_stock');
     if (!mounted) return;
     setState(() {
       _products = data;
+      _hideLowBadge = hideLow == 'true';
       _loading = false;
     });
+  }
+
+  Future<void> _setHideLowBadge(bool v) async {
+    setState(() => _hideLowBadge = v); // optimistic
+    final err = await AdminService.setSetting('hide_low_stock', v ? 'true' : 'false');
+    if (!mounted) return;
+    if (err != null) {
+      setState(() => _hideLowBadge = !v); // revert on failure
+      adminToast(context, err, ok: false);
+    } else {
+      adminToast(context,
+          v ? 'Low-stock badge hidden in store' : 'Low-stock badge shown in store');
+    }
   }
 
   List<Map<String, dynamic>> get _rows => _products.where((p) {
@@ -164,6 +180,14 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
                         style: AdminText.strong())),
               ]),
             ),
+
+          _toggleRow(
+            'Hide low-stock badge',
+            "Customers won't see the LOW flag on products",
+            _hideLowBadge,
+            _setHideLowBadge,
+          ),
+          const SizedBox(height: 16),
 
           AdminSection(
             'Inventory',

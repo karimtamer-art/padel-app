@@ -15,8 +15,13 @@ class ProductDetailScreen extends StatefulWidget {
   /// Adds this product to the cart (one unit) — wired to the same handler the
   /// store grid uses.
   final VoidCallback onAddToCart;
+  /// Store-wide admin setting: when true the "Low stock" tag is suppressed.
+  final bool hideLowStock;
   const ProductDetailScreen(
-      {super.key, required this.product, required this.onAddToCart});
+      {super.key,
+      required this.product,
+      required this.onAddToCart,
+      this.hideLowStock = false});
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
 }
@@ -97,7 +102,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final desc = (p['description'] as String? ?? '').trim();
     final stockStatus = p['stock_status'] as String? ?? 'in';
     final outOfStock = stockStatus == 'out';
-    final lowStock = stockStatus == 'low';
+    final lowStock = stockStatus == 'low' && !widget.hideLowStock;
 
     return Scaffold(
       backgroundColor: AppColors.bg,

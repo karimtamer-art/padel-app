@@ -23,6 +23,7 @@ class _StoreScreenState extends State<StoreScreen> {
   String _query = '';
   List<Map<String, dynamic>> _products = [];
   bool _loading = true;
+  bool _hideLowStock = false; // admin app_settings 'hide_low_stock'
 
   static const _cats = ['All', 'Rackets', 'Shoes', 'Apparel', 'Accessories', 'Balls'];
 
@@ -62,9 +63,20 @@ class _StoreScreenState extends State<StoreScreen> {
           .select('id, name, brand, category, description, image_url, price, sale_price, on_sale, stock_status, rating, is_visible')
           .eq('is_visible', true)
           .order('created_at', ascending: false);
+      // Store-wide admin setting: suppress the LOW badge when on.
+      bool hideLow = false;
+      try {
+        final s = await Supabase.instance.client
+            .from('app_settings')
+            .select('value')
+            .eq('key', 'hide_low_stock')
+            .maybeSingle();
+        hideLow = (s?['value'] as String?) == 'true';
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _products = List<Map<String, dynamic>>.from(rows as List);
+          _hideLowStock = hideLow;
           _loading = false;
         });
       }
@@ -349,7 +361,7 @@ class _StoreScreenState extends State<StoreScreen> {
     final rating = (row['rating'] as num?)?.toDouble();
     final stockStatus = row['stock_status'] as String? ?? 'in';
     final outOfStock = stockStatus == 'out';
-    final lowStock = stockStatus == 'low';
+    final lowStock = stockStatus == 'low' && !_hideLowStock;
     final imageUrl = row['image_url'] as String?;
 
     const topRadius = BorderRadius.vertical(top: Radius.circular(AppRadius.card));
@@ -495,6 +507,7 @@ class _StoreScreenState extends State<StoreScreen> {
       builder: (_) => ProductDetailScreen(
         product: row,
         onAddToCart: () => widget.onAdd(_toProduct(row)),
+        hideLowStock: _hideLowStock,
       ),
     ));
   }
