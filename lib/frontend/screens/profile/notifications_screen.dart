@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
+import 'package:padel_clay/backend/services/notification_service.dart';
 import 'settings_common.dart';
 
 class _Notif {
@@ -9,7 +10,16 @@ class _Notif {
   final Color tint;
   final String title, body, time;
   final bool unread;
-  const _Notif(this.icon, this.tint, this.title, this.body, this.time, this.unread);
+  final DateTime? at; // for cross-source sorting
+  const _Notif(this.icon, this.tint, this.title, this.body, this.time, this.unread, {this.at});
+
+  /// Icon + tint for a personal notification's `type`.
+  static (IconData, Color) styleFor(String? type) => switch (type) {
+        'order' => (Icons.shopping_bag_outlined, AppColors.primary),
+        'match' => (Icons.sports_tennis_outlined, AppColors.success),
+        'tournament' => (Icons.emoji_events_outlined, AppColors.warn),
+        _ => (Icons.notifications_none_rounded, AppColors.primary),
+      };
 }
 
 class NotificationsScreen extends StatefulWidget {
@@ -32,15 +42,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     _load();
   }
 
-  /// Announcements come from the `broadcasts` table the admin console writes.
+  /// Two sources merged, newest first:
+  ///  • personal notifications (orders, etc.) — carry real read state;
+  ///  • global `broadcasts` the admin console writes (announcements).
   Future<void> _load() async {
+    final items = <_Notif>[];
+
+    // Personal notifications.
+    for (final n in await NotificationService.fetch()) {
+      final (icon, tint) = _Notif.styleFor(n['type'] as String?);
+      final at = DateTime.tryParse('${n['created_at']}')?.toLocal();
+      items.add(_Notif(
+        icon,
+        tint,
+        (n['title'] as String?) ?? 'Notification',
+        (n['body'] as String?) ?? '',
+        _ago(n['created_at'] as String?),
+        n['read'] != true,
+        at: at,
+      ));
+    }
+
+    // Global announcements.
     try {
       final rows = await Supabase.instance.client
           .from('broadcasts')
           .select('title, body, sent_at')
           .order('sent_at', ascending: false)
           .limit(20);
-      final items = <_Notif>[];
       for (final r in List<Map<String, dynamic>>.from(rows as List)) {
         items.add(_Notif(
           Icons.campaign_outlined,
@@ -49,10 +78,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           (r['body'] as String?) ?? '',
           _ago(r['sent_at'] as String?),
           false,
+          at: DateTime.tryParse('${r['sent_at']}')?.toLocal(),
         ));
       }
-      if (mounted) setState(() => _items = items);
     } catch (_) {}
+
+    items.sort((a, b) =>
+        (b.at ?? DateTime(0)).compareTo(a.at ?? DateTime(0)));
+    if (mounted) setState(() => _items = items);
+  }
+
+  Future<void> _markAllRead() async {
+    await NotificationService.markAllRead();
+    if (!mounted) return;
+    setState(() {
+      for (var i = 0; i < _items.length; i++) {
+        final n = _items[i];
+        _items[i] = _Notif(n.icon, n.tint, n.title, n.body, n.time, false, at: n.at);
+      }
+    });
   }
 
   static String _ago(String? iso) {
@@ -71,12 +115,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       title: 'Notifications',
       actions: [
         GestureDetector(
-          onTap: () => setState(() {
-            for (var i = 0; i < _items.length; i++) {
-              final n = _items[i];
-              _items[i] = _Notif(n.icon, n.tint, n.title, n.body, n.time, false);
-            }
-          }),
+          onTap: _markAllRead,
           child: Text('Mark all',
               style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 14)),
         ),

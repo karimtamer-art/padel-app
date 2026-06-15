@@ -52,6 +52,23 @@ class OrderService {
     }
   }
 
+  /// The current user's orders, newest first (for the profile "My orders").
+  /// RLS ("own orders read") scopes this to the signed-in player.
+  static Future<List<Map<String, dynamic>>> fetchMyOrders() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return [];
+    try {
+      final res = await _db
+          .from('orders')
+          .select('*')
+          .eq('player_id', uid)
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Returns `(error, orderId)`.
   static Future<(String?, String?)> placeOrder({
     required List<CartLine> cart,

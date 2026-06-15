@@ -81,6 +81,23 @@ class _RootScaffoldState extends State<RootScaffold> {
     ));
   }
 
+  /// Reorder from "My orders": merge the order's lines into the cart (summing
+  /// quantities for items already present) and open the cart.
+  void _reorder(List<CartLine> lines) {
+    setState(() {
+      for (final line in lines) {
+        final existing = _cart.where(
+            (l) => l.product.name == line.product.name && l.product.brand == line.product.brand);
+        if (existing.isNotEmpty) {
+          existing.first.qty += line.qty;
+        } else {
+          _cart.add(line);
+        }
+      }
+    });
+    _openCart();
+  }
+
   // page index per visual slot (slot 2 is the FAB, not a page)
   static const _slotToPage = {0: 0, 1: 1, 3: 2, 4: 3};
 
@@ -120,6 +137,7 @@ class _RootScaffoldState extends State<RootScaffold> {
             profile: widget.profile,
             onFindMatch: _openCreate,
             onSignOut: widget.onSignOut,
+            onReorder: _reorder,
             displayName: widget.displayName,
             initials: widget.initials,
             memberSince: widget.memberSince,

@@ -327,7 +327,30 @@ class AdminService {
           .select('*')
           .order('created_at', ascending: false)
           .limit(limit);
-      return List<Map<String, dynamic>>.from(res as List);
+      final orders = List<Map<String, dynamic>>.from(res as List);
+      // No FK embed → resolve customer names with a second query and graft them
+      // into each row as { profiles: { name } } so the UI reads them uniformly.
+      final ids = orders
+          .map((o) => o['player_id'] as String?)
+          .whereType<String>()
+          .toSet()
+          .toList();
+      if (ids.isNotEmpty) {
+        try {
+          final people = await _db
+              .from('profiles')
+              .select('id, name')
+              .inFilter('id', ids);
+          final byId = {
+            for (final p in List<Map<String, dynamic>>.from(people as List))
+              p['id'] as String: p['name']
+          };
+          for (final o in orders) {
+            o['profiles'] = {'name': byId[o['player_id']]};
+          }
+        } catch (_) {}
+      }
+      return orders;
     }
   }
 

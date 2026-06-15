@@ -7,6 +7,7 @@ import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
+import 'package:padel_clay/backend/services/notification_service.dart';
 import '../matches/find_match_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
@@ -35,7 +36,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _myMatches = [];
   List<Map<String, dynamic>> _tournaments = [];
+  int _unread = 0;
   bool _loading = true;
+  RealtimeChannel? _notifChannel;
 
   static SupabaseClient get _db => Supabase.instance.client;
 
@@ -43,11 +46,38 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
+    _subscribeNotifications();
+  }
+
+  @override
+  void dispose() {
+    if (_notifChannel != null) _db.removeChannel(_notifChannel!);
+    super.dispose();
+  }
+
+  /// Live badge: bump the unread count the moment the orders trigger inserts a
+  /// notification for this user. RLS limits the stream to the user's own rows.
+  void _subscribeNotifications() {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return;
+    _notifChannel = _db
+        .channel('home-notifications-$uid')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'notifications',
+          filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq, column: 'user_id', value: uid),
+          callback: (_) {
+            if (mounted) setState(() => _unread++);
+          },
+        )
+        .subscribe();
   }
 
   Future<void> _loadData() async {
     setState(() => _loading = true);
-    await Future.wait([_fetchMatches(), _fetchTournaments()]);
+    await Future.wait([_fetchMatches(), _fetchTournaments(), _fetchUnread()]);
     if (mounted) setState(() => _loading = false);
   }
 
@@ -112,8 +142,18 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadData();
   }
 
-  void _openNotifications(BuildContext c) => Navigator.of(c)
-      .push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+  Future<void> _fetchUnread() async {
+    final n = await NotificationService.unreadCount();
+    if (mounted) _unread = n;
+  }
+
+  Future<void> _openNotifications(BuildContext c) async {
+    await Navigator.of(c)
+        .push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+    // Coming back, the inbox may have been marked read — refresh the badge.
+    await _fetchUnread();
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -124,7 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
           leadingInitials: widget.initials.isNotEmpty ? widget.initials : 'P',
           actions: [
             IconChip(Icons.notifications_none_rounded,
-                onTap: () => _openNotifications(context)),
+                badge: _unread, onTap: () => _openNotifications(context)),
           ],
         ),
         Expanded(

@@ -24,6 +24,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
   static const _filters = <List<String>>[
     ['all', 'All orders'],
     ['verify', 'InstaPay to verify'],
+    ['pending', 'New COD'],
     ['paid', 'To fulfil'],
     ['shipped', 'Shipped'],
     ['delivered', 'Delivered'],
@@ -293,6 +294,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
   Widget _orderCard(Map<String, dynamic> o) {
     final eff = _eff(o);
     final isVerify = eff == 'verify';
+    final isNewCod = eff == 'pending'; // COD order awaiting admin acceptance
     final n = _nItems(o);
     return AdminCard(
       onTap: () => _open(o),
@@ -323,9 +325,10 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
           const Spacer(),
           Text(_egp(_amount(o)), style: AdminText.sans(14, FontWeight.w800, AdminColors.ink)),
         ]),
-        if (isVerify) ...[
+        if (isVerify || isNewCod) ...[
           const SizedBox(height: 11),
-          AdminButton('Verify payment', full: true, height: 40, icon: Icons.check_rounded, onPressed: () => _open(o)),
+          AdminButton(isVerify ? 'Verify payment' : 'Confirm order',
+              full: true, height: 40, icon: Icons.check_rounded, onPressed: () => _open(o)),
         ],
       ]),
     );
@@ -365,6 +368,20 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
         AdminButton('Reject',
             height: 50, variant: AdminBtn.danger,
             onPressed: () => setStatus('cancelled', '${_shortId(o)} rejected — customer notified', ok: false)),
+      ]);
+    } else if (eff == 'pending') {
+      // COD order: nothing to verify (cash collected on delivery), so the first
+      // admin action is to accept it into fulfilment.
+      footer = Row(children: [
+        Expanded(
+          child: AdminButton('Confirm order',
+              full: true, height: 50, variant: AdminBtn.success, icon: Icons.check_rounded,
+              onPressed: () => setStatus('paid', '${_shortId(o)} confirmed — moved to fulfilment')),
+        ),
+        const SizedBox(width: 10),
+        AdminButton('Cancel',
+            height: 50, variant: AdminBtn.danger,
+            onPressed: () => setStatus('cancelled', '${_shortId(o)} cancelled — customer notified', ok: false)),
       ]);
     } else if (_flow[eff] != null) {
       final next = _flow[eff]!;

@@ -1208,6 +1208,16 @@ alter table public.orders add column if not exists total int;
 alter table public.orders add column if not exists promo_code text;
 alter table public.orders add column if not exists payment_method text default 'cod';
 alter table public.orders add column if not exists status text default 'pending';
+-- The live table's old status CHECK predates the checkout flow and rejects the
+-- new states the admin writes ('paid', 'refunded'). Drop it and re-add one that
+-- covers every status the app uses. (Schema-drift trap: a constraint, not a
+-- column, this time — same root cause as the tournament_entries status check.)
+alter table public.orders drop constraint if exists orders_status_chk;
+do $$ begin
+  alter table public.orders add constraint orders_status_chk check (
+    status in ('pending','confirmed','paid','shipped','delivered','cancelled','refunded')
+  );
+exception when duplicate_object then null; end $$;
 alter table public.orders add column if not exists address jsonb;
 alter table public.orders add column if not exists instapay_sender text;
 alter table public.orders add column if not exists instapay_proof_url text;
@@ -1268,6 +1278,105 @@ drop policy if exists "payment-proofs admin read" on storage.objects;
 create policy "payment-proofs admin read" on storage.objects
   for select to authenticated
   using (bucket_id = 'payment-proofs' and public._is_admin());
+
+-- ============================================================
+-- Notifications: per-user inbox (orders pass)
+-- ============================================================
+-- One row per user-facing event. For now the only producer is an orders
+-- trigger (status changes), but `type` keeps the table open to match /
+-- tournament events later. Admin `broadcasts` stay a separate global feed —
+-- the notifications screen merges both — so we don't fan a broadcast into a
+-- row per user.
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null default 'order',   -- order | match | tournament | ...
+  title text not null,
+  body text,
+  data jsonb,                            -- {order_id, status, ...} for tap-through
+  read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_notifications_user
+  on public.notifications (user_id, created_at desc);
+
+alter table public.notifications enable row level security;
+-- Recipients read and mark-read their own rows. Inserts come from the trigger
+-- below (security definer) — never from the client — so there is no insert
+-- policy on purpose.
+do $$ begin
+  create policy "notifications: own read" on public.notifications
+    for select using (auth.uid() = user_id);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "notifications: own update" on public.notifications
+    for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+exception when duplicate_object then null; end $$;
+grant select, update on public.notifications to authenticated;
+
+-- Order ref shown to the buyer (matches the Dart OrderUi.ref(): PD-<first 6>).
+create or replace function public._order_ref(p_id uuid)
+returns text language sql immutable as $$
+  select 'PD-' || upper(substr(replace(p_id::text, '-', ''), 1, 6));
+$$;
+
+-- Fire a notification to the buyer whenever an order's status changes. Runs as
+-- definer so the admin who updates the order can insert a row owned by the
+-- buyer (RLS would otherwise block a cross-user insert). Skips no-op /
+-- back-to-pending transitions that have no customer-facing message.
+create or replace function public.notify_order_status()
+returns trigger language plpgsql security definer
+set search_path = public as $$
+declare
+  v_title text;
+  v_body  text;
+  v_ref   text := public._order_ref(new.id);
+begin
+  case new.status
+    when 'paid', 'confirmed' then
+      v_title := 'Order confirmed';
+      v_body  := v_ref || ' confirmed — we are preparing your order.';
+    when 'shipped' then
+      v_title := 'Out for delivery';
+      v_body  := v_ref || ' is on its way to you.';
+    when 'delivered' then
+      v_title := 'Delivered';
+      v_body  := v_ref || ' was delivered. Enjoy your gear!';
+    when 'cancelled' then
+      v_title := 'Order cancelled';
+      v_body  := v_ref || ' was cancelled. Contact support if this is unexpected.';
+    when 'refunded' then
+      v_title := 'Refund issued';
+      v_body  := v_ref || ' has been refunded.';
+    else
+      return new; -- no message for this transition
+  end case;
+
+  insert into public.notifications (user_id, type, title, body, data)
+  values (new.player_id, 'order', v_title, v_body,
+          jsonb_build_object('order_id', new.id, 'status', new.status));
+  return new;
+end $$;
+
+drop trigger if exists trg_notify_order_status on public.orders;
+create trigger trg_notify_order_status
+  after update on public.orders
+  for each row
+  when (old.status is distinct from new.status)
+  execute function public.notify_order_status();
+
+-- Realtime so the Home bell updates live on insert (RLS still scopes delivery
+-- to the row owner).
+do $$ begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'notifications'
+  ) then
+    alter publication supabase_realtime add table public.notifications;
+  end if;
+end $$;
 
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

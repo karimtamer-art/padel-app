@@ -7,8 +7,10 @@ import '../../widgets/common.dart';
 import '../../widgets/elo_chart.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/profile_service.dart';
+import '../../../backend/models/mock_data.dart' show CartLine;
 import 'division_card.dart';
 import 'edit_profile_screen.dart';
+import 'my_orders_screen.dart';
 import 'my_tournaments_screen.dart';
 import 'match_history_screen.dart';
 import 'notifications_screen.dart';
@@ -19,6 +21,7 @@ class ProfileScreen extends StatefulWidget {
   final PlayerProfile profile;
   final VoidCallback? onFindMatch;
   final Future<void> Function()? onSignOut;
+  final void Function(List<CartLine>)? onReorder;
   final String displayName;
   final String initials;
   final String memberSince;
@@ -28,6 +31,7 @@ class ProfileScreen extends StatefulWidget {
     this.profile = PlayerProfile.fresh,
     this.onFindMatch,
     this.onSignOut,
+    this.onReorder,
     this.displayName = '',
     this.initials = 'P',
     this.memberSince = '',
@@ -340,6 +344,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _menu(BuildContext context) {
     final items = <(IconData, String, Widget)>[
+      (Icons.receipt_long_outlined, 'My Orders', MyOrdersScreen(onReorder: widget.onReorder)),
       (Icons.emoji_events_outlined, 'My Tournaments', const MyTournamentsScreen()),
       (Icons.history_rounded, 'Match History', const MatchHistoryScreen()),
       (Icons.notifications_none_rounded, 'Notifications', const NotificationsScreen()),
