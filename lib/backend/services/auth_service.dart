@@ -100,15 +100,64 @@ class AuthService {
     }
   }
 
+  /// Domain appended to a bare username so it becomes a valid Supabase email.
+  /// e.g. typing `admin` signs in as `admin@padelegypt.app`. An admin/staff
+  /// auth account must be created with this exact email (see signIn).
+  static const usernameDomain = 'padelegypt.app';
+
+  /// Treat an input with no `@` as a username: lowercase it, strip spaces, and
+  /// append [usernameDomain]. Real emails (containing `@`) pass through.
+  static String resolveLogin(String input) {
+    final v = input.trim();
+    if (v.contains('@')) return v;
+    return '${v.toLowerCase().replaceAll(RegExp(r'\s+'), '')}@$usernameDomain';
+  }
+
   static Future<String?> signIn(String email, String password) async {
+    final loginEmail = resolveLogin(email);
     try {
-      await _db.auth.signInWithPassword(email: email.trim(), password: password);
+      await _db.auth.signInWithPassword(email: loginEmail, password: password);
       return null;
     } on AuthException catch (e) {
-      return e.message;
+      final m = e.message.toLowerCase();
+      // Supabase returns one generic "Invalid login credentials" for both an
+      // unknown email and a wrong password. Split them via email_exists().
+      if (m.contains('invalid login') || m.contains('invalid credentials')) {
+        final exists = await _emailExists(loginEmail);
+        if (exists == null) {
+          return 'Incorrect email or password. Please check both and try again.';
+        }
+        return exists
+            ? 'Incorrect password. Please try again.'
+            : 'No account found with this email.';
+      }
+      return _friendlyAuthError(e);
     } catch (e) {
-      return e.toString();
+      return 'Something went wrong signing in. Please try again.';
     }
+  }
+
+  /// Whether [email] is registered. Returns null if the check itself failed
+  /// (so the caller falls back to a generic message rather than guessing).
+  static Future<bool?> _emailExists(String email) async {
+    try {
+      final res = await _db.rpc('email_exists', params: {'p_email': email});
+      return res == true;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Friendly text for non-credential auth errors.
+  static String _friendlyAuthError(AuthException e) {
+    final m = e.message.toLowerCase();
+    if (m.contains('not confirmed')) {
+      return 'Please confirm your email before signing in.';
+    }
+    if (m.contains('rate') || m.contains('too many')) {
+      return 'Too many attempts. Please wait a moment and try again.';
+    }
+    return e.message;
   }
 
   /// Returns `(error, sessionCreated)`.

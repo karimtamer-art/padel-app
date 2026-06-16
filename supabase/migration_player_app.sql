@@ -1531,5 +1531,44 @@ do $$ begin
   end if;
 end $$;
 
+-- email_exists(): lets the sign-in screen distinguish an unknown email from a
+-- wrong password (Supabase returns one generic error for both). NOTE: this is
+-- an account-enumeration vector, accepted deliberately for clearer login UX.
+create or replace function public.email_exists(p_email text)
+returns boolean
+language sql
+security definer
+set search_path = auth, public
+stable as $$
+  select exists (
+    select 1 from auth.users where lower(email) = lower(trim(p_email))
+  );
+$$;
+grant execute on function public.email_exists(text) to anon, authenticated;
+
+-- ============================================================
+-- Schema cleanup: drop pre-migration drift (unused + empty). Kept on purpose:
+-- device_tokens (push), banners (promotions), audit_log.
+-- ============================================================
+drop table if exists public.order_items;
+drop table if exists public.payments;
+alter table public.orders drop column if exists ship_name;
+alter table public.orders drop column if exists ship_phone;
+alter table public.orders drop column if exists ship_street;
+alter table public.orders drop column if exists ship_building;
+alter table public.orders drop column if exists ship_apartment;
+alter table public.orders drop column if exists ship_area;
+alter table public.orders drop column if exists ship_city;
+alter table public.orders drop column if exists ship_governorate;
+alter table public.orders drop column if exists ship_landmark;
+alter table public.orders drop column if exists payment_ref;
+alter table public.orders drop column if exists notes;
+alter table public.tournament_entries drop column if exists payment_ref;
+alter table public.tournaments        drop column if exists court_id;
+alter table public.tournaments        drop column if exists created_by;
+alter table public.tournaments        drop column if exists image_url;
+alter table public.product_costs      drop column if exists supplier;
+alter table public.profiles           drop column if exists last_active;
+
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

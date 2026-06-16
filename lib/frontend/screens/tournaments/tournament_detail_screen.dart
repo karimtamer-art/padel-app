@@ -205,7 +205,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     if (err != null) {
       _snack(err, color: AppColors.danger);
     } else {
-      _snack('You have withdrawn from this tournament.');
+      _snack(paidEntry && refundable
+          ? 'Withdrawn — your ${_egp(_fee)} refund will be processed by an admin.'
+          : 'You have withdrawn from this tournament.');
       _load();
     }
   }
