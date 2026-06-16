@@ -8,6 +8,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
+import '../chat/dm_chat_screen.dart';
 
 /// Live match detail — lobby + player-submitted result flow, driven by the
 /// `matches` row status:
@@ -490,13 +491,14 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
               color: AppColors.primary.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(Icons.phone_outlined, size: 18, color: AppColors.primary),
+            child: const Icon(Icons.chat_bubble_outline_rounded,
+                size: 18, color: AppColors.primary),
           ),
         ),
       );
 
-  /// Bottom sheet to reach a co-player: their number with copy + native call.
-  /// (In-app DM is the planned phase 2.)
+  /// Bottom sheet to reach a co-player: in-app message or their phone number
+  /// (copy + native call).
   void _showContactSheet(Map<String, dynamic> p) {
     final prof = p['profiles'] as Map?;
     final phone = (prof?['phone'] as String?)?.trim() ?? '';
@@ -541,6 +543,52 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                 ),
               ]),
               const SizedBox(height: 18),
+              // Primary: in-app chat (no number shared).
+              GestureDetector(
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => DMChatScreen(
+                      otherId: p['player_id'] as String,
+                      name: _name(p),
+                      initials: _initials(p),
+                      username: username.isEmpty ? null : username,
+                      matchId: widget.matchId,
+                    ),
+                  ));
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Row(children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(11)),
+                      child: const Icon(Icons.chat_bubble_outline_rounded,
+                          size: 20, color: AppColors.primaryInk),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('Message in app',
+                            style: AppText.bodyStrong(AppColors.primaryInk).copyWith(fontSize: 15)),
+                        const SizedBox(height: 1),
+                        Text('Chat without sharing your number',
+                            style: AppText.small(AppColors.primaryInk).copyWith(fontSize: 12)),
+                      ]),
+                    ),
+                    const Icon(Icons.chevron_right_rounded,
+                        size: 18, color: AppColors.primaryInk),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 12),
               if (phone.isEmpty)
                 Container(
                   width: double.infinity,
