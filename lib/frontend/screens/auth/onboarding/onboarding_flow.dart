@@ -468,7 +468,11 @@ class _PhoneStepState extends State<_PhoneStep> {
   Widget build(BuildContext context) {
     final err = _touched ? OnboardingValidation.phone(_ctrl.text) : null;
 
-    return Column(key: const ValueKey('phone'), children: [
+    // Wrapped in a (transparent) Material so the TextField has a Material
+    // ancestor — the onboarding shell is a plain Container, not a Scaffold.
+    return Material(
+      type: MaterialType.transparency,
+      child: Column(key: const ValueKey('phone'), children: [
       Container(
         decoration: BoxDecoration(
           color: AppColors.surface,
@@ -527,7 +531,8 @@ class _PhoneStepState extends State<_PhoneStep> {
         const SizedBox(height: 14),
         OnbErrorBar(err),
       ],
-    ]);
+    ]),
+    );
   }
 }
 

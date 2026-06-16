@@ -101,11 +101,14 @@ class _AuthGateState extends State<AuthGate> {
       _initials = _buildInitials(_displayName);
       _memberSince = _buildMemberSince(DateTime.tryParse(user.createdAt) ?? DateTime.now());
       final complete = profile?.isComplete ?? false;
-      if (complete) {
+      // Admins skip player onboarding entirely — straight to the console. They
+      // have no player profile to load, and never see the phone/onboarding step.
+      if (!_isAdmin && complete) {
         _playerProfile = await ProfileService.fetchPlayerProfile(user.id);
       }
       if (!mounted) return;
-      setState(() => _phase = complete ? _Phase.ready : _Phase.onboarding);
+      setState(() =>
+          _phase = (_isAdmin || complete) ? _Phase.ready : _Phase.onboarding);
     } catch (e) {
       if (!mounted) return;
       setState(() => _phase = _Phase.error);
