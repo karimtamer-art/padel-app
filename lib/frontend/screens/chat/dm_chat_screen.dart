@@ -5,6 +5,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
+import 'package:padel_clay/backend/services/notification_service.dart';
 
 /// 1-on-1 chat between two players. The conversation is resolved/created on
 /// open; messages stream live via Supabase realtime. Reached from the match
@@ -61,6 +62,7 @@ class _DMChatScreenState extends State<DMChatScreen> {
       return;
     }
     _convId = id;
+    NotificationService.markConversationRead(id);
     _sub = DmService.messageStream(id).listen((rows) {
       if (!mounted) return;
       setState(() {
@@ -68,6 +70,8 @@ class _DMChatScreenState extends State<DMChatScreen> {
         _loading = false;
       });
       _scrollToBottom();
+      // Reading live — keep the bell from counting these.
+      NotificationService.markConversationRead(id);
     });
   }
 

@@ -16,6 +16,7 @@ class _Notif {
   /// Icon + tint for a personal notification's `type`.
   static (IconData, Color) styleFor(String? type) => switch (type) {
         'order' => (Icons.shopping_bag_outlined, AppColors.primary),
+        'message' => (Icons.chat_bubble_outline_rounded, AppColors.success),
         'match' => (Icons.sports_tennis_outlined, AppColors.success),
         'tournament' => (Icons.emoji_events_outlined, AppColors.warn),
         _ => (Icons.notifications_none_rounded, AppColors.primary),

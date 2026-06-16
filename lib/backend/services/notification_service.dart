@@ -40,6 +40,23 @@ class NotificationService {
     }
   }
 
+  /// Clears the unread 'message' notification(s) for one conversation — called
+  /// when its chat is open so the bell doesn't keep counting messages you're
+  /// actively reading.
+  static Future<void> markConversationRead(String conversationId) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      await _db
+          .from('notifications')
+          .update({'read': true})
+          .eq('user_id', uid)
+          .eq('type', 'message')
+          .eq('read', false)
+          .eq('data->>conversation_id', conversationId);
+    } catch (_) {}
+  }
+
   /// Mark every unread notification for this user as read.
   static Future<void> markAllRead() async {
     final uid = _db.auth.currentUser?.id;
