@@ -19,7 +19,7 @@ class MatchService {
       'result_submitted_by, '
       'courts(name, venue_name), '
       'match_players(player_id, team, elo_before, elo_after, '
-      '  profiles(id, name, elo, level, tier))';
+      '  profiles(id, name, elo, level, tier, phone, username))';
 
   // ── Browse ────────────────────────────────────────────────────────────────
 

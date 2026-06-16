@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -464,12 +465,188 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                 style: AppText.small().copyWith(fontSize: 11)),
           ]),
         ),
-        if (isHost)
+        // My own row keeps the status badge; co-players get a contact button —
+        // but only when I'm in the match (browsers don't get tap-to-call).
+        if (isMe && isHost)
           const AppTag('Host', color: AppColors.primary)
+        else if (isMe || !_inMatch)
+          const Icon(Icons.check_circle_rounded, size: 20, color: AppColors.success)
         else
-          const Icon(Icons.check_circle_rounded, size: 20, color: AppColors.success),
+          _contactBtn(p),
       ]),
     );
+  }
+
+  Widget _contactBtn(Map<String, dynamic> p) => Semantics(
+        label: 'Contact ${_name(p)}',
+        button: true,
+        child: GestureDetector(
+          onTap: () => _showContactSheet(p),
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.phone_outlined, size: 18, color: AppColors.primary),
+          ),
+        ),
+      );
+
+  /// Bottom sheet to reach a co-player: their number with copy + native call.
+  /// (In-app DM is the planned phase 2.)
+  void _showContactSheet(Map<String, dynamic> p) {
+    final prof = p['profiles'] as Map?;
+    final phone = (prof?['phone'] as String?)?.trim() ?? '';
+    final username = (prof?['username'] as String?)?.trim() ?? '';
+    final elo = (prof?['elo'] as num?)?.toInt() ?? 1000;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                        color: AppColors.line,
+                        borderRadius: BorderRadius.circular(2))),
+              ),
+              Row(children: [
+                AppAvatar(_initials(p), size: 48, color: AppColors.gold, ring: 2),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(_name(p),
+                        style: AppText.bodyStrong().copyWith(fontSize: 16),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 1),
+                    Text(
+                        '${username.isNotEmpty ? '@$username · ' : ''}$elo ELO',
+                        style: AppText.small().copyWith(fontSize: 12)),
+                  ]),
+                ),
+              ]),
+              const SizedBox(height: 18),
+              if (phone.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: AppColors.field,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.line)),
+                  child: Text("This player hasn't shared a number yet.",
+                      style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13)),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                      color: AppColors.field,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.line)),
+                  child: Row(children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: AppColors.accent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(11)),
+                      child: const Icon(Icons.phone_outlined,
+                          size: 20, color: AppColors.accent),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('Phone number',
+                            style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 11)),
+                        const SizedBox(height: 2),
+                        Text(phone,
+                            style: AppText.bodyStrong()
+                                .copyWith(fontSize: 15, letterSpacing: 0.3)),
+                      ]),
+                    ),
+                    const SizedBox(width: 10),
+                    Tooltip(
+                      message: 'Copy number',
+                      child: GestureDetector(
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: phone));
+                          _toast('Number copied');
+                        },
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              borderRadius: BorderRadius.circular(10)),
+                          child: const Icon(Icons.copy_rounded,
+                              size: 16, color: AppColors.inkSoft),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => _call(phone),
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                            color: AppColors.accent,
+                            borderRadius: BorderRadius.circular(10)),
+                        child: Text('Call',
+                            style: AppText.bodyStrong(Colors.white).copyWith(fontSize: 13)),
+                      ),
+                    ),
+                  ]),
+                ),
+              const SizedBox(height: 8),
+              Center(
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('Cancel',
+                      style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 14)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _call(String phone) async {
+    final digits = phone.replaceAll(RegExp(r'[^0-9+]'), '');
+    final ok = await launchUrl(Uri.parse('tel:$digits'),
+        mode: LaunchMode.externalApplication);
+    if (!ok) _toast('Could not open the dialer.');
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppColors.ink,
+          content: Text(msg)));
   }
 
   Widget _emptySlot() => Padding(
