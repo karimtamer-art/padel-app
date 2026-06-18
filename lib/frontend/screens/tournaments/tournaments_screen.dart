@@ -5,6 +5,7 @@ import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
+import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import 'tournament_detail_screen.dart';
@@ -65,14 +66,9 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
       children: [
         const ScreenBar(title: 'Compete', big: true),
         Expanded(
-          child: RefreshIndicator(
-            color: AppColors.primary,
+          child: PadelRefresh(
             onRefresh: _load,
-            child: _loading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2.4, color: AppColors.primary))
-                : _tournamentList(),
+            slivers: _tournamentSlivers(),
           ),
         ),
       ],
@@ -81,18 +77,37 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
 
   // ── Tournaments ──────────────────────────────────────────────────────────
 
-  Widget _tournamentList() {
-    if (_tournaments.isEmpty) {
-      return _emptyList(Icons.emoji_events_outlined, 'No tournaments yet',
-          'Open and upcoming tournaments will appear here once they are created.');
+  List<Widget> _tournamentSlivers() {
+    if (_loading) {
+      return const [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+              child: CircularProgressIndicator(
+                  strokeWidth: 2.4, color: AppColors.primary)),
+        ),
+      ];
     }
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 4, AppSpacing.screen, 120),
-      children: [
-        for (final t in _tournaments) _tournamentCard(t),
-      ],
-    );
+    if (_tournaments.isEmpty) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: _emptyList(Icons.emoji_events_outlined, 'No tournaments yet',
+              'Open and upcoming tournaments will appear here once they are created.'),
+        ),
+      ];
+    }
+    return [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.screen, 4, AppSpacing.screen, 120),
+        sliver: SliverList(
+          delegate: SliverChildListDelegate(
+            [for (final t in _tournaments) _tournamentCard(t)],
+          ),
+        ),
+      ),
+    ];
   }
 
   Widget _tournamentCard(Map<String, dynamic> t) {
@@ -215,30 +230,26 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     return '${months[s.month - 1]} ${s.day} – ${months[e.month - 1]} ${e.day}';
   }
 
-  Widget _emptyList(IconData icon, String title, String sub) => ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-          SizedBox(height: MediaQuery.of(context).size.height * 0.16),
-          Center(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: 56, height: 56, alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                    color: AppColors.field, shape: BoxShape.circle),
-                child: Icon(icon, size: 28, color: AppColors.inkFaint),
-              ),
-              const SizedBox(height: 14),
-              Text(title, style: AppText.cardTitle().copyWith(fontSize: 17)),
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Text(sub,
-                    textAlign: TextAlign.center,
-                    style: AppText.body(AppColors.inkSoft)
-                        .copyWith(fontSize: 13.5, height: 1.5)),
-              ),
-            ]),
+  // Non-scrolling empty body — fills the SliverFillRemaining so pull-to-refresh
+  // stays on the outer scroll view.
+  Widget _emptyList(IconData icon, String title, String sub) => Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 56, height: 56, alignment: Alignment.center,
+            decoration: const BoxDecoration(
+                color: AppColors.field, shape: BoxShape.circle),
+            child: Icon(icon, size: 28, color: AppColors.inkFaint),
           ),
-        ],
+          const SizedBox(height: 14),
+          Text(title, style: AppText.cardTitle().copyWith(fontSize: 17)),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Text(sub,
+                textAlign: TextAlign.center,
+                style: AppText.body(AppColors.inkSoft)
+                    .copyWith(fontSize: 13.5, height: 1.5)),
+          ),
+        ]),
       );
 }

@@ -115,7 +115,7 @@ class AppAvatar extends StatelessWidget {
 /// ── Button ─────────────────────────────────────────────────────
 enum AppBtnVariant { solid, accent, outline, ghost }
 
-class AppButton extends StatelessWidget {
+class AppButton extends StatefulWidget {
   final String label;
   final VoidCallback? onPressed;
   final AppBtnVariant variant;
@@ -131,11 +131,19 @@ class AppButton extends StatelessWidget {
       this.height = 40});
 
   @override
+  State<AppButton> createState() => _AppButtonState();
+}
+
+class _AppButtonState extends State<AppButton> {
+  // press-to-compress; driven by the InkWell so the ripple is preserved
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    final disabled = onPressed == null;
+    final disabled = widget.onPressed == null;
     late Color bg, fg;
     BoxBorder? border;
-    switch (variant) {
+    switch (widget.variant) {
       case AppBtnVariant.solid:
         bg = disabled ? AppColors.line : AppColors.primary;
         fg = disabled ? AppColors.inkFaint : AppColors.primaryInk;
@@ -154,27 +162,40 @@ class AppButton extends StatelessWidget {
         fg = AppColors.ink;
         break;
     }
-    return SizedBox(
-      width: full ? double.infinity : null,
-      height: height,
-      child: Material(
-        color: bg,
-        borderRadius: AppRadius.btnR,
-        child: InkWell(
+    return AnimatedScale(
+      scale: _pressed ? 0.96 : 1,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      child: SizedBox(
+        width: widget.full ? double.infinity : null,
+        height: widget.height,
+        child: Material(
+          color: bg,
           borderRadius: AppRadius.btnR,
-          onTap: onPressed,
-          child: Container(
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            decoration: BoxDecoration(borderRadius: AppRadius.btnR, border: border),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (icon != null) ...[Icon(icon, size: 16, color: fg), const SizedBox(width: 6)],
-                Text(label,
-                    style: AppText.bodyStrong(fg)
-                        .copyWith(fontWeight: FontWeight.w800, fontSize: 13)),
-              ],
+          child: InkWell(
+            borderRadius: AppRadius.btnR,
+            onTap: widget.onPressed,
+            onHighlightChanged: (v) {
+              if (MediaQuery.of(context).disableAnimations) return;
+              setState(() => _pressed = v);
+            },
+            child: Container(
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              decoration:
+                  BoxDecoration(borderRadius: AppRadius.btnR, border: border),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.icon != null) ...[
+                    Icon(widget.icon, size: 16, color: fg),
+                    const SizedBox(width: 6)
+                  ],
+                  Text(widget.label,
+                      style: AppText.bodyStrong(fg)
+                          .copyWith(fontWeight: FontWeight.w800, fontSize: 13)),
+                ],
+              ),
             ),
           ),
         ),

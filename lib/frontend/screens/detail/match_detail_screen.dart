@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import '../chat/dm_chat_screen.dart';
@@ -124,11 +125,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
 
   // ── Actions ────────────────────────────────────────────────────────────
 
-  void _snack(String msg, {Color? color}) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: color ?? AppColors.ink,
-          content: Text(msg)));
+  void _snack(String msg, {Color? color}) => AppToast.show(context, msg,
+      kind: color == AppColors.danger ? ToastKind.error : ToastKind.success);
 
   Future<void> _run(Future<String?> Function() op, {String? ok}) async {
     setState(() => _busy = true);
@@ -689,12 +687,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: AppColors.ink,
-          content: Text(msg)));
+    AppToast.show(context, msg);
   }
 
   Widget _emptySlot() => Padding(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
+import '../../widgets/app_toast.dart';
 import '../../../backend/models/mock_data.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../home/home_screen.dart';
@@ -51,28 +52,12 @@ class _RootScaffoldState extends State<RootScaffold> {
         _cart.add(CartLine(p));
       }
     });
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.ink,
-        duration: const Duration(milliseconds: 2200),
-        content: Row(children: [
-          const Icon(Icons.check_circle_rounded, size: 18, color: AppColors.primary),
-          const SizedBox(width: 10),
-          Expanded(
-              child: Text(
-                  'Added — $_cartCount item${_cartCount == 1 ? '' : 's'} in cart',
-                  style: AppText.bodyStrong(AppColors.bg).copyWith(fontSize: 13))),
-          GestureDetector(
-            onTap: () {
-              ScaffoldMessenger.of(context).hideCurrentSnackBar();
-              _openCart();
-            },
-            child: Text('VIEW', style: AppText.tag(AppColors.primary).copyWith(fontSize: 12)),
-          ),
-        ]),
-      ));
+    AppToast.show(
+      context,
+      'Added — $_cartCount item${_cartCount == 1 ? '' : 's'} in cart',
+      actionLabel: 'View',
+      onAction: _openCart,
+    );
   }
 
   void _openCart() {
@@ -172,6 +157,7 @@ class _NavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final reduce = MediaQuery.of(context).disableAnimations;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -183,15 +169,43 @@ class _NavBar extends StatelessWidget {
               border: Border(top: BorderSide(color: AppColors.lineSoft)),
             ),
             padding: const EdgeInsets.fromLTRB(6, 8, 6, 26),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                _item(0, Icons.home_outlined, 'Home'),
-                _item(1, Icons.emoji_events_outlined, 'Tournaments'),
-                _createSlot(),
-                _item(3, Icons.shopping_bag_outlined, 'Store'),
-                _item(4, Icons.account_circle_outlined, 'You'),
-              ],
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final slotW = c.maxWidth / 5; // 5 slots incl. Create (skipped)
+                const pillW = 48.0, pillH = 36.0;
+                final pillLeft = slotW * current + (slotW - pillW) / 2;
+                return Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // gliding active-tab pill (behind the icons); skips Create
+                    if (current != 2)
+                      AnimatedPositioned(
+                        duration: Duration(milliseconds: reduce ? 0 : 280),
+                        curve: Curves.easeOutCubic,
+                        left: pillLeft,
+                        top: 0,
+                        width: pillW,
+                        height: pillH,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _item(0, Icons.home_outlined, 'Home', reduce),
+                        _item(1, Icons.emoji_events_outlined, 'Tournaments', reduce),
+                        _createSlot(),
+                        _item(3, Icons.shopping_bag_outlined, 'Store', reduce),
+                        _item(4, Icons.account_circle_outlined, 'You', reduce),
+                      ],
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -225,7 +239,7 @@ class _NavBar extends StatelessWidget {
     );
   }
 
-  Widget _item(int slot, IconData icon, String label) {
+  Widget _item(int slot, IconData icon, String label, bool reduce) {
     final on = current == slot;
     final c = on ? AppColors.primary : AppColors.inkFaint;
     return Expanded(
@@ -235,13 +249,16 @@ class _NavBar extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-              decoration: BoxDecoration(
-                color: on ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
+            // active icon lifts ~2px above the gliding pill (drawn behind by
+            // the Stack); the per-item background is gone — the pill replaces it
+            AnimatedSlide(
+              duration: Duration(milliseconds: reduce ? 0 : 300),
+              curve: Curves.easeOutBack,
+              offset: Offset(0, on && !reduce ? -0.06 : 0),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                child: Icon(icon, size: 22, color: c),
               ),
-              child: Icon(icon, size: 22, color: c),
             ),
             const SizedBox(height: 4),
             Text(label,

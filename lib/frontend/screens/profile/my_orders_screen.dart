@@ -3,6 +3,8 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
+import '../../widgets/padel_refresh.dart';
+import '../../widgets/skeleton.dart';
 import '../../../backend/models/mock_data.dart';
 import '../../../backend/services/order_service.dart';
 
@@ -41,16 +43,27 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
             onBack: () => Navigator.pop(context), icon: Icons.receipt_long_outlined),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+              ? ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.screen, 14, AppSpacing.screen, 30),
+                  children:
+                      List.generate(4, (_) => const SkeletonListRow()),
+                )
               : _orders.isEmpty
                   ? _empty()
-                  : RefreshIndicator(
-                      color: AppColors.primary,
+                  : PadelRefresh(
                       onRefresh: _load,
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 14, AppSpacing.screen, 30),
-                        children: [for (final o in _orders) _orderCard(o)],
-                      ),
+                      slivers: [
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(
+                              AppSpacing.screen, 14, AppSpacing.screen, 30),
+                          sliver: SliverList(
+                            delegate: SliverChildListDelegate(
+                              [for (final o in _orders) _orderCard(o)],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
         ),
       ]),

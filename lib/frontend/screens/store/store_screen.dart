@@ -5,6 +5,9 @@ import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
+import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
+import 'package:padel_clay/frontend/widgets/skeleton.dart';
+import 'package:padel_clay/frontend/widgets/micro.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'product_detail_screen.dart';
 
@@ -24,6 +27,10 @@ class _StoreScreenState extends State<StoreScreen> {
   List<Map<String, dynamic>> _products = [];
   bool _loading = true;
   bool _hideLowStock = false; // admin app_settings 'hide_low_stock'
+
+  // fly-to-cart anchors
+  final GlobalKey _cartKey = GlobalKey();
+  final Map<String, GlobalKey> _addKeys = {};
 
   static const _cats = ['All', 'Rackets', 'Shoes', 'Apparel', 'Accessories', 'Balls'];
 
@@ -138,15 +145,18 @@ class _StoreScreenState extends State<StoreScreen> {
       children: [
         ScreenBar(
           title: 'Store',
-          actions: [IconChip(Icons.shopping_cart_outlined, badge: widget.cart, onTap: widget.onOpenCart)],
+          actions: [
+            KeyedSubtree(
+                key: _cartKey,
+                child: IconChip(Icons.shopping_cart_outlined,
+                    badge: widget.cart, onTap: widget.onOpenCart))
+          ],
         ),
         Expanded(
-          child: RefreshIndicator(
-            color: AppColors.primary,
+          child: PadelRefresh(
             onRefresh: _loadProducts,
-            child: CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(child: _searchBar()),
+            slivers: [
+              SliverToBoxAdapter(child: _searchBar()),
                 SliverToBoxAdapter(child: _promo()),
                 SliverToBoxAdapter(child: _tradeIn()),
                 SliverToBoxAdapter(child: _catChips()),
@@ -194,9 +204,8 @@ class _StoreScreenState extends State<StoreScreen> {
               ],
             ),
           ),
-        ),
-      ],
-    );
+        ],
+      );
   }
 
   Widget _searchBar() => Padding(
@@ -363,6 +372,8 @@ class _StoreScreenState extends State<StoreScreen> {
     final outOfStock = stockStatus == 'out';
     final lowStock = stockStatus == 'low' && !_hideLowStock;
     final imageUrl = row['image_url'] as String?;
+    final addKey =
+        _addKeys.putIfAbsent((row['id'] as String?) ?? name, () => GlobalKey());
 
     const topRadius = BorderRadius.vertical(top: Radius.circular(AppRadius.card));
 
@@ -448,8 +459,19 @@ class _StoreScreenState extends State<StoreScreen> {
                       ]),
                     ),
                     GestureDetector(
-                      onTap: outOfStock ? null : () => widget.onAdd(_toProduct(row)),
+                      onTap: outOfStock
+                          ? null
+                          : () {
+                              final p = _toProduct(row);
+                              FlyToCart.run(
+                                context: context,
+                                fromKey: addKey,
+                                toKey: _cartKey,
+                                onArrive: () => widget.onAdd(p),
+                              );
+                            },
                       child: Container(
+                        key: addKey,
                         width: 32, height: 32,
                         decoration: BoxDecoration(
                           color: outOfStock ? AppColors.line : AppColors.primary,
@@ -526,26 +548,20 @@ class _SkeletonCard extends StatelessWidget {
   const _SkeletonCard();
   @override
   Widget build(BuildContext context) {
-    return AppCard(
+    return const AppCard(
       padding: EdgeInsets.zero,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          height: 108,
-          decoration: BoxDecoration(
-            color: AppColors.field,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadius.card)),
-          ),
-        ),
+        Skeleton(height: 108, width: double.infinity, radius: AppRadius.card),
         Padding(
-          padding: const EdgeInsets.all(10),
+          padding: EdgeInsets.all(10),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Container(width: 40, height: 8, decoration: BoxDecoration(color: AppColors.field, borderRadius: BorderRadius.circular(4))),
-            const SizedBox(height: 6),
-            Container(width: double.infinity, height: 10, decoration: BoxDecoration(color: AppColors.field, borderRadius: BorderRadius.circular(4))),
-            const SizedBox(height: 4),
-            Container(width: 80, height: 10, decoration: BoxDecoration(color: AppColors.field, borderRadius: BorderRadius.circular(4))),
-            const SizedBox(height: 14),
-            Container(width: 60, height: 14, decoration: BoxDecoration(color: AppColors.field, borderRadius: BorderRadius.circular(4))),
+            Skeleton(width: 40, height: 8, radius: 4),
+            SizedBox(height: 6),
+            Skeleton(width: double.infinity, height: 10, radius: 4),
+            SizedBox(height: 4),
+            Skeleton(width: 80, height: 10, radius: 4),
+            SizedBox(height: 14),
+            Skeleton(width: 60, height: 14, radius: 4),
           ]),
         ),
       ]),

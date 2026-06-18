@@ -5,6 +5,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/address_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
@@ -112,11 +113,8 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
   }
 
   void _toast(String msg, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: error ? AppColors.danger : AppColors.accent,
-      content: Text(msg),
-    ));
+    AppToast.show(context, msg,
+        kind: error ? ToastKind.error : ToastKind.success);
   }
 
   // ── Address actions ───────────────────────────────────────────

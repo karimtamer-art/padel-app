@@ -5,6 +5,8 @@ import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
+import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
+import 'package:padel_clay/frontend/widgets/skeleton.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
@@ -168,12 +170,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         Expanded(
-          child: RefreshIndicator(
-            color: AppColors.primary,
+          child: PadelRefresh(
             onRefresh: _loadData,
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: 120),
-              children: [
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.only(bottom: 120),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
                 _Greeting(
                   displayName: widget.displayName,
                   profile: widget.profile,
@@ -199,8 +202,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 SectionHeader('Store', action: 'Browse', onAction: widget.onSeeStore),
                 _StoreCta(onTap: widget.onSeeStore),
                 const SizedBox(height: AppSpacing.section),
-              ],
-            ),
+                  ]),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -284,12 +289,9 @@ class _HomeScreenState extends State<HomeScreen> {
       return Padding(
         padding: AppSpacing.screenH,
         child: AppCard(
-          child: const Center(
-            child: Padding(
-              padding: EdgeInsets.all(12),
-              child: CircularProgressIndicator(
-                  strokeWidth: 2, color: AppColors.primary),
-            ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          child: Column(
+            children: List.generate(3, (_) => const SkeletonListRow()),
           ),
         ),
       );
