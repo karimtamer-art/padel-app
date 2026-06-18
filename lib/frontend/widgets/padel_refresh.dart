@@ -124,8 +124,8 @@ class _BallIndicatorState extends State<_BallIndicator>
             return Transform.rotate(
               angle: widget.reduceMotion ? 0 : angle,
               child: CustomPaint(
-                size: const Size.square(26),
-                painter: _RefreshArc(color),
+                size: const Size.square(28),
+                painter: _TennisBall(color),
               ),
             );
           },
@@ -135,27 +135,35 @@ class _BallIndicatorState extends State<_BallIndicator>
   }
 }
 
-/// Clean 270° arc (rounded cap) — the refresh indicator, matching the splash
-/// BrandSpinner. Rotation is handled by the parent Transform.rotate.
-class _RefreshArc extends CustomPainter {
+/// A padel/tennis ball: filled circle + a single S-curve seam (clipped to the
+/// ball). The parent Transform.rotate spins it. [color] is the ball fill
+/// (terracotta when armed); the seam is the cream surface tone.
+class _TennisBall extends CustomPainter {
   final Color color;
-  _RefreshArc(this.color);
+  _TennisBall(this.color);
 
   @override
   void paint(Canvas canvas, Size size) {
-    const stroke = 3.0;
-    final r = (size.width - stroke) / 2;
-    final rect = Rect.fromCircle(
-        center: Offset(size.width / 2, size.height / 2), radius: r);
-    final p = Paint()
-      ..color = color
+    final r = size.width / 2;
+    final c = Offset(r, r);
+    canvas.drawCircle(c, r, Paint()..color = color..isAntiAlias = true);
+
+    canvas.save();
+    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: c, radius: r)));
+    final seam = Paint()
+      ..color = AppColors.surface
       ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
+      ..strokeWidth = r * 0.22
       ..strokeCap = StrokeCap.round
       ..isAntiAlias = true;
-    canvas.drawArc(rect, -1.5708, 4.712, false, p); // -90°, sweep 270°
+    final path = Path()
+      ..moveTo(c.dx, c.dy - r)
+      ..cubicTo(c.dx + 0.9 * r, c.dy - 0.45 * r, c.dx - 0.9 * r,
+          c.dy + 0.45 * r, c.dx, c.dy + r);
+    canvas.drawPath(path, seam);
+    canvas.restore();
   }
 
   @override
-  bool shouldRepaint(_RefreshArc old) => old.color != color;
+  bool shouldRepaint(_TennisBall old) => old.color != color;
 }
