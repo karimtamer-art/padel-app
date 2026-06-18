@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
+import '../../widgets/ball_spinner.dart';
 import '../../../backend/services/auth_service.dart';
 import '../../../backend/models/onboarding_models.dart';
 import '../../../backend/models/ranking_scale.dart';
@@ -189,12 +190,8 @@ class _Splash extends StatelessWidget {
       body: Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           const BrandMark(),
-          const SizedBox(height: 26),
-          const SizedBox(
-            width: 26,
-            height: 26,
-            child: CircularProgressIndicator(strokeWidth: 2.6, color: AppColors.primary),
-          ),
+          const SizedBox(height: 28),
+          const BallSpinner(size: 30),
           const SizedBox(height: 14),
           Text('Getting things ready…',
               style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13)),
