@@ -304,116 +304,116 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         ),
       );
 
+  static String _tierForElo(int elo) {
+    final lv = ((elo - 800) / 200.0).clamp(0.0, 7.0);
+    if (lv >= 5.0) return 'elite';
+    if (lv >= 3.5) return 'gold';
+    if (lv >= 2.0) return 'silver';
+    return 'bronze';
+  }
+
   void _editRanking(Map<String, dynamic> p) {
     final id = p['id'] as String;
     final name = p['name'] as String? ?? 'Player';
-    final eloC = TextEditingController(
-        text: '${(p['elo'] as num?)?.toInt() ?? 1000}');
-    String tier = p['tier'] as String? ?? 'bronze';
+    final curElo = (p['elo'] as num?)?.toInt() ?? 1000;
+    // Snap the current ELO to the nearest 0.5 level for the picker.
+    double level = (((curElo - 800) / 200.0).clamp(0.0, 7.0) / 0.5).round() * 0.5;
 
-    const tiers = ['bronze', 'silver', 'gold', 'elite'];
-    const tierLabels = {
-      'bronze': 'Division D',
-      'silver': 'Division C',
-      'gold': 'Division B',
-      'elite': 'Division A',
-    };
+    const levels = [
+      0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0
+    ];
 
     adminSheet(
       context,
-      title: 'Adjust ranking',
+      title: 'Set player level',
       sub: name,
-      heightFactor: 0.58,
+      heightFactor: 0.6,
       footer: AdminButton(
         'Apply',
         full: true,
         height: 50,
         icon: Icons.check_rounded,
         onPressed: () async {
-          final newElo = int.tryParse(eloC.text) ?? (p['elo'] as num?)?.toInt() ?? 1000;
+          final elo = (800 + level * 200).round();
           Navigator.pop(context);
-          try {
-            await AdminService.setPlayerEloTier(id, newElo, tier);
-            final idx = _all.indexWhere((x) => x['id'] == id);
-            if (idx != -1 && mounted) {
-              setState(() {
-                _all[idx] = {..._all[idx], 'elo': newElo, 'tier': tier};
-                _all.sort((a, b) => ((b['elo'] as num?)?.toInt() ?? 0)
-                    .compareTo((a['elo'] as num?)?.toInt() ?? 0));
-              });
-            }
-            if (mounted) adminToast(context, '$name ranking updated');
-          } catch (e) {
-            if (mounted) adminToast(context, 'Save failed — check connection', ok: false);
+          final err = await AdminService.setPlayerRating(id, elo);
+          if (!mounted) return;
+          if (err != null) {
+            adminToast(context, err, ok: false);
+            return;
           }
+          final tier = _tierForElo(elo);
+          final idx = _all.indexWhere((x) => x['id'] == id);
+          if (idx != -1) {
+            setState(() {
+              _all[idx] = {
+                ..._all[idx],
+                'elo': elo,
+                'level': (elo - 800) / 200.0,
+                'tier': tier,
+                'placement_played': 5,
+              };
+              _all.sort((a, b) => ((b['elo'] as num?)?.toInt() ?? 0)
+                  .compareTo((a['elo'] as num?)?.toInt() ?? 0));
+            });
+          }
+          adminToast(context, '$name set to ${_divLabel(tier)}');
         },
       ),
       body: StatefulBuilder(builder: (c, setSheet) {
+        final elo = (800 + level * 200).round();
+        final tier = _tierForElo(elo);
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('ELO rating', style: AdminText.strong(AdminColors.inkSoft)),
+          Text('Level', style: AdminText.strong(AdminColors.inkSoft)),
           const SizedBox(height: 7),
-          TextField(
-            controller: eloC,
-            keyboardType: TextInputType.number,
-            style: AdminText.body(),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: AdminColors.surfaceAlt,
-              isDense: true,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-              enabledBorder: OutlineInputBorder(
-                  borderRadius: AdminUI.fieldR,
-                  borderSide: const BorderSide(color: AdminColors.line)),
-              focusedBorder: OutlineInputBorder(
-                  borderRadius: AdminUI.fieldR,
-                  borderSide:
-                      const BorderSide(color: AdminColors.primary, width: 1.6)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: AdminUI.fieldR,
+                border: Border.all(color: AdminColors.line)),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<double>(
+                value: level,
+                isExpanded: true,
+                dropdownColor: AdminColors.surface,
+                style: AdminText.body(),
+                onChanged: (v) => setSheet(() => level = v ?? level),
+                items: [
+                  for (final l in levels)
+                    DropdownMenuItem(
+                      value: l,
+                      child: Text(
+                          'Lv ${l.toStringAsFixed(1)}  ·  ${_divLabel(_tierForElo((800 + l * 200).round()))}',
+                          style: AdminText.body()),
+                    ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 16),
-          Text('Division / tier', style: AdminText.strong(AdminColors.inkSoft)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final t in tiers)
-                GestureDetector(
-                  onTap: () => setSheet(() => tier = t),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 13, vertical: 9),
-                    decoration: BoxDecoration(
-                      color: tier == t
-                          ? AdminColors.ink
-                          : AdminColors.surface,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                          color: tier == t
-                              ? AdminColors.ink
-                              : AdminColors.line),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                              color: AdminColors.tier(t),
-                              shape: BoxShape.circle)),
-                      const SizedBox(width: 7),
-                      Text(tierLabels[t]!,
-                          style: AdminText.sans(
-                              12.5,
-                              FontWeight.w700,
-                              tier == t
-                                  ? AdminColors.surface
-                                  : AdminColors.inkSoft)),
-                    ]),
-                  ),
-                ),
-            ],
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(12)),
+            child: Row(children: [
+              Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                      color: AdminColors.tier(tier), shape: BoxShape.circle)),
+              const SizedBox(width: 8),
+              Text('Lv ${level.toStringAsFixed(1)} · ELO $elo · ${_divLabel(tier)}',
+                  style: AdminText.sans(13.5, FontWeight.w800, AdminColors.ink)),
+            ]),
           ),
+          const SizedBox(height: 12),
+          Text(
+              'Seeds a known player and marks them ranked (skips placement). '
+              'Their first matches still fine-tune it.',
+              style: AdminText.small(AdminColors.inkFaint)),
         ]);
       }),
     );

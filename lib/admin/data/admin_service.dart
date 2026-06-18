@@ -25,11 +25,19 @@ class AdminService {
     await _db.from('profiles').update({'status': status}).eq('id', id);
   }
 
-  static Future<void> setPlayerEloTier(
-      String id, int elo, String tier) async {
-    await _db
-        .from('profiles')
-        .update({'elo': elo, 'tier': tier}).eq('id', id);
+  /// Seeds/overrides a player's rating via the server RPC (keeps ELO writes in
+  /// Postgres, and derives level+tier + marks the player ranked). Returns an
+  /// error string or null.
+  static Future<String?> setPlayerRating(String id, int elo) async {
+    try {
+      final res = await _db.rpc('admin_set_player_rating',
+          params: {'p_player_id': id, 'p_elo': elo});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   // ── Dashboard stats ───────────────────────────────────────────

@@ -240,6 +240,40 @@ language sql immutable as $$
     else 'bronze' end;
 $$;
 
+-- Admin cold-start seeding: set a known player's rating server-side (rule #2),
+-- deriving level+tier from the ELO and marking them ranked (placement done).
+-- The seed's ranking_history row has match_id NULL so it doesn't count toward
+-- games played → first real matches still use K=64 and self-correct a bad seed.
+create or replace function public.admin_set_player_rating(
+  p_player_id uuid, p_elo int)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_old_elo   int;
+  v_old_level numeric;
+  v_elo       int;
+  v_level     numeric;
+begin
+  if not public._is_admin() then return 'Not authorised.'; end if;
+  v_elo := greatest(800, least(2200, p_elo));
+  select coalesce(elo, 1000), coalesce(level, 0)
+    into v_old_elo, v_old_level
+  from public.profiles where id = p_player_id;
+  if not found then return 'Player not found.'; end if;
+  v_level := public.level_from_elo(v_elo);
+  update public.profiles set
+    elo = v_elo,
+    level = v_level,
+    tier = public.tier_from_level(v_level),
+    placement_played = greatest(coalesce(placement_played, 0), 5)
+  where id = p_player_id;
+  insert into public.ranking_history
+    (profile_id, match_id, level_before, level_after, elo_before, elo_after)
+  values (p_player_id, null, v_old_level, v_level, v_old_elo, v_elo);
+  return null;
+end $$;
+grant execute on function public.admin_set_player_rating(uuid, int) to authenticated;
+
 create or replace function public._settle_elo(p_match_id uuid, p_ranked boolean)
 returns void
 language plpgsql security definer set search_path = public as $$
