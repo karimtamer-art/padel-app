@@ -37,7 +37,7 @@ class PadelApp extends StatelessWidget {
     final profiles = ProfileService();
 
     return MaterialApp(
-      title: 'Padel Egypt',
+      title: 'Padel Rivals',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       // Tap anywhere outside a text field to dismiss the keyboard — covers

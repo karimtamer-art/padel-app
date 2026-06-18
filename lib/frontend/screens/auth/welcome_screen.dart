@@ -4,35 +4,22 @@ import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
 import 'auth_widgets.dart';
 
-/// Brand mark — terracotta tile + wordmark.
+/// Brand mark — logo badge + "PADEL RIVALS" wordmark.
 class BrandMark extends StatelessWidget {
   final bool light;
   const BrandMark({super.key, this.light = false});
   @override
   Widget build(BuildContext context) {
     final ink = light ? AppColors.heroInk : AppColors.ink;
-    final faint = light ? AppColors.heroFaint : AppColors.inkFaint;
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(
-        width: 42,
-        height: 42,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: AppColors.primary,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(color: AppColors.primary.withValues(alpha: 0.45), blurRadius: 16, offset: const Offset(0, 6)),
-          ],
-        ),
-        child: const Icon(Icons.sports_tennis_rounded, size: 24, color: AppColors.primaryInk),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.asset('assets/brand/logo_mark.png', height: 42),
       ),
       const SizedBox(width: 11),
-      Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Text('PADEL', style: AppText.barTitle(ink).copyWith(fontSize: 21, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 3),
-        Text('CLAY COURT · CAIRO',
-            style: AppText.tag(faint).copyWith(fontSize: 9.5, letterSpacing: 3, fontWeight: FontWeight.w700)),
-      ]),
+      Text('PADEL RIVALS',
+          style: AppText.barTitle(ink)
+              .copyWith(fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
     ]);
   }
 }

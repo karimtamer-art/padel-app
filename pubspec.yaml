@@ -1,5 +1,5 @@
 name: padel_clay
-description: Padel Egypt — Clay Court design (Flutter scaffold generated from the prototype).
+description: Padel Rivals — Flutter app (player + admin) on Supabase.
 publish_to: "none"
 version: 1.0.0+1
 
@@ -12,15 +12,28 @@ dependencies:
     sdk: flutter
   google_fonts: ^6.2.1
   cupertino_icons: ^1.0.6
-  supabase_flutter: ^2.9.0
+  # Pinned exact: 2.13+ (gotrue 2.22) pulls passkeys -> device_info_plus 13,
+  # which breaks the iOS CI build. We don't use passkeys. See project memory.
+  supabase_flutter: 2.12.4
   url_launcher: ^6.3.0
   flutter_web_auth_2: ^4.0.0
   image_picker: ^1.1.2
 
 dev_dependencies:
+  flutter_launcher_icons: ^0.14.4
   flutter_lints: ^5.0.0
   flutter_test:
     sdk: flutter
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/brand/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/brand/logo.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/brand/logo.png"

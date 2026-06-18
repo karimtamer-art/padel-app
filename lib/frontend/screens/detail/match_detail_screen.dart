@@ -193,7 +193,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
     final code = _match?['invite_code'] as String? ?? '';
     final when = _fmtWhen();
     Clipboard.setData(ClipboardData(
-        text: 'Join my padel match on Padel Egypt — $when. Invite code: $code'));
+        text: 'Join my padel match on Padel Rivals — $when. Invite code: $code'));
     _snack('Match details copied — paste anywhere to share');
   }
 

@@ -162,7 +162,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       children: [
         ScreenBar(
-          title: 'Padel Egypt',
+          title: 'Padel Rivals',
           leadingInitials: widget.initials.isNotEmpty ? widget.initials : 'P',
           actions: [
             IconChip(Icons.notifications_none_rounded,

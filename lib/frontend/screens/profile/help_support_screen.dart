@@ -76,7 +76,7 @@ class HelpSupportScreen extends StatelessWidget {
         TileGroup(children: [
           NavTile(icon: Icons.chat_bubble_outline_rounded, title: 'Live Chat', subtitle: 'Coming soon', onTap: () => _comingSoon(context, 'Live chat')),
           NavTile(icon: Icons.mail_outline_rounded, title: 'Email Support', subtitle: 'help@padel.eg',
-              onTap: () => _launch(context, Uri(scheme: 'mailto', path: 'help@padel.eg', queryParameters: {'subject': 'Padel Egypt support'}))),
+              onTap: () => _launch(context, Uri(scheme: 'mailto', path: 'help@padel.eg', queryParameters: {'subject': 'Padel Rivals support'}))),
           NavTile(icon: Icons.phone_outlined, title: 'Call Us', subtitle: '+20 2 1234 5678',
               onTap: () => _launch(context, Uri(scheme: 'tel', path: '+20212345678'))),
         ]),
@@ -97,7 +97,7 @@ class HelpSupportScreen extends StatelessWidget {
         ]),
         const SizedBox(height: 18),
         Center(
-          child: Text('Padel · Clay Court · v1.0.0',
+          child: Text('Padel Rivals · v1.0.0',
               style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 11, letterSpacing: 0.5)),
         ),
       ],

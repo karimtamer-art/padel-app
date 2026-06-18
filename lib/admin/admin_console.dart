@@ -307,7 +307,7 @@ class _Drawer extends StatelessWidget {
             ),
             const SizedBox(width: 11),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('PADEL EGYPT',
+              Text('PADEL RIVALS',
                   style: AdminText.sans(15, FontWeight.w900, AdminColors.sidebarInk,
                       ls: 0.4)),
               const SizedBox(height: 3),
