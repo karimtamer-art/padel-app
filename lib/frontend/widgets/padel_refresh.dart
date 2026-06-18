@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
 /// A branded pull-to-refresh. Wraps a [CustomScrollView] and renders a spinning
@@ -124,11 +123,39 @@ class _BallIndicatorState extends State<_BallIndicator>
                 : progress * 3.14159 * 1.2; // rotate with the drag
             return Transform.rotate(
               angle: widget.reduceMotion ? 0 : angle,
-              child: Icon(Icons.sports_tennis_rounded, size: 28, color: color),
+              child: CustomPaint(
+                size: const Size.square(26),
+                painter: _RefreshArc(color),
+              ),
             );
           },
         ),
       ),
     );
   }
+}
+
+/// Clean 270° arc (rounded cap) — the refresh indicator, matching the splash
+/// BrandSpinner. Rotation is handled by the parent Transform.rotate.
+class _RefreshArc extends CustomPainter {
+  final Color color;
+  _RefreshArc(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const stroke = 3.0;
+    final r = (size.width - stroke) / 2;
+    final rect = Rect.fromCircle(
+        center: Offset(size.width / 2, size.height / 2), radius: r);
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+    canvas.drawArc(rect, -1.5708, 4.712, false, p); // -90°, sweep 270°
+  }
+
+  @override
+  bool shouldRepaint(_RefreshArc old) => old.color != color;
 }
