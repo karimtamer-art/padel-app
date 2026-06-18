@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
+import '../chat/dm_chat_screen.dart';
 import 'settings_common.dart';
 
 class _Notif {
@@ -11,7 +12,10 @@ class _Notif {
   final String title, body, time;
   final bool unread;
   final DateTime? at; // for cross-source sorting
-  const _Notif(this.icon, this.tint, this.title, this.body, this.time, this.unread, {this.at});
+  final String? type;
+  final Map<String, dynamic>? data; // {conversation_id, sender_id, ...}
+  const _Notif(this.icon, this.tint, this.title, this.body, this.time, this.unread,
+      {this.at, this.type, this.data});
 
   /// Icon + tint for a personal notification's `type`.
   static (IconData, Color) styleFor(String? type) => switch (type) {
@@ -61,6 +65,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _ago(n['created_at'] as String?),
         n['read'] != true,
         at: at,
+        type: n['type'] as String?,
+        data: n['data'] is Map
+            ? Map<String, dynamic>.from(n['data'] as Map)
+            : null,
       ));
     }
 
@@ -165,37 +173,74 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Widget _row(_Notif n) => Container(
-        color: n.unread ? AppColors.primary.withValues(alpha: 0.05) : Colors.transparent,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            width: 38,
-            height: 38,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: n.tint.withValues(alpha: 0.13),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(n.icon, size: 19, color: n.tint),
+  Widget _row(_Notif n) {
+    // A message notification opens its conversation; others are display-only.
+    final tappable = n.type == 'message' && n.data?['sender_id'] is String;
+    final content = Container(
+      color: n.unread ? AppColors.primary.withValues(alpha: 0.05) : Colors.transparent,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: n.tint.withValues(alpha: 0.13),
+            borderRadius: BorderRadius.circular(10),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(n.title,
-                  style: AppText.bodyStrong()
-                      .copyWith(fontSize: 14, fontWeight: n.unread ? FontWeight.w800 : FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(n.body, style: AppText.small().copyWith(fontSize: 12, height: 1.35)),
-            ]),
-          ),
-          const SizedBox(width: 8),
-          Column(children: [
-            Text(n.time, style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10.5, letterSpacing: 0)),
-            const SizedBox(height: 6),
-            if (n.unread)
-              Container(width: 8, height: 8, decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle)),
+          child: Icon(n.icon, size: 19, color: n.tint),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(n.title,
+                style: AppText.bodyStrong()
+                    .copyWith(fontSize: 14, fontWeight: n.unread ? FontWeight.w800 : FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text(n.body, style: AppText.small().copyWith(fontSize: 12, height: 1.35)),
           ]),
+        ),
+        const SizedBox(width: 8),
+        Column(children: [
+          Text(n.time, style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10.5, letterSpacing: 0)),
+          const SizedBox(height: 6),
+          if (n.unread)
+            Container(width: 8, height: 8, decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle)),
         ]),
-      );
+        if (tappable) ...[
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.inkFaint),
+        ],
+      ]),
+    );
+    if (!tappable) return content;
+    return GestureDetector(
+        behavior: HitTestBehavior.opaque, onTap: () => _openChat(n), child: content);
+  }
+
+  void _openChat(_Notif n) {
+    final senderId = n.data?['sender_id'] as String?;
+    if (senderId == null) return;
+    // Optimistically clear the unread dot for this row.
+    final i = _items.indexOf(n);
+    if (i >= 0 && n.unread) {
+      setState(() => _items[i] = _Notif(
+          n.icon, n.tint, n.title, n.body, n.time, false,
+          at: n.at, type: n.type, data: n.data));
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DMChatScreen(
+        otherId: senderId,
+        name: n.title,
+        initials: _initials(n.title),
+      ),
+    ));
+  }
+
+  static String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
 }
