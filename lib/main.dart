@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_theme.dart';
 import 'package:padel_clay/frontend/screens/auth/auth_gate.dart';
+import 'package:padel_clay/frontend/screens/splash/splash_screen.dart';
 import 'package:padel_clay/backend/services/auth_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 
@@ -47,7 +48,35 @@ class PadelApp extends StatelessWidget {
         onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
         child: child,
       ),
-      home: AuthGate(authService: auth, profileService: profiles),
+      home: _SplashGate(authService: auth, profileService: profiles),
+    );
+  }
+}
+
+/// Shows the animated splash on cold start, then hands off to [AuthGate].
+/// Auth/session restore already happened in `main()` before `runApp`, so the
+/// splash is a fixed-duration intro rather than a real loading gate.
+class _SplashGate extends StatefulWidget {
+  final AuthService authService;
+  final ProfileService profileService;
+
+  const _SplashGate({required this.authService, required this.profileService});
+
+  @override
+  State<_SplashGate> createState() => _SplashGateState();
+}
+
+class _SplashGateState extends State<_SplashGate> {
+  bool _showSplash = true;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showSplash) {
+      return SplashScreen(onDone: () => setState(() => _showSplash = false));
+    }
+    return AuthGate(
+      authService: widget.authService,
+      profileService: widget.profileService,
     );
   }
 }
