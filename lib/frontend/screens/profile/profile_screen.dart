@@ -5,6 +5,7 @@ import '../../theme/app_spacing.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
 import '../../widgets/elo_chart.dart';
+import '../../widgets/padel_refresh.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/profile_service.dart';
 import '../../../backend/models/mock_data.dart' show CartLine;
@@ -91,20 +92,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      color: AppColors.primary,
+    return PadelRefresh(
       onRefresh: _refresh,
-      child: ListView(
-        padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top, bottom: 120),
-        children: [
-          _hero(context),
-          DivisionCard(ranking: _profile.ranking, onPlayPlacement: widget.onFindMatch),
-          _statsRow(),
-          _eloHistory(),
-          _recent(context),
-          _menu(context),
-        ],
-      ),
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top, bottom: 120),
+          sliver: SliverList(
+            delegate: SliverChildListDelegate([
+              _hero(context),
+              DivisionCard(
+                  ranking: _profile.ranking,
+                  onPlayPlacement: widget.onFindMatch),
+              _statsRow(),
+              _eloHistory(),
+              _recent(context),
+              _menu(context),
+            ]),
+          ),
+        ),
+      ],
     );
   }
 
