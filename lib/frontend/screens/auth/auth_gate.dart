@@ -9,9 +9,9 @@ import '../../../backend/models/onboarding_models.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/profile_service.dart';
 import '../shell/root_scaffold.dart';
+import '../splash/splash_screen.dart';
 import '../../../../admin/admin_console.dart';
 import 'auth_flow.dart';
-import 'welcome_screen.dart';
 import 'onboarding/onboarding_flow.dart';
 
 /// Root of the app once Supabase is initialised. Owns the routing decision:
@@ -134,7 +134,8 @@ class _AuthGateState extends State<AuthGate> {
   @override
   Widget build(BuildContext context) {
     final child = switch (_phase) {
-      _Phase.booting || _Phase.checking => const _Splash(key: ValueKey('splash')),
+      _Phase.booting || _Phase.checking =>
+        const SplashScreen(key: ValueKey('splash')),
       _Phase.signedOut => AuthFlow(
           key: const ValueKey('auth'),
           onAuthenticated: _resolve,
@@ -175,32 +176,6 @@ class _AuthGateState extends State<AuthGate> {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 320),
       child: child,
-    );
-  }
-}
-
-/// Branded splash shown while booting / checking the profile.
-class _Splash extends StatelessWidget {
-  const _Splash({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      body: Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const BrandMark(),
-          const SizedBox(height: 26),
-          const SizedBox(
-            width: 26,
-            height: 26,
-            child: CircularProgressIndicator(
-                strokeWidth: 2.6, color: AppColors.primary),
-          ),
-          const SizedBox(height: 14),
-          Text('Getting things ready…',
-              style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13)),
-        ]),
-      ),
     );
   }
 }

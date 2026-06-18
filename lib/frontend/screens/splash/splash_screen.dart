@@ -18,15 +18,20 @@ import '../../theme/app_text.dart';
 /// Uses the existing brand logo asset (registered via `assets/brand/`):
 ///   assets/brand/logo.png
 class SplashScreen extends StatefulWidget {
-  /// Called once the load sequence + exit fade complete.
-  final VoidCallback onDone;
+  /// Called once the timed load sequence + exit fade complete.
+  ///
+  /// If null, the splash runs as an indeterminate loader — the progress bar
+  /// loops and no hand-off fires — used while real startup work is pending
+  /// (the parent swaps the splash out when ready).
+  final VoidCallback? onDone;
 
   /// Total time the loader runs before handing off (excludes exit fade).
+  /// Only used in timed mode (`onDone != null`).
   final Duration duration;
 
   const SplashScreen({
     super.key,
-    required this.onDone,
+    this.onDone,
     this.duration = const Duration(milliseconds: 2800),
   });
 
@@ -82,19 +87,26 @@ class _SplashScreenState extends State<SplashScreen>
       if (next != _status) setState(() => _status = next);
     });
 
-    _progress.addStatusListener((s) async {
-      if (s == AnimationStatus.completed) {
-        await Future<void>.delayed(const Duration(milliseconds: 350));
-        if (!mounted) return;
-        await _exit.forward();
-        if (mounted) widget.onDone();
-      }
-    });
-
-    // Small beat after entrance, then run the loader.
-    Future<void>.delayed(const Duration(milliseconds: 420), () {
-      if (mounted) _progress.forward();
-    });
+    if (widget.onDone != null) {
+      // Timed intro: fill once, hold a beat, fade out, then hand off.
+      _progress.addStatusListener((s) async {
+        if (s == AnimationStatus.completed) {
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+          if (!mounted) return;
+          await _exit.forward();
+          if (mounted) widget.onDone!();
+        }
+      });
+      // Small beat after entrance, then run the loader.
+      Future<void>.delayed(const Duration(milliseconds: 420), () {
+        if (mounted) _progress.forward();
+      });
+    } else {
+      // Indeterminate: loop the fill until the parent swaps us out.
+      Future<void>.delayed(const Duration(milliseconds: 420), () {
+        if (mounted) _progress.repeat();
+      });
+    }
   }
 
   @override
