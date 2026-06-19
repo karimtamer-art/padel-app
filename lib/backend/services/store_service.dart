@@ -21,4 +21,21 @@ class StoreService {
       return [];
     }
   }
+
+  /// Active promotional banners for the store top, in display order.
+  /// Returns [] on error (e.g. pre-migration databases) so the store still
+  /// renders without the banner strip.
+  static Future<List<Map<String, dynamic>>> fetchActiveBanners() async {
+    try {
+      final rows = await _db
+          .from('banners')
+          .select('id, title, subtitle, image_url, bg_color, discount_pct')
+          .eq('is_active', true)
+          .order('sort_order')
+          .order('created_at');
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (_) {
+      return [];
+    }
+  }
 }

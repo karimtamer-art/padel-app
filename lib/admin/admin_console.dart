@@ -121,7 +121,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     'tournaments': ['Tournaments',  'Brackets & entries'],
     'courts':      ['Courts',       'Partner clubs'],
     'store':       ['Store & Orders', 'Catalogue & orders'],
-    'promotions':  ['Promotions',   'Discount codes & banners'],
+    'promotions':  ['Promotions',   'Store banners & sales'],
     'payments':    ['Payments',     'Orders & transactions'],
     'requests':    ['Requests',     'Repairs & trade-ins'],
     'broadcasts':  ['Broadcasts',   'Push notifications'],
@@ -167,38 +167,21 @@ class _AdminConsoleState extends State<AdminConsole> {
           decoration: const BoxDecoration(
               color: AdminColors.canvas,
               border: Border(bottom: BorderSide(color: AdminColors.line))),
-          child: Column(children: [
-            Row(children: [
-              _squareBtn(Icons.menu_rounded,
-                  () => _scaffoldKey.currentState?.openDrawer()),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(meta[0],
-                    style: AdminText.sans(18, FontWeight.w800, AdminColors.ink,
-                        ls: -0.3)),
-                if (meta[1].isNotEmpty)
-                  Text(meta[1], style: AdminText.small()),
-              ])),
-              _bellBtn(),
-              const SizedBox(width: 8),
-              _squareBtn(Icons.logout_rounded, widget.onExit ?? () {}),
-            ]),
-            const SizedBox(height: 10),
-            Container(
-              height: 40,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                  color: AdminColors.surface,
-                  borderRadius: AdminUI.fieldR,
-                  border: Border.all(color: AdminColors.line)),
-              child: Row(children: [
-                const Icon(Icons.search_rounded,
-                    size: 17, color: AdminColors.inkFaint),
-                const SizedBox(width: 9),
-                Text('Search…', style: AdminText.body(AdminColors.inkFaint)),
-              ]),
-            ),
+          child: Row(children: [
+            _squareBtn(Icons.menu_rounded,
+                () => _scaffoldKey.currentState?.openDrawer()),
+            const SizedBox(width: 12),
+            Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(meta[0],
+                  style: AdminText.sans(18, FontWeight.w800, AdminColors.ink,
+                      ls: -0.3)),
+              if (meta[1].isNotEmpty)
+                Text(meta[1], style: AdminText.small()),
+            ])),
+            _bellBtn(),
+            const SizedBox(width: 8),
+            _squareBtn(Icons.logout_rounded, widget.onExit ?? () {}),
           ]),
         ),
         Expanded(child: _body()),

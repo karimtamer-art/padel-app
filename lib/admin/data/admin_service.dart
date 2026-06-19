@@ -340,6 +340,77 @@ class AdminService {
     await _db.from('products').update({'image_url': url}).eq('id', productId);
   }
 
+  // ── Banners / promotions ──────────────────────────────────────
+
+  static const _bannerBucket = 'banner-images';
+
+  /// All banners (active + inactive) for the admin list, newest sort first.
+  static Future<List<Map<String, dynamic>>> fetchBanners() async {
+    final res = await _db
+        .from('banners')
+        .select('*')
+        .order('sort_order')
+        .order('created_at', ascending: false);
+    return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  /// Products currently attached to [bannerId] (its sale set).
+  static Future<List<Map<String, dynamic>>> fetchBannerProducts(
+      String bannerId) async {
+    final res = await _db
+        .from('products')
+        .select('id, name, brand, price, sale_price')
+        .eq('banner_id', bannerId);
+    return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  /// Inserts/updates a banner and applies its sale to [items] atomically.
+  /// [items] is a list of {'product_id': uuid, 'sale_price': int?}; a null
+  /// sale_price means "use the percentage". Returns the banner id.
+  static Future<String> saveBanner({
+    String? id,
+    String? title,
+    String? subtitle,
+    String? imageUrl,
+    String? bgColor,
+    bool isActive = true,
+    int sortOrder = 0,
+    int? discountPct,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final res = await _db.rpc('admin_save_banner', params: {
+      'p_id': id,
+      'p_title': title,
+      'p_subtitle': subtitle,
+      'p_image_url': imageUrl,
+      'p_bg_color': bgColor,
+      'p_is_active': isActive,
+      'p_sort_order': sortOrder,
+      'p_discount_pct': discountPct,
+      'p_items': items,
+    });
+    return res as String;
+  }
+
+  static Future<void> deleteBanner(String id) async {
+    await _db.rpc('admin_delete_banner', params: {'p_id': id});
+  }
+
+  /// Uploads banner artwork to the public banner-images bucket; returns the URL.
+  static Future<String> uploadBannerImage(Uint8List bytes, String ext) async {
+    final safeExt = ext.toLowerCase() == 'jpeg' ? 'jpg' : ext.toLowerCase();
+    final path =
+        'banners/${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(99999)}.$safeExt';
+    await _db.storage.from(_bannerBucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+              contentType: 'image/${safeExt == 'jpg' ? 'jpeg' : safeExt}',
+              upsert: true),
+        );
+    return _db.storage.from(_bannerBucket).getPublicUrl(path);
+  }
+
   // ── Orders ────────────────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> fetchOrders(

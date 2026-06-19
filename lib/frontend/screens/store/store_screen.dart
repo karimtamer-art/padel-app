@@ -9,6 +9,7 @@ import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/frontend/widgets/skeleton.dart';
 import 'package:padel_clay/frontend/widgets/micro.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
+import 'package:padel_clay/backend/services/store_service.dart';
 import 'product_detail_screen.dart';
 
 class StoreScreen extends StatefulWidget {
@@ -25,6 +26,8 @@ class _StoreScreenState extends State<StoreScreen> {
   final _searchCtrl = TextEditingController();
   String _query = '';
   List<Map<String, dynamic>> _products = [];
+  List<Map<String, dynamic>> _banners = [];
+  String? _saleBannerId; // when set, grid shows only this banner's items
   bool _loading = true;
   bool _hideLowStock = false; // admin app_settings 'hide_low_stock'
 
@@ -67,9 +70,10 @@ class _StoreScreenState extends State<StoreScreen> {
     try {
       final rows = await Supabase.instance.client
           .from('products')
-          .select('id, name, brand, category, description, image_url, price, sale_price, on_sale, stock_status, rating, is_visible')
+          .select('id, name, brand, category, description, image_url, price, sale_price, on_sale, stock_status, rating, is_visible, banner_id')
           .eq('is_visible', true)
           .order('created_at', ascending: false);
+      final banners = await StoreService.fetchActiveBanners();
       // Store-wide admin setting: suppress the LOW badge when on.
       bool hideLow = false;
       try {
@@ -83,13 +87,27 @@ class _StoreScreenState extends State<StoreScreen> {
       if (mounted) {
         setState(() {
           _products = List<Map<String, dynamic>>.from(rows as List);
+          _banners = banners;
           _hideLowStock = hideLow;
+          // drop a stale sale filter if its banner is no longer active
+          if (_saleBannerId != null &&
+              !_banners.any((b) => b['id'] == _saleBannerId)) {
+            _saleBannerId = null;
+          }
           _loading = false;
         });
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  // Parse a banner's hex bg_color (e.g. '#21372F'); falls back to the hero green.
+  static Color _hexColor(String? hex) {
+    if (hex == null || hex.isEmpty) return AppColors.hero;
+    final h = hex.replaceAll('#', '');
+    final v = int.tryParse(h.length == 6 ? 'FF$h' : h, radix: 16);
+    return v == null ? AppColors.hero : Color(v);
   }
 
   // Normalise DB lowercase category → display title case
@@ -106,7 +124,10 @@ class _StoreScreenState extends State<StoreScreen> {
   List<Map<String, dynamic>> get _filtered {
     final q = _query.trim().toLowerCase();
     return _products.where((p) {
-      if (_cat != 'All' && _normCat(p['category'] as String?) != _cat) {
+      // Sale mode: only this banner's items (category filter ignored).
+      if (_saleBannerId != null) {
+        if (p['banner_id'] != _saleBannerId) return false;
+      } else if (_cat != 'All' && _normCat(p['category'] as String?) != _cat) {
         return false;
       }
       if (q.isNotEmpty) {
@@ -157,14 +178,18 @@ class _StoreScreenState extends State<StoreScreen> {
             onRefresh: _loadProducts,
             slivers: [
               SliverToBoxAdapter(child: _searchBar()),
-                SliverToBoxAdapter(child: _promo()),
+                SliverToBoxAdapter(child: _bannersCarousel()),
                 SliverToBoxAdapter(child: _tradeIn()),
-                SliverToBoxAdapter(child: _catChips()),
+                SliverToBoxAdapter(
+                    child: _saleBannerId == null ? _catChips() : _saleHeader()),
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 4, AppSpacing.screen, 10),
                     child: Row(children: [
-                      Text(_cat == 'All' ? 'ALL PRODUCTS' : _cat.toUpperCase(),
+                      Text(
+                          _saleBannerId != null
+                              ? 'ON SALE'
+                              : (_cat == 'All' ? 'ALL PRODUCTS' : _cat.toUpperCase()),
                           style: AppText.kicker()),
                       const SizedBox(width: 8),
                       if (_loading)
@@ -248,57 +273,134 @@ class _StoreScreenState extends State<StoreScreen> {
         ),
       );
 
-  Widget _promo() => Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 0, AppSpacing.screen, 12),
-        child: Container(
-          height: 122,
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: AppRadius.cardR,
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
-          ),
-          child: Stack(children: [
-            Positioned(
-              right: -24,
-              top: -24,
-              child: Container(
-                width: 150,
-                height: 150,
-                decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+  // Admin-managed promotional banners. Hidden when there are none.
+  Widget _bannersCarousel() {
+    if (_loading || _banners.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: SizedBox(
+        height: 122,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: AppSpacing.screenH,
+          itemCount: _banners.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (_, i) => _bannerCard(_banners[i]),
+        ),
+      ),
+    );
+  }
+
+  Widget _bannerCard(Map<String, dynamic> b) {
+    final w = MediaQuery.of(context).size.width - AppSpacing.screen * 2;
+    final image = b['image_url'] as String?;
+    final hasImage = image != null && image.isNotEmpty;
+    final title = (b['title'] as String?)?.trim() ?? '';
+    final subtitle = (b['subtitle'] as String?)?.trim() ?? '';
+    final pct = (b['discount_pct'] as num?)?.toInt();
+    final single = _banners.length == 1;
+    return GestureDetector(
+      onTap: () => setState(() {
+        _saleBannerId = b['id'] as String?;
+        _cat = 'All';
+      }),
+      child: Container(
+        width: single ? w : w * 0.86,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: _hexColor(b['bg_color'] as String?),
+          borderRadius: AppRadius.cardR,
+          border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+        ),
+        child: Stack(fit: StackFit.expand, children: [
+          if (hasImage)
+            Image.network(image,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+          // Scrim only over images (colored bg is already legible).
+          if (hasImage)
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.55),
+                    Colors.black.withValues(alpha: 0.10),
+                  ],
+                ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(children: [
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const AppTag('Summer Deals', color: AppColors.primary, solid: true),
-                      const SizedBox(height: 8),
-                      Text('Up to 20% off\npremium rackets',
-                          style: AppText.stat(18).copyWith(height: 1.15, letterSpacing: -0.3)),
-                      const SizedBox(height: 5),
-                      Text('Limited time offer', style: AppText.small().copyWith(fontSize: 12)),
-                    ],
-                  ),
-                ),
-                Container(
-                  width: 84,
-                  height: 84,
-                  decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(14)),
-                  child: const Icon(Icons.sports_tennis_rounded, size: 48, color: AppColors.primary),
-                ),
-              ]),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (pct != null)
+                  AppTag('$pct% OFF', color: AppColors.primary, solid: true),
+                if (title.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.stat(20, Colors.white)
+                          .copyWith(letterSpacing: -0.3)),
+                ],
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.small(Colors.white70)
+                          .copyWith(fontSize: 12.5, height: 1.3)),
+                ],
+              ],
             ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  // Shown in place of the category chips while a banner's sale is active.
+  Widget _saleHeader() {
+    final b = _banners.firstWhere((x) => x['id'] == _saleBannerId,
+        orElse: () => const <String, dynamic>{});
+    final title = (b['title'] as String?)?.trim();
+    return Padding(
+      padding:
+          const EdgeInsets.fromLTRB(AppSpacing.screen, 0, AppSpacing.screen, 12),
+      child: GestureDetector(
+        onTap: () => setState(() => _saleBannerId = null),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.08),
+            borderRadius: AppRadius.btnR,
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.local_offer_rounded,
+                size: 16, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                  title != null && title.isNotEmpty ? 'Sale: $title' : 'On sale',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.bodyStrong(AppColors.primary)
+                      .copyWith(fontSize: 13)),
+            ),
+            const Icon(Icons.close_rounded, size: 16, color: AppColors.primary),
+            const SizedBox(width: 2),
+            Text('Clear',
+                style: AppText.tag(AppColors.primary).copyWith(fontSize: 11)),
           ]),
         ),
-      );
+      ),
+    );
+  }
 
   Widget _tradeIn() => Padding(
         padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 0, AppSpacing.screen, 12),
