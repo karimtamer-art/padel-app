@@ -295,30 +295,33 @@ class _StoreScreenState extends State<StoreScreen> {
     final w = MediaQuery.of(context).size.width - AppSpacing.screen * 2;
     final image = b['image_url'] as String?;
     final hasImage = image != null && image.isNotEmpty;
+    final accent = _hexColor(b['bg_color'] as String?);
     final title = (b['title'] as String?)?.trim() ?? '';
     final subtitle = (b['subtitle'] as String?)?.trim() ?? '';
     final pct = (b['discount_pct'] as num?)?.toInt();
-    final single = _banners.length == 1;
-    return GestureDetector(
-      onTap: () => setState(() {
-        _saleBannerId = b['id'] as String?;
-        _cat = 'All';
-      }),
-      child: Container(
-        width: single ? w : w * 0.86,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: _hexColor(b['bg_color'] as String?),
-          borderRadius: AppRadius.cardR,
-          border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
-        ),
-        child: Stack(fit: StackFit.expand, children: [
-          if (hasImage)
+    final width = _banners.length == 1 ? w : w * 0.86;
+
+    void open() => setState(() {
+          _saleBannerId = b['id'] as String?;
+          _cat = 'All';
+        });
+
+    // Image banners: full-bleed art with a legibility scrim and white text.
+    if (hasImage) {
+      return GestureDetector(
+        onTap: open,
+        child: Container(
+          width: width,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: accent,
+            borderRadius: AppRadius.cardR,
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+          ),
+          child: Stack(fit: StackFit.expand, children: [
             Image.network(image,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-          // Scrim only over images (colored bg is already legible).
-          if (hasImage)
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -331,32 +334,94 @@ class _StoreScreenState extends State<StoreScreen> {
                 ),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (pct != null)
-                  AppTag('$pct% OFF', color: AppColors.primary, solid: true),
-                if (title.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppText.stat(20, Colors.white)
-                          .copyWith(letterSpacing: -0.3)),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (pct != null)
+                    AppTag('$pct% OFF', color: AppColors.primary, solid: true),
+                  if (title.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.stat(20, Colors.white)
+                            .copyWith(letterSpacing: -0.3)),
+                  ],
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.small(Colors.white70)
+                            .copyWith(fontSize: 12.5, height: 1.3)),
+                  ],
                 ],
-                if (subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppText.small(Colors.white70)
-                          .copyWith(fontSize: 12.5, height: 1.3)),
-                ],
-              ],
+              ),
             ),
+          ]),
+        ),
+      );
+    }
+
+    // Color banners: classic light promo card — accent tag + headline + icon tile.
+    final pill = (title.isNotEmpty ? title : 'Sale').toUpperCase();
+    final headline = subtitle.isNotEmpty
+        ? subtitle
+        : (pct != null ? 'Up to $pct% off' : 'Shop the sale');
+    return GestureDetector(
+      onTap: open,
+      child: Container(
+        width: width,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: AppRadius.cardR,
+          border: Border.all(color: accent.withValues(alpha: 0.30)),
+        ),
+        child: Stack(children: [
+          Positioned(
+            right: -24, top: -24,
+            child: Container(
+              width: 150, height: 150,
+              decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.10), shape: BoxShape.circle),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(children: [
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppTag(pill, color: accent, solid: true),
+                    const SizedBox(height: 8),
+                    Text(headline,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.stat(18)
+                            .copyWith(height: 1.15, letterSpacing: -0.3)),
+                    if (subtitle.isNotEmpty && pct != null) ...[
+                      const SizedBox(height: 5),
+                      Text('$pct% off',
+                          style: AppText.small().copyWith(fontSize: 12)),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                width: 84, height: 84,
+                decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14)),
+                child: Icon(Icons.sports_tennis_rounded, size: 46, color: accent),
+              ),
+            ]),
           ),
         ]),
       ),

@@ -812,7 +812,17 @@ create table if not exists public.banners (
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
-alter table public.banners add column if not exists bg_color text;
+-- self-heal: a pre-migration drift `banners` table may predate these columns,
+-- so `create table if not exists` above would have been a no-op. Add each.
+alter table public.banners add column if not exists title        text;
+alter table public.banners add column if not exists subtitle     text;
+alter table public.banners add column if not exists image_url    text;
+alter table public.banners add column if not exists bg_color     text;
+alter table public.banners add column if not exists discount_pct int;
+alter table public.banners add column if not exists is_active    boolean not null default true;
+alter table public.banners add column if not exists sort_order   int not null default 0;
+alter table public.banners add column if not exists created_at   timestamptz not null default now();
+alter table public.banners add column if not exists updated_at   timestamptz not null default now();
 alter table public.banners enable row level security;
 drop policy if exists "banners: read active" on public.banners;
 create policy "banners: read active" on public.banners

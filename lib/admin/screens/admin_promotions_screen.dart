@@ -304,36 +304,25 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
                     ? Image.memory(pending!.bytes, fit: BoxFit.cover)
                     : (imageUrl != null && imageUrl!.isNotEmpty)
                         ? Image.network(imageUrl!, fit: BoxFit.cover)
-                        : Container(
-                            color: _hexColor(bgColor),
-                            alignment: Alignment.center,
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.add_photo_alternate_outlined,
-                                    size: 28, color: Colors.white70),
-                                const SizedBox(height: 6),
-                                Text('Tap to add image (optional)',
-                                    style: AdminText.sans(
-                                        12, FontWeight.w600, Colors.white70)),
-                              ],
-                            ),
+                        : Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.add_photo_alternate_outlined,
+                                  size: 28, color: AdminColors.inkFaint),
+                              const SizedBox(height: 6),
+                              Text('Tap to add image (optional)',
+                                  style: AdminText.small(AdminColors.inkFaint)),
+                            ],
                           ),
               ),
             ),
             // Color is used as the background when no image is set.
             if (pending == null && (imageUrl == null || imageUrl!.isEmpty)) ...[
               const SizedBox(height: 12),
-              Row(children: [
-                Text('BACKGROUND COLOR', style: AdminText.kicker()),
-                const Spacer(),
-                if (imageUrl != null && imageUrl!.isNotEmpty)
-                  GestureDetector(
-                    onTap: () => setSheet(() => imageUrl = null),
-                    child: Text('Remove image',
-                        style: AdminText.small(AdminColors.primary)),
-                  ),
-              ]),
+              Text('ACCENT COLOR', style: AdminText.kicker()),
+              const SizedBox(height: 2),
+              Text('Tints the tag & icon on the cream banner card (no image).',
+                  style: AdminText.small(AdminColors.inkFaint)),
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -432,21 +421,33 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
               width: on ? 1.5 : 1),
         ),
         child: Row(children: [
-          GestureDetector(
-            onTap: () => setSheet(() =>
-                on ? selected.remove(id) : selected.add(id)),
-            child: Icon(
-                on ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
-                color: on ? AdminColors.primary : AdminColors.inkFaint),
-          ),
-          const SizedBox(width: 10),
+          // Tap anywhere on the name/box region to toggle (price field stays
+          // independent so it can be focused).
           Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(p['name'] as String? ?? '—',
-                  style: AdminText.strong(),
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              Text(_egp(price), style: AdminText.small(AdminColors.inkFaint)),
-            ]),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () =>
+                  setSheet(() => on ? selected.remove(id) : selected.add(id)),
+              child: Row(children: [
+                Icon(
+                    on
+                        ? Icons.check_box_rounded
+                        : Icons.check_box_outline_blank_rounded,
+                    color: on ? AdminColors.primary : AdminColors.inkFaint),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p['name'] as String? ?? '—',
+                            style: AdminText.strong(),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(_egp(price),
+                            style: AdminText.small(AdminColors.inkFaint)),
+                      ]),
+                ),
+              ]),
+            ),
           ),
           if (on && mode == 'custom')
             SizedBox(
