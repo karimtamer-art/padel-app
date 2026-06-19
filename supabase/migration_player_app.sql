@@ -714,6 +714,51 @@ drop policy if exists "product_costs: admin only" on public.product_costs;
 create policy "product_costs: admin only" on public.product_costs
   for all using (public._is_admin()) with check (public._is_admin());
 
+-- ── Home "featured" products ───────────────────────────────────
+-- The Home store section shows best-sellers; if nothing has sold yet it falls
+-- back to admin-picked items, then to newest. Admin curation lives here.
+alter table public.products add column if not exists is_featured boolean not null default false;
+alter table public.products add column if not exists featured_rank int;
+
+-- Pick products for the Home store strip — purely the admin's choice:
+--   1. admin-featured (is_featured) → ordered by featured_rank, then newest
+--   2. else newest visible (so the section is never empty)
+drop function if exists public.get_home_products(int);
+create or replace function public.get_home_products(p_limit int default 6)
+returns table (
+  id           uuid,
+  name         text,
+  brand        text,
+  category     text,
+  description  text,
+  image_url    text,
+  price        numeric,
+  sale_price   numeric,
+  on_sale      boolean,
+  stock_status text,
+  rating       numeric,
+  source       text
+)
+language sql security definer set search_path = public as $$
+  with has_featured as (
+    select exists(
+      select 1 from public.products where is_visible and is_featured
+    ) as f
+  )
+  select p.id, p.name, p.brand, p.category, p.description, p.image_url, p.price,
+         p.sale_price, p.on_sale, p.stock_status, p.rating,
+         case when p.is_featured then 'featured' else 'new' end as source
+  from public.products p
+  where p.is_visible
+    and ( ((select f from has_featured) and p.is_featured)
+          or (not (select f from has_featured)) )
+  order by
+    case when p.is_featured then coalesce(p.featured_rank, 999999)
+         else 999999 end asc,
+    p.created_at desc
+  limit greatest(p_limit, 1);
+$$;
+
 -- multiple images per product (gallery); products.image_url stays as the
 -- denormalised primary/thumbnail so the grid loads one small image per product.
 create table if not exists public.product_images (

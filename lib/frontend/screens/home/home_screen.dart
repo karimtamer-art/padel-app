@@ -8,8 +8,10 @@ import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/frontend/widgets/skeleton.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart';
+import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
+import 'package:padel_clay/backend/services/store_service.dart';
 import '../matches/find_match_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
@@ -18,6 +20,7 @@ import '../profile/notifications_screen.dart';
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onSeeStore;
   final VoidCallback? onSeeTournaments;
+  final ValueChanged<Product>? onAddToCart;
   final PlayerProfile profile;
   final String displayName;
   final String initials;
@@ -26,6 +29,7 @@ class HomeScreen extends StatefulWidget {
     super.key,
     this.onSeeStore,
     this.onSeeTournaments,
+    this.onAddToCart,
     this.profile = PlayerProfile.fresh,
     this.displayName = '',
     this.initials = 'P',
@@ -38,6 +42,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _myMatches = [];
   List<Map<String, dynamic>> _tournaments = [];
+  List<Map<String, dynamic>> _featured = [];
   int _unread = 0;
   bool _loading = true;
   RealtimeChannel? _notifChannel;
@@ -79,7 +84,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     setState(() => _loading = true);
-    await Future.wait([_fetchMatches(), _fetchTournaments(), _fetchUnread()]);
+    await Future.wait(
+        [_fetchMatches(), _fetchTournaments(), _fetchUnread(), _fetchFeatured()]);
     if (mounted) setState(() => _loading = false);
   }
 
@@ -149,6 +155,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) _unread = n;
   }
 
+  Future<void> _fetchFeatured() async {
+    final rows = await StoreService.fetchHomeProducts(limit: 1);
+    if (mounted) _featured = rows;
+  }
+
   Future<void> _openNotifications(BuildContext c) async {
     await Navigator.of(c)
         .push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
@@ -199,8 +210,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     action: 'View All', onAction: widget.onSeeTournaments),
                 _tournamentsSection(),
                 const SizedBox(height: AppSpacing.section),
-                SectionHeader('Store', action: 'Browse', onAction: widget.onSeeStore),
-                _StoreCta(onTap: widget.onSeeStore),
+                SectionHeader('From the Store',
+                    action: 'Shop', onAction: widget.onSeeStore),
+                _storeSection(),
                 const SizedBox(height: AppSpacing.section),
                   ]),
                 ),
@@ -393,6 +405,53 @@ class _HomeScreenState extends State<HomeScreen> {
                 onTap: () => _openTournament(context, t['id'] as String)),
         ],
       ),
+    );
+  }
+
+  // ── Store ────────────────────────────────────────────────────────────────
+
+  static String _normCat(String? raw) {
+    switch ((raw ?? '').toLowerCase()) {
+      case 'rackets': return 'Rackets';
+      case 'shoes': return 'Shoes';
+      case 'apparel': return 'Apparel';
+      case 'balls': return 'Balls';
+      default: return 'Accessories';
+    }
+  }
+
+  // Featured row → the mock Product the cart uses (mirrors StoreScreen).
+  Product _toProduct(Map<String, dynamic> row) {
+    final price = (row['price'] as num?)?.toInt() ?? 0;
+    final salePrice = (row['sale_price'] as num?)?.toInt();
+    final onSale = (row['on_sale'] as bool?) ?? false;
+    final discount = (onSale && salePrice != null && price > 0)
+        ? ((price - salePrice) / price * 100).round().clamp(1, 99)
+        : 0;
+    return Product(
+      row['brand'] as String? ?? '',
+      row['name'] as String? ?? 'Product',
+      _normCat(row['category'] as String?),
+      price,
+      (row['rating'] as num?)?.toDouble() ?? 0.0,
+      0,
+      discount: discount,
+      id: row['id'] as String? ?? '',
+    );
+  }
+
+  Widget _storeSection() {
+    if (_loading) return const _FeaturedHeroSkeleton();
+    // Nothing to feature (no products at all) → keep the simple browse card.
+    if (_featured.isEmpty) return _StoreCta(onTap: widget.onSeeStore);
+    final row = _featured.first;
+    final outOfStock = (row['stock_status'] as String?) == 'out';
+    return _FeaturedHeroCard(
+      row,
+      onTap: widget.onSeeStore,
+      onAdd: (widget.onAddToCart == null || outOfStock)
+          ? null
+          : () => widget.onAddToCart!(_toProduct(row)),
     );
   }
 }
@@ -819,6 +878,156 @@ class _StoreCta extends StatelessWidget {
             ]),
           ),
           const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Featured product hero card (Home "From the Store") ───────────────────────
+
+class _FeaturedHeroCard extends StatelessWidget {
+  final Map<String, dynamic> p;
+  final VoidCallback? onTap;
+  final VoidCallback? onAdd;
+  const _FeaturedHeroCard(this.p, {this.onTap, this.onAdd});
+
+  static const _catIcons = <String, IconData>{
+    'rackets': Icons.sports_tennis_rounded,
+    'shoes': Icons.directions_run_rounded,
+    'apparel': Icons.checkroom_rounded,
+    'balls': Icons.sports_baseball_rounded,
+    'accessories': Icons.backpack_rounded,
+  };
+  static const _catColors = <String, Color>{
+    'rackets': AppColors.primary,
+    'shoes': AppColors.accent,
+    'apparel': AppColors.diamond,
+    'balls': AppColors.success,
+    'accessories': AppColors.platinum,
+  };
+  static const _catLabels = <String, String>{
+    'rackets': 'Padel Racket',
+    'shoes': 'Court Shoes',
+    'apparel': 'Apparel',
+    'balls': 'Padel Balls',
+    'accessories': 'Accessory',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final cat = (p['category'] as String? ?? 'accessories').toLowerCase();
+    final color = _catColors[cat] ?? AppColors.primary;
+    final icon = _catIcons[cat] ?? Icons.sports_tennis_rounded;
+    final name = p['name'] as String? ?? 'Product';
+    final desc = (p['description'] as String?)?.trim();
+    final subtitle = (desc != null && desc.isNotEmpty)
+        ? desc
+        : (_catLabels[cat] ?? 'Padel Gear');
+    final price = (p['price'] as num?)?.toInt() ?? 0;
+    final salePrice = (p['sale_price'] as num?)?.toInt();
+    final onSale = (p['on_sale'] as bool?) ?? false;
+    final displayPrice = (onSale && salePrice != null) ? salePrice : price;
+    final imageUrl = p['image_url'] as String?;
+    final outOfStock = (p['stock_status'] as String?) == 'out';
+
+    final tagLabel =
+        (p['source'] as String?) == 'featured' ? 'FEATURED' : 'NEW IN';
+
+    final radius = BorderRadius.circular(14);
+    final image = (imageUrl != null && imageUrl.isNotEmpty)
+        ? ClipRRect(
+            borderRadius: radius,
+            child: Image.network(
+              imageUrl,
+              width: 80, height: 80,
+              fit: BoxFit.cover,
+              cacheWidth: 240,
+              loadingBuilder: (_, child, progress) => progress == null
+                  ? child
+                  : Container(width: 80, height: 80, color: AppColors.field),
+              errorBuilder: (_, __, ___) => SizedBox(
+                width: 80,
+                child: StripedPlaceholder(
+                    height: 80, icon: icon, color: color, radius: radius),
+              ),
+            ),
+          )
+        : SizedBox(
+            width: 80,
+            child: StripedPlaceholder(
+                height: 80, icon: icon, color: color, radius: radius),
+          );
+
+    return Padding(
+      padding: AppSpacing.screenH,
+      child: AppCard(
+        onTap: onTap,
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          image,
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              AppTag(tagLabel, color: AppColors.primary),
+              const SizedBox(height: 6),
+              Text(name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.bodyStrong().copyWith(fontSize: 14.5)),
+              const SizedBox(height: 2),
+              Text(subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.small().copyWith(fontSize: 12.5)),
+              const SizedBox(height: 10),
+              Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (onSale && salePrice != null)
+                        Text(MockData.egp(price),
+                            style: AppText.tag(AppColors.inkFaint).copyWith(
+                                fontSize: 10,
+                                decoration: TextDecoration.lineThrough)),
+                      Text(MockData.egp(displayPrice),
+                          style: AppText.stat(18, AppColors.primary)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                AppButton(outOfStock ? 'Sold Out' : 'Add to Cart',
+                    height: 38, onPressed: onAdd),
+              ]),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _FeaturedHeroSkeleton extends StatelessWidget {
+  const _FeaturedHeroSkeleton();
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: AppSpacing.screenH,
+      child: AppCard(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Skeleton(width: 80, height: 80, radius: 14),
+          SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Skeleton(width: 64, height: 10, radius: 4),
+              SizedBox(height: 8),
+              Skeleton(width: double.infinity, height: 12, radius: 4),
+              SizedBox(height: 6),
+              Skeleton(width: 120, height: 10, radius: 4),
+              SizedBox(height: 12),
+              Skeleton(width: double.infinity, height: 24, radius: 6),
+            ]),
+          ),
         ]),
       ),
     );

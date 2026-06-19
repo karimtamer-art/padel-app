@@ -112,6 +112,7 @@ class _RootScaffoldState extends State<RootScaffold> {
             key: ValueKey('home-$_homeRefresh'),
             onSeeStore: () => setState(() => _tab = 3),
             onSeeTournaments: () => setState(() => _tab = 1),
+            onAddToCart: _addToCart,
             profile: widget.profile,
             displayName: widget.displayName,
             initials: widget.initials,

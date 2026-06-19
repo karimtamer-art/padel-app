@@ -283,10 +283,32 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(p['name'] as String? ?? '—',
-                  style: AdminText.strong(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
+              Row(children: [
+                Flexible(
+                  child: Text(p['name'] as String? ?? '—',
+                      style: AdminText.strong(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
+                if (p['is_featured'] == true) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                        color: AdminColors.wash(AdminColors.primary, 0.16),
+                        borderRadius: BorderRadius.circular(5)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.star_rounded,
+                          size: 11, color: AdminColors.primary),
+                      const SizedBox(width: 3),
+                      Text('Featured',
+                          style: AdminText.sans(
+                              9.5, FontWeight.w800, AdminColors.primary)),
+                    ]),
+                  ),
+                ],
+              ]),
               const SizedBox(height: 2),
               Text(
                   '${p['brand'] ?? '—'} · ${_normCat(p['category'] as String?)}',
@@ -443,6 +465,7 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
     var cat     = (p['category'] as String?)?.toLowerCase() ?? 'accessories';
     var onSale  = (p['on_sale'] as bool?) ?? false;
     var visible = (p['is_visible'] as bool?) ?? true;
+    var featured = (p['is_featured'] as bool?) ?? false;
 
     adminSheet(
       context,
@@ -461,22 +484,27 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
               onPressed: () async {
             if (nameC.text.trim().isEmpty) return;
             Navigator.pop(context);
-            await AdminService.upsertProduct({
-              'id': p['id'],
-              'name': nameC.text.trim(),
-              'brand': brandC.text.trim().isEmpty ? null : brandC.text.trim(),
-              'category': cat,
-              'description':
-                  descC.text.trim().isEmpty ? null : descC.text.trim(),
-              'price': int.tryParse(priceC.text) ?? p['price'],
-              'cost': int.tryParse(costC.text),
-              'stock': int.tryParse(stockC.text) ?? p['stock'],
-              'on_sale': onSale,
-              'sale_price': onSale ? int.tryParse(saleC.text) : null,
-              'is_visible': visible,
-            });
-            await _load();
-            if (mounted) adminToast(context, 'Product updated');
+            try {
+              await AdminService.upsertProduct({
+                'id': p['id'],
+                'name': nameC.text.trim(),
+                'brand': brandC.text.trim().isEmpty ? null : brandC.text.trim(),
+                'category': cat,
+                'description':
+                    descC.text.trim().isEmpty ? null : descC.text.trim(),
+                'price': int.tryParse(priceC.text) ?? p['price'],
+                'cost': int.tryParse(costC.text),
+                'stock': int.tryParse(stockC.text) ?? p['stock'],
+                'on_sale': onSale,
+                'sale_price': onSale ? int.tryParse(saleC.text) : null,
+                'is_visible': visible,
+                'is_featured': featured,
+              });
+              await _load();
+              if (mounted) adminToast(context, 'Product updated');
+            } catch (e) {
+              if (mounted) adminToast(context, "Couldn't save: $e");
+            }
           }),
         ),
       ]),
@@ -515,6 +543,10 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
           const SizedBox(height: 12),
           _toggleRow('Visible in store', 'Players can see and buy it', visible,
               (v) => setSheet(() => visible = v)),
+          const SizedBox(height: 12),
+          _toggleRow('Feature on home',
+              'Show on the Home screen when nothing has sold yet', featured,
+              (v) => setSheet(() => featured = v)),
         ]),
       ),
     );
@@ -559,6 +591,7 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
     var cat     = 'rackets';
     var onSale  = false;
     var visible = true;
+    var featured = false;
     // Picked in the sheet, uploaded after the product row is created (needs id).
     final pendingImages = <({Uint8List bytes, String ext})>[];
 
@@ -575,24 +608,29 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
         onPressed: () async {
           if (nameC.text.trim().isEmpty || priceC.text.trim().isEmpty) return;
           Navigator.pop(context);
-          final id = await AdminService.upsertProduct({
-            'name': nameC.text.trim(),
-            'brand': brandC.text.trim().isEmpty ? 'Generic' : brandC.text.trim(),
-            'category': cat,
-            'description': descC.text.trim().isEmpty ? null : descC.text.trim(),
-            'price': int.tryParse(priceC.text) ?? 0,
-            'cost': int.tryParse(costC.text) ?? 0,
-            'stock': int.tryParse(stockC.text) ?? 0,
-            'on_sale': onSale,
-            'sale_price': onSale ? int.tryParse(saleC.text) : null,
-            'is_visible': visible,
-          });
-          for (final f in pendingImages) {
-            await AdminService.uploadProductImage(id, f.bytes, f.ext);
-          }
-          await _load();
-          if (mounted) {
-            adminToast(context, '"${nameC.text.trim()}" added to store');
+          try {
+            final id = await AdminService.upsertProduct({
+              'name': nameC.text.trim(),
+              'brand': brandC.text.trim().isEmpty ? 'Generic' : brandC.text.trim(),
+              'category': cat,
+              'description': descC.text.trim().isEmpty ? null : descC.text.trim(),
+              'price': int.tryParse(priceC.text) ?? 0,
+              'cost': int.tryParse(costC.text) ?? 0,
+              'stock': int.tryParse(stockC.text) ?? 0,
+              'on_sale': onSale,
+              'sale_price': onSale ? int.tryParse(saleC.text) : null,
+              'is_visible': visible,
+              'is_featured': featured,
+            });
+            for (final f in pendingImages) {
+              await AdminService.uploadProductImage(id, f.bytes, f.ext);
+            }
+            await _load();
+            if (mounted) {
+              adminToast(context, '"${nameC.text.trim()}" added to store');
+            }
+          } catch (e) {
+            if (mounted) adminToast(context, "Couldn't add product: $e");
           }
         },
       ),
@@ -628,6 +666,10 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
           const SizedBox(height: 12),
           _toggleRow('Visible in store', 'Players can see and buy it', visible,
               (v) => setSheet(() => visible = v)),
+          const SizedBox(height: 12),
+          _toggleRow('Feature on home',
+              'Show on the Home screen when nothing has sold yet', featured,
+              (v) => setSheet(() => featured = v)),
         ]),
       ),
     );
