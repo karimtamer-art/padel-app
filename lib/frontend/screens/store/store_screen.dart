@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -702,11 +703,14 @@ class _StoreScreenState extends State<StoreScreen> {
   }
 
   void _openTradeIn() {
+    final rackets = _products
+        .where((p) => (p['category'] as String?) == 'Rackets')
+        .toList();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _TradeInSheet(),
+      builder: (_) => _TradeInSheet(rackets: rackets),
     );
   }
 }
@@ -736,37 +740,138 @@ class _SkeletonCard extends StatelessWidget {
   }
 }
 
+class _Condition {
+  final String label, desc;
+  const _Condition(this.label, this.desc);
+}
+
+/// Trade-In — multi-step submission:
+///   0. Condition  1. Details  2. Asking price  3. Trade toward
+///   4. Review     5. Submitted (confirmation + reference number)
 class _TradeInSheet extends StatefulWidget {
-  const _TradeInSheet();
+  final List<Map<String, dynamic>> rackets;
+  const _TradeInSheet({required this.rackets});
   @override
   State<_TradeInSheet> createState() => _TradeInSheetState();
 }
 
 class _TradeInSheetState extends State<_TradeInSheet> {
+  static const _conditions = <_Condition>[
+    _Condition('Like New', 'Barely used, no marks'),
+    _Condition('Good', 'Light wear, plays great'),
+    _Condition('Fair', 'Visible scuffs or scratches'),
+    _Condition('Worn', 'Heavy use, still functional'),
+  ];
+
+  static const _steps = ['Condition', 'Details', 'Price', 'Trade for', 'Review'];
+  static const _last = 4; // Review; step 5 = submitted
+
+  List<Map<String, dynamic>> get _rackets => widget.rackets;
+
   int _step = 0;
   int _cond = -1;
   bool _busy = false;
-  final _conditions = ['Like New', 'Good', 'Fair', 'Worn'];
-  final _quotes = [2200, 1500, 850, 400];
+  final List<bool> _photos = [false, false, false];
+  final _nameC = TextEditingController();
+  final _brandC = TextEditingController();
+  final _notesC = TextEditingController();
+  final _askC = TextEditingController();
+  int _target = -1;
+  String _ref = '';
+
+  @override
+  void dispose() {
+    _nameC.dispose();
+    _brandC.dispose();
+    _notesC.dispose();
+    _askC.dispose();
+    super.dispose();
+  }
+
+  int get _photoCount => _photos.where((v) => v).length;
+  int get _ask => int.tryParse(_askC.text) ?? 0;
+  Map<String, dynamic>? get _targetP =>
+      _target >= 0 && _target < _rackets.length ? _rackets[_target] : null;
+  int get _targetPrice => _targetP == null ? 0 : _price(_targetP!);
+  int get _credit => _ask; // final value confirmed at inspection
+  int get _diff => _targetPrice - _credit;
+
+  static String _brand(Map r) => (r['brand'] as String?)?.trim() ?? '';
+  static String _name(Map r) => (r['name'] as String?)?.trim() ?? '';
+  static int _price(Map r) {
+    final onSale = r['on_sale'] == true;
+    final sale = (r['sale_price'] as num?)?.toInt();
+    final price = (r['price'] as num?)?.toInt() ?? 0;
+    return onSale && sale != null ? sale : price;
+  }
+
+  bool get _canNext {
+    switch (_step) {
+      case 0:
+        return _cond >= 0;
+      case 1:
+        return _photoCount > 0 &&
+            _nameC.text.trim().isNotEmpty &&
+            _brandC.text.trim().isNotEmpty;
+      case 2:
+        return _ask > 0;
+      case 3:
+        return _target >= 0;
+      default:
+        return true;
+    }
+  }
+
+  String get _ctaLabel {
+    if (_step < 3) return 'Continue';
+    if (_step == 3) return 'Review Request';
+    if (_step == 4) return _busy ? 'Submitting…' : 'Submit Request';
+    return 'Done';
+  }
+
+  Future<void> _advance() async {
+    if (_step < _last) {
+      setState(() => _step++);
+    } else if (_step == _last) {
+      await _submit();
+    } else {
+      Navigator.pop(context);
+    }
+  }
 
   Future<void> _submit() async {
     final uid = Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) return;
     setState(() => _busy = true);
+    final brand = _brandC.text.trim();
+    final name = _nameC.text.trim();
+    final desc = [brand, name].where((s) => s.isNotEmpty).join(' ');
+    final tp = _targetP;
+    final note = <String>[
+      if (_notesC.text.trim().isNotEmpty) _notesC.text.trim(),
+      if (tp != null)
+        'Wants to trade toward: ${_name(tp)} (${MockData.egp(_targetPrice)}).',
+    ].join('\n');
     try {
-      await Supabase.instance.client.from('trade_requests').insert({
-        'player_id': uid,
-        'racket_desc': 'Racket trade-in (${_conditions[_cond]})',
-        'condition': _conditions[_cond].toLowerCase(),
-        'asking_credit': _quotes[_cond],
-        'status': 'pending',
-      });
+      final row = await Supabase.instance.client
+          .from('trade_requests')
+          .insert({
+            'player_id': uid,
+            'racket_desc': desc.isEmpty ? 'Racket trade-in' : desc,
+            'condition': _conditions[_cond].label,
+            'asking_credit': _ask,
+            'note': note,
+            'status': 'pending',
+          })
+          .select('id')
+          .single();
       if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(
-              'Trade-in requested — bring your racket to any partner club for inspection.')));
+      final id = (row['id'] as String?) ?? '';
+      setState(() {
+        _ref = id.isNotEmpty ? 'TD-${id.substring(0, 6).toUpperCase()}' : 'TD-PENDING';
+        _busy = false;
+        _step = _last + 1; // submitted
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -779,84 +884,571 @@ class _TradeInSheetState extends State<_TradeInSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final submitted = _step > _last;
     return Container(
-      height: MediaQuery.of(context).size.height * 0.7,
+      height: MediaQuery.of(context).size.height * 0.9,
       decoration: const BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: kPopShadow,
+      ),
       child: Column(children: [
-        Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: AppColors.line, borderRadius: BorderRadius.circular(2))),
+        Container(
+          width: 40,
+          height: 4,
+          margin: const EdgeInsets.only(top: 12, bottom: 4),
+          decoration: BoxDecoration(
+              color: AppColors.line, borderRadius: BorderRadius.circular(2)),
+        ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+          padding: const EdgeInsets.fromLTRB(18, 6, 18, 10),
           child: Row(children: [
-            Text('Trade-In', style: AppText.cardTitle().copyWith(fontSize: 19)),
+            if (_step > 0 && !submitted) ...[
+              IconChip(Icons.arrow_back_rounded,
+                  onTap: () => setState(() => _step--)),
+              const SizedBox(width: 6),
+            ],
+            Text(submitted ? 'Request Sent' : 'Trade-In',
+                style: AppText.cardTitle().copyWith(fontSize: 18)),
             const Spacer(),
             IconChip(Icons.close_rounded, onTap: () => Navigator.pop(context)),
           ]),
         ),
-        const Divider(height: 20, color: AppColors.lineSoft),
+        if (!submitted) _progress(),
+        const Divider(height: 1, color: AppColors.lineSoft),
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(18),
-            child: _step == 0 ? _condition() : _quote(),
+            child: _body(),
           ),
         ),
-        Padding(
+        Container(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
+          decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: AppColors.lineSoft))),
           child: AppButton(
-            _step == 0 ? 'Get Quote' : (_busy ? 'Submitting…' : 'Request Trade-In'),
-            full: true, height: 52,
-            onPressed: (_step == 0 && _cond < 0) || _busy
-                ? null
-                : () => _step == 0 ? setState(() => _step = 1) : _submit(),
+            _ctaLabel,
+            full: true,
+            height: 52,
+            onPressed: (_canNext && !_busy) ? _advance : null,
           ),
         ),
       ]),
     );
   }
 
-  Widget _condition() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text("What's the condition?", style: AppText.cardTitle().copyWith(fontSize: 16)),
-        const SizedBox(height: 3),
-        Text('Be honest — it helps us quote accurately.', style: AppText.small()),
-        const SizedBox(height: 16),
-        for (int i = 0; i < _conditions.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: GestureDetector(
-              onTap: () => setState(() => _cond = i),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: _cond == i ? AppColors.primary.withValues(alpha: 0.1) : AppColors.field,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _cond == i ? AppColors.primary : AppColors.line, width: 1.5),
+  // ── progress dots + labels ──
+  Widget _progress() => Padding(
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+        child: Row(
+          children: [
+            for (int i = 0; i < _steps.length; i++)
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(right: i == _steps.length - 1 ? 0 : 5),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: i <= _step ? AppColors.primary : AppColors.line,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(_steps[i],
+                          style: AppText.tag(i == _step
+                                  ? AppColors.primary
+                                  : AppColors.inkFaint)
+                              .copyWith(fontSize: 9, letterSpacing: 0.3)),
+                    ],
+                  ),
                 ),
-                child: Row(children: [
-                  Icon(Icons.sports_tennis_rounded, size: 22, color: _cond == i ? AppColors.primary : AppColors.inkFaint),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(_conditions[i], style: AppText.bodyStrong())),
-                  Text('~${MockData.egp(_quotes[i])}', style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 13)),
-                ]),
+              ),
+          ],
+        ),
+      );
+
+  Widget _body() {
+    switch (_step) {
+      case 0:
+        return _conditionStep();
+      case 1:
+        return _detailsStep();
+      case 2:
+        return _priceStep();
+      case 3:
+        return _tradeForStep();
+      case 4:
+        return _reviewStep();
+      default:
+        return _submittedStep();
+    }
+  }
+
+  Widget _heading(String title, String sub) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: AppText.cardTitle().copyWith(fontSize: 16)),
+          const SizedBox(height: 3),
+          Text(sub, style: AppText.small()),
+          const SizedBox(height: 16),
+        ],
+      );
+
+  Widget _field(String label, Widget child, {String? hint}) => Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Text(label,
+                  style: AppText.bodyStrong(AppColors.inkSoft).copyWith(
+                      fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.4)),
+              if (hint != null) ...[
+                const Spacer(),
+                Text(hint, style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
+              ],
+            ]),
+            const SizedBox(height: 6),
+            child,
+          ],
+        ),
+      );
+
+  InputDecoration _inputDeco(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: AppText.body(AppColors.inkFaint),
+        isDense: true,
+        filled: true,
+        fillColor: AppColors.field,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(color: AppColors.line, width: 1.5),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+        ),
+      );
+
+  // ── STEP 0 — condition ──
+  Widget _conditionStep() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _heading("What's the condition?",
+              'Be honest — it helps us value it accurately.'),
+          for (int i = 0; i < _conditions.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: GestureDetector(
+                onTap: () => setState(() => _cond = i),
+                child: Container(
+                  padding: const EdgeInsets.all(13),
+                  decoration: BoxDecoration(
+                    color: _cond == i
+                        ? AppColors.wash(AppColors.primary)
+                        : AppColors.field,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: _cond == i ? AppColors.primary : AppColors.line,
+                        width: 1.5),
+                  ),
+                  child: Row(children: [
+                    Icon(Icons.sports_tennis_rounded,
+                        size: 22,
+                        color: _cond == i ? AppColors.primary : AppColors.inkFaint),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_conditions[i].label,
+                              style: AppText.bodyStrong().copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: _cond == i
+                                      ? AppColors.ink
+                                      : AppColors.inkSoft)),
+                          const SizedBox(height: 1),
+                          Text(_conditions[i].desc,
+                              style: AppText.small(AppColors.inkFaint)
+                                  .copyWith(fontSize: 11.5)),
+                        ],
+                      ),
+                    ),
+                  ]),
+                ),
               ),
             ),
-          ),
-      ]);
+        ],
+      );
 
-  Widget _quote() => Column(children: [
-        const SizedBox(height: 10),
-        Container(
-          width: 64, height: 64,
-          decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
-          child: const Icon(Icons.check_circle_outline_rounded, size: 34, color: AppColors.primary),
+  // ── STEP 1 — details ──
+  Widget _detailsStep() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _heading('Tell us about your racket',
+              'Photos and details help buyers and speed up approval.'),
+          _field(
+            'PHOTOS',
+            Row(
+              children: [
+                for (int i = 0; i < _photos.length; i++) ...[
+                  Expanded(child: _photoSlot(i)),
+                  if (i < _photos.length - 1) const SizedBox(width: 10),
+                ],
+              ],
+            ),
+            hint: '$_photoCount/3 added',
+          ),
+          _field(
+              'RACKET NAME',
+              TextField(
+                  controller: _nameC,
+                  style: AppText.body(),
+                  decoration: _inputDeco('e.g. Adipower Ctrl 3.2'),
+                  onChanged: (_) => setState(() {}))),
+          _field(
+              'BRAND',
+              TextField(
+                  controller: _brandC,
+                  style: AppText.body(),
+                  decoration: _inputDeco('e.g. Adidas'),
+                  onChanged: (_) => setState(() {}))),
+          _field(
+            'DESCRIPTION & DETAILS',
+            TextField(
+              controller: _notesC,
+              maxLines: 3,
+              style: AppText.body(),
+              decoration:
+                  _inputDeco('Year, weight, shape, grip, any defects or upgrades…'),
+            ),
+            hint: 'optional',
+          ),
+        ],
+      );
+
+  Widget _photoSlot(int i) {
+    final filled = _photos[i];
+    return GestureDetector(
+      onTap: () => setState(() => _photos[i] = !_photos[i]),
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Container(
+          decoration: BoxDecoration(
+            color: filled ? AppColors.wash(AppColors.primary) : AppColors.field,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: filled ? AppColors.primary : AppColors.line,
+              width: 1.5,
+            ),
+          ),
+          child: Stack(
+            children: [
+              Center(
+                child: filled
+                    ? const Icon(Icons.sports_tennis_rounded,
+                        size: 26, color: AppColors.primary)
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(i == 0 ? Icons.photo_camera_rounded : Icons.add_rounded,
+                              size: 22, color: AppColors.inkFaint),
+                          if (i == 0)
+                            Text('Add',
+                                style: AppText.tag(AppColors.inkFaint)
+                                    .copyWith(fontSize: 10)),
+                        ],
+                      ),
+              ),
+              if (filled)
+                Positioned(
+                  top: 5,
+                  right: 5,
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: const BoxDecoration(
+                        color: AppColors.primary, shape: BoxShape.circle),
+                    child: const Icon(Icons.check_rounded,
+                        size: 11, color: AppColors.primaryInk),
+                  ),
+                ),
+            ],
+          ),
         ),
-        const SizedBox(height: 14),
-        Text('Estimated store credit', style: AppText.small()),
-        const SizedBox(height: 4),
-        Text(MockData.egp(_cond >= 0 ? _quotes[_cond] : 0), style: AppText.stat(40, AppColors.primary)),
-        const SizedBox(height: 8),
-        Text('Final value confirmed after inspection at any partner club.',
-            textAlign: TextAlign.center, style: AppText.small(AppColors.inkFaint)),
-      ]);
+      ),
+    );
+  }
+
+  // ── STEP 2 — asking price ──
+  Widget _priceStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _heading("What's your asking price?",
+            "This is the credit you'd like for your racket. We'll confirm the final value after inspection."),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: AppColors.line, width: 1.5),
+          ),
+          child: Row(children: [
+            Text('EGP',
+                style: AppText.stat(20, AppColors.inkFaint)
+                    .copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: _askC,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                style: AppText.stat(30, AppColors.ink),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  hintText: '0',
+                  hintStyle: AppText.stat(30, AppColors.inkFaint),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  // ── STEP 3 — trade toward ──
+  Widget _tradeForStep() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _heading('Trade toward which racket?',
+              'Pick the racket from our store you want to upgrade to.'),
+          if (_rackets.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(24),
+              alignment: Alignment.center,
+              child: Text('No rackets available right now.',
+                  style: AppText.small(AppColors.inkFaint)),
+            )
+          else
+            for (int i = 0; i < _rackets.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _targetRow(i),
+              ),
+        ],
+      );
+
+  Widget _targetRow(int i) {
+    final p = _rackets[i];
+    final on = _target == i;
+    return GestureDetector(
+      onTap: () => setState(() => _target = i),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: on ? AppColors.wash(AppColors.primary) : AppColors.field,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: on ? AppColors.primary : AppColors.line, width: 1.5),
+        ),
+        child: Row(children: [
+          const ClipRRect(
+            borderRadius: BorderRadius.all(Radius.circular(10)),
+            child:
+                StripedPlaceholder(height: 48, icon: Icons.sports_tennis_rounded),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_brand(p).toUpperCase(),
+                    style: AppText.kicker(AppColors.inkSoft).copyWith(fontSize: 9)),
+                Text(_name(p),
+                    style: AppText.bodyStrong().copyWith(
+                        fontSize: 13.5, fontWeight: FontWeight.w800, height: 1.2)),
+                const SizedBox(height: 2),
+                Text(MockData.egp(_price(p)),
+                    style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 13)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: on ? AppColors.primary : Colors.transparent,
+              border: Border.all(
+                  color: on ? AppColors.primary : AppColors.line, width: 2),
+            ),
+            child: on
+                ? const Icon(Icons.check_rounded, size: 13, color: AppColors.primaryInk)
+                : null,
+          ),
+        ]),
+      ),
+    );
+  }
+
+  // ── STEP 4 — review ──
+  Widget _reviewStep() {
+    final tp = _targetP;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _heading('Review your request',
+            'Check the details before sending to our team.'),
+        Container(
+          padding: const EdgeInsets.all(14),
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.line),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const ClipRRect(
+                  borderRadius: BorderRadius.all(Radius.circular(10)),
+                  child: StripedPlaceholder(
+                      height: 60, icon: Icons.sports_tennis_rounded),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text((_brandC.text.isEmpty ? '—' : _brandC.text).toUpperCase(),
+                          style: AppText.kicker(AppColors.inkSoft).copyWith(fontSize: 9)),
+                      Text(_nameC.text.isEmpty ? 'Your racket' : _nameC.text,
+                          style: AppText.cardTitle().copyWith(fontSize: 15)),
+                      const SizedBox(height: 4),
+                      Row(children: [
+                        AppTag(_cond >= 0 ? _conditions[_cond].label : '—',
+                            color: AppColors.primary),
+                        const SizedBox(width: 6),
+                        Text('· $_photoCount photo${_photoCount == 1 ? '' : 's'}',
+                            style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
+                      ]),
+                    ],
+                  ),
+                ),
+              ]),
+              if (_notesC.text.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(_notesC.text,
+                    style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 12, height: 1.4)),
+              ],
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.line),
+          ),
+          child: Column(children: [
+            _reviewRow('Your asking price', MockData.egp(_ask)),
+            _reviewRow('Trading toward', tp == null ? '—' : _name(tp)),
+            _reviewRow('New racket price', MockData.egp(_targetPrice)),
+            _reviewRow('Credit applied', '− ${MockData.egp(_credit)}'),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              child: Row(children: [
+                Text(_diff >= 0 ? 'You pay' : 'Store credit back',
+                    style: AppText.bodyStrong().copyWith(fontWeight: FontWeight.w800)),
+                const Spacer(),
+                Text(MockData.egp(_diff.abs()),
+                    style: AppText.stat(19, AppColors.primary)),
+              ]),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Final value is confirmed after a free inspection at any partner club. No commitment until you accept the offer.',
+          textAlign: TextAlign.center,
+          style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5, height: 1.45),
+        ),
+      ],
+    );
+  }
+
+  Widget _reviewRow(String k, String v) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 11),
+        decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppColors.lineSoft))),
+        child: Row(children: [
+          Text(k, style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13)),
+          const Spacer(),
+          Text(v,
+              style: AppText.bodyStrong()
+                  .copyWith(fontSize: 13.5, fontWeight: FontWeight.w800)),
+        ]),
+      );
+
+  // ── STEP 5 — submitted ──
+  Widget _submittedStep() => Padding(
+        padding: const EdgeInsets.only(top: 24),
+        child: Column(children: [
+          Container(
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+                color: AppColors.wash(AppColors.primary), shape: BoxShape.circle),
+            child: const Icon(Icons.check_circle_outline_rounded,
+                size: 42, color: AppColors.primary),
+          ),
+          const SizedBox(height: 18),
+          Text('Request submitted', style: AppText.bigTitle().copyWith(fontSize: 20)),
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 270),
+            child: Text.rich(
+              TextSpan(
+                style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13.5, height: 1.5),
+                children: [
+                  const TextSpan(text: 'Our team will review your '),
+                  TextSpan(
+                      text: _nameC.text.isEmpty ? 'racket' : _nameC.text,
+                      style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
+                  const TextSpan(
+                      text:
+                          " and send an offer soon. You'll get a notification when it's ready."),
+                ],
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.field,
+              borderRadius: BorderRadius.circular(99),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('REF', style: AppText.kicker(AppColors.inkSoft).copyWith(fontSize: 11)),
+              const SizedBox(width: 8),
+              Text(_ref,
+                  style: AppText.bodyStrong().copyWith(fontSize: 12.5, letterSpacing: 0.5)),
+            ]),
+          ),
+        ]),
+      );
 }

@@ -482,6 +482,8 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   create policy "create own trade" on public.trade_requests for insert with check (auth.uid() = player_id);
 exception when duplicate_object then null; end $$;
+-- NOTE: admin read/update policies + table GRANT live further down, after
+-- public._is_admin() is defined (search "Trade-in access").
 
 -- ── broadcasts readable by players (admin console writes them) ──
 alter table public.broadcasts enable row level security;
@@ -1558,6 +1560,27 @@ do $$ begin
   end if;
 end $$;
 
+-- Trade-in access (defined here because it needs public._is_admin() above).
+-- Players create + read their own; admins read all and update (offer/accept).
+do $$ begin
+  create policy "trades: admin read" on public.trade_requests for select using (public._is_admin());
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "trades: admin update" on public.trade_requests for update
+    using (public._is_admin()) with check (public._is_admin());
+exception when duplicate_object then null; end $$;
+-- Table-level privilege (separate from RLS): without this the role is rejected
+-- before any policy is evaluated → "permission denied for table trade_requests".
+grant select, insert, update on public.trade_requests to authenticated;
+-- Named FK so PostgREST can resolve profiles!trade_requests_player_id_fkey.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'trade_requests_player_id_fkey') then
+    alter table public.trade_requests
+      add constraint trade_requests_player_id_fkey
+      foreign key (player_id) references public.profiles(id);
+  end if;
+end $$;
+
 -- Key/value app settings (admin-editable). The InstaPay merchant handle
 -- lives here so the receiving account can change without a rebuild.
 create table if not exists public.app_settings (
@@ -1627,6 +1650,34 @@ do $$ begin
     for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 exception when duplicate_object then null; end $$;
 grant select, update on public.notifications to authenticated;
+
+-- ── FCM device tokens (Android push) ───────────────────────────
+-- The push-notify Edge Function reads these to fan a notifications insert out
+-- to each of the user's devices. Drift-safe alters (a reserved device_tokens
+-- table may predate these columns).
+create table if not exists public.device_tokens (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid references public.profiles(id) on delete cascade,
+  token      text not null,
+  platform   text not null default 'android',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.device_tokens add column if not exists user_id    uuid references public.profiles(id) on delete cascade;
+alter table public.device_tokens add column if not exists token      text;
+alter table public.device_tokens add column if not exists platform   text not null default 'android';
+alter table public.device_tokens add column if not exists created_at timestamptz not null default now();
+alter table public.device_tokens add column if not exists updated_at timestamptz not null default now();
+create unique index if not exists device_tokens_token_key on public.device_tokens (token);
+create index if not exists idx_device_tokens_user on public.device_tokens (user_id);
+alter table public.device_tokens enable row level security;
+drop policy if exists "device_tokens: own" on public.device_tokens;
+create policy "device_tokens: own" on public.device_tokens
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+grant select, insert, update, delete on public.device_tokens to authenticated;
+drop trigger if exists trg_device_tokens_touch on public.device_tokens;
+create trigger trg_device_tokens_touch before update on public.device_tokens
+  for each row execute function public.touch_updated_at();
 
 -- Order ref shown to the buyer (matches the Dart OrderUi.ref(): PD-<first 6>).
 create or replace function public._order_ref(p_id uuid)
@@ -1872,6 +1923,65 @@ drop trigger if exists trg_notify_new_dm on public.direct_messages;
 create trigger trg_notify_new_dm
   after insert on public.direct_messages
   for each row execute function public.notify_new_dm();
+
+-- ============================================================
+-- Match notifications (type 'match'). Insert-only: these never touch ELO,
+-- level, or match status — they only drop a row into `notifications`, which the
+-- push-notify Edge Function fans out. `data.match_id` lets the app deep-link
+-- straight into MatchDetailScreen.
+-- ============================================================
+
+-- Tell the host when another player joins their match.
+create or replace function public.notify_match_join()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_host   uuid;
+  v_joiner text;
+begin
+  select created_by into v_host from public.matches where id = new.match_id;
+  -- No host, or the host themselves joined (match creation) → nothing to send.
+  if v_host is null or v_host = new.player_id then return new; end if;
+  select name into v_joiner from public.profiles where id = new.player_id;
+  insert into public.notifications (user_id, type, title, body, data)
+  values (v_host, 'match', 'New player joined',
+          coalesce(v_joiner, 'A player') || ' joined your match.',
+          jsonb_build_object('match_id', new.match_id));
+  return new;
+end $$;
+drop trigger if exists trg_notify_match_join on public.match_players;
+create trigger trg_notify_match_join
+  after insert on public.match_players
+  for each row execute function public.notify_match_join();
+
+-- When a result is submitted on a ranked match, ask the OTHER team to confirm.
+-- Fires only on the transition into pending_confirm, so confirm/dispute (which
+-- move the status away again) never re-notify.
+create or replace function public.notify_match_confirm()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_sub_team text;
+begin
+  if new.status = 'pending_confirm'
+     and old.status is distinct from 'pending_confirm'
+     and new.result_submitted_by is not null then
+    select team into v_sub_team
+      from public.match_players
+      where match_id = new.id and player_id = new.result_submitted_by;
+    insert into public.notifications (user_id, type, title, body, data)
+    select mp.player_id, 'match', 'Confirm match result',
+           'A score was submitted for your match. Tap to confirm or dispute.',
+           jsonb_build_object('match_id', new.id)
+    from public.match_players mp
+    where mp.match_id = new.id
+      and mp.player_id <> new.result_submitted_by
+      and (v_sub_team is null or mp.team is distinct from v_sub_team);
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_notify_match_confirm on public.matches;
+create trigger trg_notify_match_confirm
+  after update on public.matches
+  for each row execute function public.notify_match_confirm();
 
 -- ============================================================
 -- Schema cleanup: drop pre-migration drift (unused + empty). Kept on purpose:

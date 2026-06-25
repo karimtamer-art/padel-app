@@ -4,6 +4,9 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
 import '../chat/dm_chat_screen.dart';
+import '../detail/match_detail_screen.dart';
+import '../tournaments/tournament_detail_screen.dart';
+import 'my_orders_screen.dart';
 import 'settings_common.dart';
 
 class _Notif {
@@ -173,9 +176,54 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  /// Whether tapping this row navigates somewhere (mirrors the push deep-link
+  /// targets). Broadcasts and typeless rows stay display-only.
+  bool _isTappable(_Notif n) {
+    switch (n.type) {
+      case 'message':
+        return n.data?['sender_id'] is String;
+      case 'match':
+        return n.data?['match_id'] is String;
+      case 'tournament':
+        return n.data?['tournament_id'] is String;
+      case 'order':
+      case 'admin_order':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void _open(_Notif n) {
+    switch (n.type) {
+      case 'message':
+        _openChat(n);
+        return;
+      case 'match':
+        final id = n.data?['match_id'];
+        if (id is String) {
+          Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => MatchDetailScreen(matchId: id)));
+        }
+        return;
+      case 'tournament':
+        final id = n.data?['tournament_id'];
+        if (id is String) {
+          Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => TournamentDetailScreen(tournamentId: id)));
+        }
+        return;
+      case 'order':
+      case 'admin_order':
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const MyOrdersScreen()));
+        return;
+    }
+  }
+
   Widget _row(_Notif n) {
-    // A message notification opens its conversation; others are display-only.
-    final tappable = n.type == 'message' && n.data?['sender_id'] is String;
+    // Tappable rows deep-link to their subject; others are display-only.
+    final tappable = _isTappable(n);
     final content = Container(
       color: n.unread ? AppColors.primary.withValues(alpha: 0.05) : Colors.transparent,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
@@ -215,7 +263,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
     if (!tappable) return content;
     return GestureDetector(
-        behavior: HitTestBehavior.opaque, onTap: () => _openChat(n), child: content);
+        behavior: HitTestBehavior.opaque, onTap: () => _open(n), child: content);
   }
 
   void _openChat(_Notif n) {

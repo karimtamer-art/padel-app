@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Android 13+ (API 33): without this, requestPermission() can never grant
+         and the OS silently drops every push. Required for any notification. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Padel Rivals"
         android:name="${applicationName}"
@@ -30,6 +33,23 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- FCM: when a notification arrives while the app is backgrounded/killed,
+             the system tray builds it on THIS channel. It must be a real channel
+             created by the app (see MainActivity.kt) — on Android 8+ an unknown
+             channel means the notification is dropped. High importance = heads-up
+             pop-up + lock-screen visibility. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="padel_default" />
+        <!-- White silhouette shown in the status bar / lock screen, tinted with
+             the brand color. Without these, FCM falls back to the launcher icon
+             (often a colored square). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_color" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

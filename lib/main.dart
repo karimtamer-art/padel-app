@@ -5,6 +5,8 @@ import 'package:padel_clay/frontend/theme/app_theme.dart';
 import 'package:padel_clay/frontend/screens/auth/auth_gate.dart';
 import 'package:padel_clay/backend/services/auth_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
+import 'package:padel_clay/backend/services/push_service.dart';
+import 'package:padel_clay/frontend/navigation/push_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,6 +19,8 @@ Future<void> main() async {
     anonKey:
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4aWh3aWZwY3VmaGllcHBmZXphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMzAzOTEsImV4cCI6MjA5NTkwNjM5MX0.7afCxV225wcNDa5njZz4KAIRTo3eOeMj0099NPF94oQ',
   );
+  // Android push (FCM). No-op on iOS/web; never blocks startup.
+  await PushService.init();
   runApp(const PadelApp());
 }
 
@@ -39,6 +43,8 @@ class PadelApp extends StatelessWidget {
     return MaterialApp(
       title: 'Padel Rivals',
       debugShowCheckedModeBanner: false,
+      // Lets PushRouter navigate from a notification tap (background/terminated).
+      navigatorKey: PushRouter.navigatorKey,
       theme: AppTheme.light,
       // Tap anywhere outside a text field to dismiss the keyboard — covers
       // every screen and bottom sheet in the app.

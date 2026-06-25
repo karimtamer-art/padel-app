@@ -559,7 +559,7 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text("PLAYER'S NOTE", style: AdminText.kicker()),
             const SizedBox(height: 6),
-            Text(t['notes'] as String? ?? 'No notes provided.',
+            Text(t['note'] as String? ?? 'No notes provided.',
                 style: AdminText.body().copyWith(height: 1.5)),
           ]),
         ),

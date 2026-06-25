@@ -8,6 +8,8 @@ import '../../../backend/services/auth_service.dart';
 import '../../../backend/models/onboarding_models.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/profile_service.dart';
+import '../../../backend/services/push_service.dart';
+import '../../navigation/push_router.dart';
 import '../shell/root_scaffold.dart';
 import '../splash/splash_screen.dart';
 import '../../../../admin/admin_console.dart';
@@ -107,8 +109,15 @@ class _AuthGateState extends State<AuthGate> {
         _playerProfile = await ProfileService.fetchPlayerProfile(user.id);
       }
       if (!mounted) return;
-      setState(() =>
-          _phase = (_isAdmin || complete) ? _Phase.ready : _Phase.onboarding);
+      final ready = _isAdmin || complete;
+      setState(() => _phase = ready ? _Phase.ready : _Phase.onboarding);
+      // Signed in & resolved → register this device for push (Android-only,
+      // no-op elsewhere). Fire-and-forget; failures are swallowed internally.
+      // Also wire notification taps to deep-link into the right screen.
+      if (ready) {
+        PushService.registerToken();
+        PushRouter.attach();
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _phase = _Phase.error);
@@ -116,6 +125,7 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> _signOut() async {
+    await PushService.unregister(); // stop push to this device before sign-out
     await widget.authService.signOut();
   }
 
