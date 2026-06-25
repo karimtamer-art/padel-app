@@ -109,6 +109,24 @@ jobs:
           print(f'FLUTTER_APPLICATION_PATH={project_dir}')
           PYEOF
 
+      - name: Resolve Swift packages (clean — avoids SwiftPM download race)
+        run: |
+          # SwiftPM intermittently fails Firebase binary-target downloads with
+          # "... already exists in file system" when xcodebuild resolves packages
+          # in parallel during the build. A dedicated, serial resolve avoids the
+          # race; clear any stale artifacts first and retry a few times.
+          DERIVED="$(pwd)/build/ios/derived"
+          rm -rf ~/Library/Caches/org.swift.swiftpm/artifacts
+          for i in 1 2 3; do
+            xcodebuild -resolvePackageDependencies \
+              -workspace ios/Runner.xcworkspace \
+              -scheme Runner \
+              -derivedDataPath "$DERIVED" && break
+            echo "Package resolve attempt $i failed; clearing cache and retrying…"
+            rm -rf ~/Library/Caches/org.swift.swiftpm
+            sleep 5
+          done
+
       - name: Build Runner.app (unsigned)
         run: |
           DERIVED="$(pwd)/build/ios/derived"
