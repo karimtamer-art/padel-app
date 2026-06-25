@@ -109,6 +109,25 @@ jobs:
           print(f'FLUTTER_APPLICATION_PATH={project_dir}')
           PYEOF
 
+      - name: Bump generated SwiftPM package to iOS 15 (Firebase needs 15+)
+        run: |
+          # Flutter generates FlutterGeneratedPluginSwiftPackage pinned to its
+          # default minimum (iOS 13). It only bumps this to the Xcode project's
+          # deployment target during `flutter build` (SwiftPackageManager.
+          # updateMinimumDeployment) — which this CI never runs, since it drives
+          # xcodebuild directly. firebase-core / firebase-messaging require iOS
+          # 15, and SPM rejects a dependency whose deployment target exceeds the
+          # top-level package's, so we raise it here before package resolution.
+          PKG="ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift"
+          if [ ! -f "$PKG" ]; then
+            echo "ERROR: $PKG not found (flutter pub get should have generated it)"
+            exit 1
+          fi
+          sed -i '' 's/\.iOS("13\.0")/.iOS("15.0")/' "$PKG"
+          echo "Patched SwiftPM platform:"
+          grep -n 'iOS' "$PKG"
+          grep -q '\.iOS("15\.0")' "$PKG" || (echo "ERROR: platform bump did not apply"; exit 1)
+
       - name: Resolve Swift packages (clean — avoids SwiftPM download race)
         run: |
           # SwiftPM intermittently fails Firebase binary-target downloads with
