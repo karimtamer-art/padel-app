@@ -118,7 +118,7 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
     adminSheet(
       context,
       title: 'New broadcast',
-      sub: 'Sent immediately to all devices',
+      sub: 'Pushed instantly to the chosen audience',
       heightFactor: 0.72,
       footer: AdminButton(
         'Send broadcast',

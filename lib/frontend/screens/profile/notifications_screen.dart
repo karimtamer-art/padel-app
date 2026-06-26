@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
@@ -26,6 +25,7 @@ class _Notif {
         'message' => (Icons.chat_bubble_outline_rounded, AppColors.success),
         'match' => (Icons.sports_tennis_outlined, AppColors.success),
         'tournament' => (Icons.emoji_events_outlined, AppColors.warn),
+        'broadcast' => (Icons.campaign_outlined, AppColors.primary),
         _ => (Icons.notifications_none_rounded, AppColors.primary),
       };
 }
@@ -50,13 +50,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     _load();
   }
 
-  /// Two sources merged, newest first:
-  ///  • personal notifications (orders, etc.) — carry real read state;
-  ///  • global `broadcasts` the admin console writes (announcements).
+  /// Personal notifications, newest first. Broadcasts now arrive here too: a DB
+  /// trigger fans each admin broadcast into a per-user 'broadcast' row (so they
+  /// carry real read state, badge the bell, and push), rather than the client
+  /// reading the global `broadcasts` table directly.
   Future<void> _load() async {
     final items = <_Notif>[];
 
-    // Personal notifications.
     for (final n in await NotificationService.fetch()) {
       final (icon, tint) = _Notif.styleFor(n['type'] as String?);
       final at = DateTime.tryParse('${n['created_at']}')?.toLocal();
@@ -74,26 +74,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             : null,
       ));
     }
-
-    // Global announcements.
-    try {
-      final rows = await Supabase.instance.client
-          .from('broadcasts')
-          .select('title, body, sent_at')
-          .order('sent_at', ascending: false)
-          .limit(20);
-      for (final r in List<Map<String, dynamic>>.from(rows as List)) {
-        items.add(_Notif(
-          Icons.campaign_outlined,
-          AppColors.primary,
-          (r['title'] as String?) ?? 'Announcement',
-          (r['body'] as String?) ?? '',
-          _ago(r['sent_at'] as String?),
-          false,
-          at: DateTime.tryParse('${r['sent_at']}')?.toLocal(),
-        ));
-      }
-    } catch (_) {}
 
     items.sort((a, b) =>
         (b.at ?? DateTime(0)).compareTo(a.at ?? DateTime(0)));

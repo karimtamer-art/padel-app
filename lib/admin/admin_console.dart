@@ -38,7 +38,7 @@ class _NavItem {
 class _AdminConsoleState extends State<AdminConsole> {
   String _active = 'dashboard';
   final _scaffoldKey = GlobalKey<ScaffoldState>();
-  int _orderAlerts = 0; // unread 'admin_order' notifications
+  int _adminAlerts = 0; // unread 'admin_*' notifications (orders/trades/repairs/tournaments)
   RealtimeChannel? _notifChannel;
 
   @override
@@ -58,16 +58,17 @@ class _AdminConsoleState extends State<AdminConsole> {
 
   Future<void> _loadAlerts() async {
     final n = await AdminService.adminUnreadCount();
-    if (mounted) setState(() => _orderAlerts = n);
+    if (mounted) setState(() => _adminAlerts = n);
   }
 
-  /// Live: bump the badge the instant the new-order trigger inserts an
-  /// 'admin_order' row for this admin. RLS limits the stream to own rows.
+  /// Live: bump the badge the instant a trigger inserts any 'admin_*' alert row
+  /// for this admin (order/trade/repair/tournament). RLS limits the stream to
+  /// own rows.
   void _subscribeAlerts() {
     final uid = Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) return;
     _notifChannel = Supabase.instance.client
-        .channel('admin-order-alerts-$uid')
+        .channel('admin-alerts-$uid')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -75,20 +76,27 @@ class _AdminConsoleState extends State<AdminConsole> {
           filter: PostgresChangeFilter(
               type: PostgresChangeFilterType.eq, column: 'user_id', value: uid),
           callback: (payload) {
-            if (payload.newRecord['type'] == 'admin_order' && mounted) {
-              setState(() => _orderAlerts++);
+            final type = payload.newRecord['type'] as String?;
+            if (type != null && type.startsWith('admin_') && mounted) {
+              setState(() => _adminAlerts++);
             }
           },
         )
         .subscribe();
   }
 
-  /// Tapping the bell jumps to Payments (where orders are confirmed) and
-  /// clears the badge.
+  /// Tapping the bell jumps to the screen for the newest unread alert
+  /// (Payments / Requests / Tournaments) and clears the badge.
   Future<void> _openAlerts() async {
+    final type = await AdminService.newestAdminAlertType();
+    final dest = switch (type) {
+      'admin_trade' || 'admin_repair' => 'requests',
+      'admin_tournament' => 'tournaments',
+      _ => 'payments',
+    };
     setState(() {
-      _active = 'payments';
-      _orderAlerts = 0;
+      _active = dest;
+      _adminAlerts = 0;
     });
     await AdminService.markAdminNotificationsRead();
   }
@@ -217,13 +225,13 @@ class _AdminConsoleState extends State<AdminConsole> {
                 borderRadius: BorderRadius.circular(11),
                 border: Border.all(color: AdminColors.line)),
             child: Icon(
-                _orderAlerts > 0
+                _adminAlerts > 0
                     ? Icons.notifications_active_rounded
                     : Icons.notifications_none_rounded,
                 size: 19,
-                color: _orderAlerts > 0 ? AdminColors.primary : AdminColors.ink),
+                color: _adminAlerts > 0 ? AdminColors.primary : AdminColors.ink),
           ),
-          if (_orderAlerts > 0)
+          if (_adminAlerts > 0)
             Positioned(
               top: -5,
               right: -5,
@@ -235,7 +243,7 @@ class _AdminConsoleState extends State<AdminConsole> {
                     color: AdminColors.danger,
                     borderRadius: BorderRadius.circular(9),
                     border: Border.all(color: AdminColors.canvas, width: 1.5)),
-                child: Text(_orderAlerts > 99 ? '99+' : '$_orderAlerts',
+                child: Text(_adminAlerts > 99 ? '99+' : '$_adminAlerts',
                     style: AdminText.sans(10, FontWeight.w800, Colors.white)),
               ),
             ),

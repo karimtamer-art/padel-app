@@ -514,9 +514,11 @@ class AdminService {
     }
   }
 
-  // ── Admin notifications (private per-admin order alerts) ──────
+  // ── Admin notifications (private per-admin alerts) ────────────
+  // Covers every admin alert type: 'admin_order', 'admin_trade',
+  // 'admin_repair', 'admin_tournament'. All share the 'admin_' prefix.
 
-  /// Unread 'admin_order' notifications for the signed-in admin (badge count).
+  /// Unread admin alerts for the signed-in admin (badge count).
   static Future<int> adminUnreadCount() async {
     final uid = _db.auth.currentUser?.id;
     if (uid == null) return 0;
@@ -525,7 +527,7 @@ class AdminService {
           .from('notifications')
           .select('id')
           .eq('user_id', uid)
-          .eq('type', 'admin_order')
+          .like('type', 'admin_%')
           .eq('read', false);
       return (res as List).length;
     } catch (_) {
@@ -533,7 +535,29 @@ class AdminService {
     }
   }
 
-  /// Clears the admin's order-alert badge.
+  /// Type of the newest unread admin alert, so the bell can route to the right
+  /// screen ('admin_order' → Payments, 'admin_trade'/'admin_repair' → Requests,
+  /// 'admin_tournament' → Tournaments). Null when there's nothing unread.
+  static Future<String?> newestAdminAlertType() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return null;
+    try {
+      final res = await _db
+          .from('notifications')
+          .select('type')
+          .eq('user_id', uid)
+          .like('type', 'admin_%')
+          .eq('read', false)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      return res?['type'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Clears the admin's alert badge (all admin alert types).
   static Future<void> markAdminNotificationsRead() async {
     final uid = _db.auth.currentUser?.id;
     if (uid == null) return;
@@ -542,7 +566,7 @@ class AdminService {
           .from('notifications')
           .update({'read': true})
           .eq('user_id', uid)
-          .eq('type', 'admin_order')
+          .like('type', 'admin_%')
           .eq('read', false);
     } catch (_) {}
   }
