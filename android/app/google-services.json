@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "61629095085",
+    "project_id": "padel-app-a4407",
+    "storage_bucket": "padel-app-a4407.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:61629095085:android:6a44a49ded12723988fa24",
+        "android_client_info": {
+          "package_name": "com.padelegypt.padel_clay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBMNeRVrB_yv4SYZ3bvQFNlOCnYmcIjxBo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
