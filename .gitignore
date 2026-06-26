@@ -50,6 +50,18 @@ app.*.map.json
 .env
 .env.*
 
+# Secrets — never commit these. (google-services.json / GoogleService-Info.plist
+# are client config and ARE tracked on purpose; the sending credential is the
+# service-account JSON below, which lives only in Supabase secrets.)
+*-firebase-adminsdk-*.json
+service-account*.json
+serviceAccount*.json
+# Apple push / signing keys
+*.p8
+AuthKey_*.p8
+*.p12
+*.mobileprovision
+
 # Flutter metadata
 .metadata
 .flutter-plugins
