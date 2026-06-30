@@ -238,3 +238,52 @@ workflows:
 
     artifacts:
       - build/ios/ipa/Runner-unsigned.ipa
+
+  # Signed build for TestFlight / App Store. Needs an App Store Connect API key
+  # connected in Codemagic (Team settings → Integrations → App Store Connect),
+  # named `padel_asc` to match the `integrations` block below. Codemagic creates
+  # the distribution cert + a push-enabled provisioning profile automatically
+  # from the App ID (com.padelegypt.app, which has Push Notifications enabled);
+  # `xcode-project use-profiles` applies them and writes the export options.
+  # Unlike the unsigned workflow, this uses `flutter build ipa` (safe here
+  # because there IS a signing team) which also bumps the SwiftPM deployment
+  # target to iOS 15 for Firebase — so no manual Package.swift patch is needed.
+  ios-release:
+    name: iOS Signed (TestFlight)
+    integrations:
+      app_store_connect: padel_asc
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.padelegypt.app
+      flutter: stable
+      xcode: latest
+
+    scripts:
+      - name: Get packages
+        script: |
+          flutter pub get
+          flutter precache --ios
+
+      - name: Install CocoaPods
+        script: |
+          cd ios && pod install --repo-update
+
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
+
+      - name: Build signed IPA
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
