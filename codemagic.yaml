@@ -275,20 +275,22 @@ workflows:
 
       - name: Set up code signing
         script: |
+          set -e   # fail fast: don't let a later success (use-profiles) mask a
+                   # fetch-signing-files failure, which hid the real error before.
           keychain initialize
-          # Supply a PERSISTENT private key (Codemagic secure var) so the CLI
-          # mints a proper .p12 (certificate + key TOGETHER). The earlier
-          # create-certificate + add-certificates combo left the keychain with
-          # no usable identity → "No valid code signing certificates". With the
-          # key provided, --create makes the distribution cert (from this key) +
-          # the App Store provisioning profile if missing, and reuses them on
-          # later builds — so it won't burn through Apple's certificate limit.
+          # CERTIFICATE_PRIVATE_KEY is the signing key stored as single-line
+          # base64 (the raw multi-line PEM got truncated by the Codemagic UI,
+          # which produced an invalid key and 0 signing identities). Decode it
+          # back to a PEM file and feed it via @file.
+          printf '%s' "$CERTIFICATE_PRIVATE_KEY" | openssl base64 -d -A > /tmp/cert_key.pem
+          echo "decoded key first line: $(head -1 /tmp/cert_key.pem)"
+          # --create mints the distribution certificate (from this key) + the App
+          # Store provisioning profile if missing, and reuses them on later builds.
           app-store-connect fetch-signing-files "com.padelegypt.app" \
             --type IOS_APP_STORE \
-            --certificate-key=@env:CERTIFICATE_PRIVATE_KEY \
+            --certificate-key=@file:/tmp/cert_key.pem \
             --create
           keychain add-certificates
-          # Proof the keychain now has a signing identity (should print one).
           security find-identity -v -p codesigning
           xcode-project use-profiles
 
