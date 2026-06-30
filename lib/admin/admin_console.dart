@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../frontend/navigation/push_router.dart';
 import 'theme/admin_colors.dart';
 import 'widgets/admin_kit.dart';
 import 'data/admin_service.dart';
@@ -38,7 +39,8 @@ class _NavItem {
 class _AdminConsoleState extends State<AdminConsole> {
   String _active = 'dashboard';
   final _scaffoldKey = GlobalKey<ScaffoldState>();
-  int _adminAlerts = 0; // unread 'admin_*' notifications (orders/trades/repairs/tournaments)
+  int _adminAlerts = 0; // total unread 'admin_*' notifications
+  Map<String, int> _sectionAlerts = {}; // per-section unread (payments/requests/tournaments)
   RealtimeChannel? _notifChannel;
 
   @override
@@ -46,19 +48,55 @@ class _AdminConsoleState extends State<AdminConsole> {
     super.initState();
     _loadAlerts();
     _subscribeAlerts();
+    // A tapped admin push may have set a target section before this mounted.
+    _applyPendingPushRoute();
+    PushRouter.adminSection.addListener(_onPushRoute);
   }
 
   @override
   void dispose() {
+    PushRouter.adminSection.removeListener(_onPushRoute);
     if (_notifChannel != null) {
       Supabase.instance.client.removeChannel(_notifChannel!);
     }
     super.dispose();
   }
 
+  /// Cold start: the push tap set a section before the console existed.
+  void _applyPendingPushRoute() {
+    final section = PushRouter.adminSection.value;
+    if (section == null) return;
+    PushRouter.adminSection.value = null; // consume
+    WidgetsBinding.instance.addPostFrameCallback((_) => _navTo(section));
+  }
+
+  /// Warm start: push tapped while the console was already open.
+  void _onPushRoute() {
+    final section = PushRouter.adminSection.value;
+    if (section == null || !mounted) return;
+    PushRouter.adminSection.value = null; // consume
+    _navTo(section);
+  }
+
   Future<void> _loadAlerts() async {
-    final n = await AdminService.adminUnreadCount();
-    if (mounted) setState(() => _adminAlerts = n);
+    final total = await AdminService.adminUnreadCount();
+    final sections = await AdminService.adminAlertSectionCounts();
+    if (mounted) {
+      setState(() {
+        _adminAlerts = total;
+        _sectionAlerts = sections;
+      });
+    }
+  }
+
+  /// Switch to a section; if it carries unread alerts, mark them read so its
+  /// badge clears (both the sidebar item and the bell total drop).
+  Future<void> _navTo(String id) async {
+    if (mounted) setState(() => _active = id);
+    if ((_sectionAlerts[id] ?? 0) > 0) {
+      await AdminService.markAdminSectionRead(id);
+      await _loadAlerts();
+    }
   }
 
   /// Live: bump the badge the instant a trigger inserts any 'admin_*' alert row
@@ -78,7 +116,16 @@ class _AdminConsoleState extends State<AdminConsole> {
           callback: (payload) {
             final type = payload.newRecord['type'] as String?;
             if (type != null && type.startsWith('admin_') && mounted) {
-              setState(() => _adminAlerts++);
+              final section = AdminService.sectionForAlertType(type);
+              setState(() {
+                _adminAlerts++;
+                if (section != null) {
+                  _sectionAlerts = {
+                    ..._sectionAlerts,
+                    section: (_sectionAlerts[section] ?? 0) + 1,
+                  };
+                }
+              });
             }
           },
         )
@@ -89,14 +136,11 @@ class _AdminConsoleState extends State<AdminConsole> {
   /// (Payments / Requests / Tournaments) and clears the badge.
   Future<void> _openAlerts() async {
     final type = await AdminService.newestAdminAlertType();
-    final dest = switch (type) {
-      'admin_trade' || 'admin_repair' => 'requests',
-      'admin_tournament' => 'tournaments',
-      _ => 'payments',
-    };
+    final dest = AdminService.sectionForAlertType(type) ?? 'payments';
     setState(() {
       _active = dest;
       _adminAlerts = 0;
+      _sectionAlerts = {};
     });
     await AdminService.markAdminNotificationsRead();
   }
@@ -160,9 +204,10 @@ class _AdminConsoleState extends State<AdminConsole> {
       backgroundColor: AdminColors.canvas,
       drawer: _Drawer(
         active: _active,
+        sectionAlerts: _sectionAlerts,
         onNav: (id) {
-          setState(() => _active = id);
           Navigator.pop(context);
+          _navTo(id);
         },
         onExit: widget.onExit,
         displayName: widget.displayName,
@@ -176,8 +221,7 @@ class _AdminConsoleState extends State<AdminConsole> {
               color: AdminColors.canvas,
               border: Border(bottom: BorderSide(color: AdminColors.line))),
           child: Row(children: [
-            _squareBtn(Icons.menu_rounded,
-                () => _scaffoldKey.currentState?.openDrawer()),
+            _menuBtn(),
             const SizedBox(width: 12),
             Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -196,6 +240,26 @@ class _AdminConsoleState extends State<AdminConsole> {
       ]),
     );
   }
+
+  /// Menu button with a small dot when there are unread alerts — so an admin
+  /// knows to open the drawer even when the bell isn't in view.
+  Widget _menuBtn() => Stack(clipBehavior: Clip.none, children: [
+        _squareBtn(
+            Icons.menu_rounded, () => _scaffoldKey.currentState?.openDrawer()),
+        if (_adminAlerts > 0)
+          Positioned(
+            top: -3,
+            right: -3,
+            child: Container(
+              width: 11,
+              height: 11,
+              decoration: BoxDecoration(
+                  color: AdminColors.danger,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AdminColors.canvas, width: 1.5)),
+            ),
+          ),
+      ]);
 
   Widget _squareBtn(IconData icon, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
@@ -253,12 +317,14 @@ class _AdminConsoleState extends State<AdminConsole> {
 
 class _Drawer extends StatelessWidget {
   final String active;
+  final Map<String, int> sectionAlerts;
   final void Function(String) onNav;
   final VoidCallback? onExit;
   final String displayName;
   final String initials;
   const _Drawer({
     required this.active,
+    required this.sectionAlerts,
     required this.onNav,
     required this.displayName,
     required this.initials,
@@ -369,6 +435,7 @@ class _Drawer extends StatelessWidget {
 
   Widget _navItem(_NavItem item) {
     final on = active == item.id;
+    final badge = sectionAlerts[item.id] ?? 0;
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Material(
@@ -395,6 +462,19 @@ class _Drawer extends StatelessWidget {
                           on
                               ? AdminColors.primaryInk
                               : AdminColors.sidebarFaint))),
+              if (badge > 0)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  constraints: const BoxConstraints(minWidth: 18),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: AdminColors.danger,
+                      borderRadius: BorderRadius.circular(999)),
+                  child: Text(badge > 99 ? '99+' : '$badge',
+                      style:
+                          AdminText.sans(10, FontWeight.w800, Colors.white)),
+                ),
             ]),
           ),
         ),

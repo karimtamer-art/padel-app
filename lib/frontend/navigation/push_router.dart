@@ -27,6 +27,13 @@ class PushRouter {
   /// (a notification tapped while the app was backgrounded or killed).
   static final navigatorKey = GlobalKey<NavigatorState>();
 
+  /// Admin alerts ('admin_*') can't be pushed as a route — the admin console is
+  /// a single screen that switches sections by internal state. Instead we hand
+  /// it the target nav id ('payments'/'requests'/'tournaments') here; the
+  /// console listens and switches to it. Survives cold start: the value may be
+  /// set before the console mounts, so the console reads it on init too.
+  static final ValueNotifier<String?> adminSection = ValueNotifier<String?>(null);
+
   static bool _attached = false;
 
   /// Register the three FCM entry points. Idempotent; call once the user is
@@ -71,6 +78,21 @@ class PushRouter {
     if (nav == null) return;
     final data = m.data;
 
+    // Admin alerts → tell the console which section to open (never a player
+    // screen — that's what caused the blank/loading loop for admins).
+    switch (data['type']) {
+      case 'admin_order':
+        adminSection.value = 'payments';
+        return;
+      case 'admin_trade':
+      case 'admin_repair':
+        adminSection.value = 'requests';
+        return;
+      case 'admin_tournament':
+        adminSection.value = 'tournaments';
+        return;
+    }
+
     Widget? screen;
     switch (data['type']) {
       case 'message':
@@ -92,7 +114,6 @@ class PushRouter {
         }
         break;
       case 'order':
-      case 'admin_order':
         screen = const MyOrdersScreen();
         break;
     }

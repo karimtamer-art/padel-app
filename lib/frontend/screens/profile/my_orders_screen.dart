@@ -30,8 +30,13 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
   }
 
   Future<void> _load() async {
-    final data = await OrderService.fetchMyOrders();
-    if (mounted) setState(() { _orders = data; _loading = false; });
+    try {
+      final data = await OrderService.fetchMyOrders();
+      if (mounted) setState(() { _orders = data; _loading = false; });
+    } catch (_) {
+      // Never leave the screen stuck on the skeleton if the fetch fails.
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override

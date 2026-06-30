@@ -571,6 +571,61 @@ class AdminService {
     } catch (_) {}
   }
 
+  /// The nav section that surfaces a given admin alert type — drives both the
+  /// bell routing and the per-item sidebar badges.
+  static String? sectionForAlertType(String? type) => switch (type) {
+        'admin_order' => 'payments',
+        'admin_trade' || 'admin_repair' => 'requests',
+        'admin_tournament' => 'tournaments',
+        _ => null,
+      };
+
+  static const Map<String, List<String>> _sectionTypes = {
+    'payments': ['admin_order'],
+    'requests': ['admin_trade', 'admin_repair'],
+    'tournaments': ['admin_tournament'],
+  };
+
+  /// Unread admin-alert counts grouped by nav section ('payments' / 'requests'
+  /// / 'tournaments'). Sections with no unread alerts are omitted — used to
+  /// badge the sidebar items.
+  static Future<Map<String, int>> adminAlertSectionCounts() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return {};
+    try {
+      final res = await _db
+          .from('notifications')
+          .select('type')
+          .eq('user_id', uid)
+          .like('type', 'admin_%')
+          .eq('read', false);
+      final counts = <String, int>{};
+      for (final r in List<Map<String, dynamic>>.from(res as List)) {
+        final section = sectionForAlertType(r['type'] as String?);
+        if (section != null) counts[section] = (counts[section] ?? 0) + 1;
+      }
+      return counts;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Marks the admin alerts feeding one nav section as read (called when the
+  /// admin opens that section).
+  static Future<void> markAdminSectionRead(String section) async {
+    final uid = _db.auth.currentUser?.id;
+    final types = _sectionTypes[section];
+    if (uid == null || types == null) return;
+    try {
+      await _db
+          .from('notifications')
+          .update({'read': true})
+          .eq('user_id', uid)
+          .eq('read', false)
+          .inFilter('type', types);
+    } catch (_) {}
+  }
+
   // ── Repair requests ───────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> fetchRepairs() async {

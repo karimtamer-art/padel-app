@@ -475,6 +475,10 @@ create table if not exists public.trade_requests (
   status text not null default 'pending', -- pending | offer_made | accepted | rejected
   created_at timestamptz not null default now()
 );
+-- Drift guard: the live table (migration 0003) shipped a `notes` column and no
+-- `note`, but the app (store trade-in sheet) writes `note`. Without this, every
+-- real trade-in submission fails with "column note does not exist". Idempotent.
+alter table public.trade_requests add column if not exists note text;
 alter table public.trade_requests enable row level security;
 do $$ begin
   create policy "own trades read" on public.trade_requests for select using (auth.uid() = player_id);
