@@ -258,6 +258,8 @@ workflows:
     integrations:
       app_store_connect: padel_asc
     environment:
+      groups:
+        - appstore          # must contain secure var CERTIFICATE_PRIVATE_KEY
       flutter: stable
       xcode: latest
 
@@ -274,23 +276,20 @@ workflows:
       - name: Set up code signing
         script: |
           keychain initialize
-          # fetch-signing-files --create makes the PROVISIONING PROFILE but does
-          # NOT mint a usable signing CERTIFICATE (one with a private key) on a
-          # fresh account — that left the keychain empty and the archive failed
-          # with "No valid code signing certificates". So explicitly create an
-          # iOS Distribution certificate first; --save writes the cert AND its
-          # generated private key locally for `keychain add-certificates`.
-          app-store-connect create-certificate \
-            --type IOS_DISTRIBUTION \
-            --save
-          # Now create/fetch the App Store provisioning profile for our bundle id
-          # (it links to the cert above; the App ID already has Push enabled).
+          # Supply a PERSISTENT private key (Codemagic secure var) so the CLI
+          # mints a proper .p12 (certificate + key TOGETHER). The earlier
+          # create-certificate + add-certificates combo left the keychain with
+          # no usable identity → "No valid code signing certificates". With the
+          # key provided, --create makes the distribution cert (from this key) +
+          # the App Store provisioning profile if missing, and reuses them on
+          # later builds — so it won't burn through Apple's certificate limit.
           app-store-connect fetch-signing-files "com.padelegypt.app" \
             --type IOS_APP_STORE \
+            --certificate-key=@env:CERTIFICATE_PRIVATE_KEY \
             --create
           keychain add-certificates
-          # Sanity check: list the signing identities now in the keychain.
-          security find-identity -v -p codesigning || true
+          # Proof the keychain now has a signing identity (should print one).
+          security find-identity -v -p codesigning
           xcode-project use-profiles
 
       - name: Build signed IPA
