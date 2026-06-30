@@ -250,12 +250,14 @@ workflows:
   # target to iOS 15 for Firebase — so no manual Package.swift patch is needed.
   ios-release:
     name: iOS Signed (TestFlight)
+    # NOTE: no `environment.ios_signing` block on purpose. That block triggers
+    # Codemagic's AUTOMATIC signing, which only fetches EXISTING profiles and
+    # fails the build up front ("No matching profiles found") before any script
+    # runs. We instead create the files ourselves below with --create. The
+    # integration still injects the App Store Connect API credentials.
     integrations:
       app_store_connect: padel_asc
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.padelegypt.app
       flutter: stable
       xcode: latest
 
