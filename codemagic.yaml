@@ -271,6 +271,17 @@ workflows:
 
       - name: Set up code signing
         script: |
+          # The ios_signing + integration only FETCHES existing signing files.
+          # On a fresh account there are none, so use-profiles fails with
+          # "No matching profiles found". `--create` makes the CLI create the
+          # distribution certificate + a provisioning profile from the App ID
+          # (which already has Push Notifications enabled), then we install and
+          # apply them. Uses the padel_asc integration creds injected by env.
+          keychain initialize
+          app-store-connect fetch-signing-files "com.padelegypt.app" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
           xcode-project use-profiles
 
       - name: Build signed IPA
