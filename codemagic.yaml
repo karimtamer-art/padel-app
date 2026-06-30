@@ -294,6 +294,14 @@ workflows:
 
       - name: Build signed IPA
         script: |
+          echo "=== CERTIFICATE_PRIVATE_KEY arrived? length=${#CERTIFICATE_PRIVATE_KEY} (0 = env var not set) ==="
+          echo "=== signing identities in keychain ==="
+          security find-identity -v -p codesigning || true
+          echo "=== saved certificates ==="
+          ls -la "$HOME/Library/MobileDevice/Certificates/" 2>/dev/null || echo "(none)"
+          echo "=== provisioning profiles ==="
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || echo "(none)"
+          echo "=== building ==="
           flutter build ipa --release \
             --export-options-plist=/Users/builder/export_options.plist
 
