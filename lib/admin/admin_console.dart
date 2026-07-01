@@ -132,17 +132,31 @@ class _AdminConsoleState extends State<AdminConsole> {
         .subscribe();
   }
 
-  /// Tapping the bell jumps to the screen for the newest unread alert
-  /// (Payments / Requests / Tournaments) and clears the badge.
+  /// Tapping the bell opens a list of recent admin alerts (new orders, trade-in
+  /// & repair requests, tournament payments). Tapping a row jumps to the section
+  /// that handles it. Opening the list marks the alerts read so badges clear.
   Future<void> _openAlerts() async {
-    final type = await AdminService.newestAdminAlertType();
-    final dest = AdminService.sectionForAlertType(type) ?? 'payments';
-    setState(() {
-      _active = dest;
-      _adminAlerts = 0;
-      _sectionAlerts = {};
-    });
+    final alerts = await AdminService.recentAdminAlerts();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AdminColors.canvas,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _AlertsSheet(
+        alerts: alerts,
+        onTapItem: (type) {
+          Navigator.pop(ctx);
+          final dest = AdminService.sectionForAlertType(type);
+          if (dest != null) _navTo(dest);
+        },
+      ),
+    );
+    // Opening the bell clears the unread state (badge + per-section counts).
     await AdminService.markAdminNotificationsRead();
+    await _loadAlerts();
   }
 
   // Nav mirrors the design screenshot exactly
@@ -477,6 +491,146 @@ class _Drawer extends StatelessWidget {
                 ),
             ]),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Icon + accent colour for an admin alert type.
+(IconData, Color) _alertStyle(String? type) => switch (type) {
+      'admin_order' => (Icons.shopping_bag_outlined, AdminColors.primary),
+      'admin_trade' => (Icons.swap_horiz_rounded, AdminColors.primary),
+      'admin_repair' => (Icons.build_outlined, AdminColors.primary),
+      'admin_tournament' => (Icons.emoji_events_outlined, AdminColors.primary),
+      _ => (Icons.notifications_none_rounded, AdminColors.ink),
+    };
+
+/// Compact "3m ago" / "2h ago" / "5d ago" from an ISO timestamp.
+String _relTime(String? iso) {
+  if (iso == null) return '';
+  final t = DateTime.tryParse(iso);
+  if (t == null) return '';
+  final d = DateTime.now().difference(t);
+  if (d.inMinutes < 1) return 'just now';
+  if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+  if (d.inHours < 24) return '${d.inHours}h ago';
+  if (d.inDays < 7) return '${d.inDays}d ago';
+  return '${(d.inDays / 7).floor()}w ago';
+}
+
+/// Bottom sheet the admin bell opens: a list of recent admin alerts. Each row
+/// taps through to the section that handles it (via [onTapItem]).
+class _AlertsSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> alerts;
+  final void Function(String? type) onTapItem;
+  const _AlertsSheet({required this.alerts, required this.onTapItem});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: ConstrainedBox(
+        constraints:
+            BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.72),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: AdminColors.line,
+                    borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
+              child: Text('Notifications',
+                  style: AdminText.sans(18, FontWeight.w800, AdminColors.ink,
+                      ls: -0.3)),
+            ),
+            if (alerts.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 26, 20, 44),
+                child: Center(
+                  child: Column(children: [
+                    const Icon(Icons.notifications_none_rounded,
+                        size: 40, color: AdminColors.line),
+                    const SizedBox(height: 10),
+                    Text("You're all caught up", style: AdminText.small()),
+                  ]),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  itemCount: alerts.length,
+                  itemBuilder: (_, i) => _row(alerts[i]),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(Map<String, dynamic> a) {
+    final type = a['type'] as String?;
+    final unread = a['read'] == false;
+    final (icon, color) = _alertStyle(type);
+    final body = a['body'] as String?;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => onTapItem(type),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 38,
+              height: 38,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10)),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text((a['title'] as String?) ?? 'Notification',
+                        style: AdminText.sans(
+                            13.5, FontWeight.w700, AdminColors.ink)),
+                    if (body != null && body.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(body,
+                          style: AdminText.small(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(_relTime(a['created_at'] as String?),
+                        style: AdminText.mono(
+                            9.5, FontWeight.w500, AdminColors.sidebarFaint)),
+                  ]),
+            ),
+            if (unread)
+              Container(
+                margin: const EdgeInsets.only(top: 5, left: 6),
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                    color: AdminColors.danger, shape: BoxShape.circle),
+              ),
+          ]),
         ),
       ),
     );

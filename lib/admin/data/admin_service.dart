@@ -557,6 +557,27 @@ class AdminService {
     }
   }
 
+  /// Recent admin alerts (read + unread) for the notifications sheet, newest
+  /// first. Covers every 'admin_%' type (orders, trade-ins, repairs, tournament
+  /// payments).
+  static Future<List<Map<String, dynamic>>> recentAdminAlerts(
+      {int limit = 30}) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return [];
+    try {
+      final res = await _db
+          .from('notifications')
+          .select('id, type, title, body, data, read, created_at')
+          .eq('user_id', uid)
+          .like('type', 'admin_%')
+          .order('created_at', ascending: false)
+          .limit(limit);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Clears the admin's alert badge (all admin alert types).
   static Future<void> markAdminNotificationsRead() async {
     final uid = _db.auth.currentUser?.id;
