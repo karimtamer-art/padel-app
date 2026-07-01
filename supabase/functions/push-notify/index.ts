@@ -140,6 +140,21 @@ Deno.serve(async (req) => {
               visibility: "PUBLIC", // show content (not just "new notification") on lock screen
             },
           },
+          // iOS/APNs: an explicit alert payload so the notification reliably
+          // shows on the lock screen. apns-priority 10 + push-type alert are
+          // required for an immediate visible alert.
+          apns: {
+            headers: {
+              "apns-priority": "10",
+              "apns-push-type": "alert",
+            },
+            payload: {
+              aps: {
+                alert: { title: record.title ?? "", body: record.body ?? "" },
+                sound: "default",
+              },
+            },
+          },
         },
       };
       const res = await fetch(endpoint, {
@@ -155,11 +170,16 @@ Deno.serve(async (req) => {
       } else {
         const err = await res.json().catch(() => ({}));
         const code = err?.error?.details?.[0]?.errorCode ?? err?.error?.status;
+        // Log the FCM rejection so APNs/token problems are visible in the logs.
+        console.error(
+          `FCM send failed (${res.status}) for token ${token.slice(0, 12)}…: ${JSON.stringify(err)}`,
+        );
         // Stale token → remove so we stop trying it.
         if (res.status === 404 || code === "UNREGISTERED") await deleteToken(token);
       }
     }
 
+    console.log(`push-notify: type=${record.type} sent=${sent}/${tokens.length}`);
     return new Response(JSON.stringify({ sent, of: tokens.length }), {
       headers: { "Content-Type": "application/json" },
     });
