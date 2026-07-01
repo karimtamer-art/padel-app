@@ -296,7 +296,16 @@ workflows:
 
       - name: Build signed IPA
         script: |
+          set -e
+          # App Store Connect rejects re-uploading the same build number. Derive
+          # the next one from the highest build already on TestFlight (+1) so we
+          # never have to hand-bump pubspec for each test build. App Apple ID is
+          # com.padelegypt.app → 6786002098.
+          LATEST=$(app-store-connect get-latest-testflight-build-number "6786002098" || echo "0")
+          NEXT=$((LATEST + 1))
+          echo "Latest build on App Store Connect: $LATEST → building $NEXT"
           flutter build ipa --release \
+            --build-number=$NEXT \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
