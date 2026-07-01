@@ -132,7 +132,8 @@ class _SplashScreenState extends State<SplashScreen>
         animation: a,
         builder: (_, c) => Opacity(
           opacity: a.value,
-          child: Transform.translate(offset: Offset(0, 10 * (1 - a.value)), child: c),
+          child: Transform.translate(
+              offset: Offset(0, 10 * (1 - a.value)), child: c),
         ),
         child: child,
       );
@@ -140,136 +141,153 @@ class _SplashScreenState extends State<SplashScreen>
 
     return FadeTransition(
       opacity: Tween<double>(begin: 1, end: 0).animate(_exit),
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(0, -0.24),
-            radius: 1.0,
-            colors: [AppColors.surface, AppColors.bg, AppColors.bgAlt],
-            stops: [0.0, 0.58, 1.0],
+      // Fill the screen: inside AuthGate this sits in an AnimatedSwitcher, which
+      // gives loose constraints — without expand the splash shrinks to its
+      // content and floats as a small card on a black background.
+      child: SizedBox.expand(
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment(0, -0.24),
+              radius: 1.0,
+              colors: [AppColors.surface, AppColors.bg, AppColors.bgAlt],
+              stops: [0.0, 0.58, 1.0],
+            ),
           ),
-        ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // faint court baseline arc, bottom
-            Positioned(
-              bottom: -150,
-              child: IgnorePointer(
-                child: CustomPaint(
-                  size: const Size(520, 300),
-                  painter: _CourtArcPainter(),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // faint court baseline arc, bottom
+              Positioned(
+                bottom: -150,
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    size: const Size(520, 300),
+                    painter: _CourtArcPainter(),
+                  ),
                 ),
               ),
-            ),
 
-            // center column: lockup + loader + status
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                rise(0.0, _lockup()),
-                const SizedBox(height: 42),
-                rise(0.22, SizedBox(
-                  width: trackW,
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([_progress, _hop]),
-                    builder: (_, __) {
-                      final p = _progress.value;
-                      final hop = -4.0 * (1 - (2 * _hop.value - 1).abs());
-                      return SizedBox(
-                        height: ballSize + 8,
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          alignment: Alignment.centerLeft,
-                          children: [
-                            // track
-                            Container(
-                              height: 2.5,
-                              decoration: BoxDecoration(
-                                color: AppColors.line,
-                                borderRadius: BorderRadius.circular(99),
-                              ),
-                            ),
-                            // fill
-                            Container(
-                              height: 2.5,
-                              width: trackW * p,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [AppColors.primary, AppColors.gold],
-                                ),
-                                borderRadius: BorderRadius.circular(99),
-                              ),
-                            ),
-                            // ball head
-                            Positioned(
-                              left: (trackW * p) - ballSize / 2,
-                              child: Transform.translate(
-                                offset: Offset(0, hop),
-                                child: Container(
-                                  width: ballSize,
-                                  height: ballSize,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: AppColors.primary,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppColors.primary.withValues(alpha: 0.5),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 3),
-                                      ),
-                                      BoxShadow(
-                                        color: AppColors.primary.withValues(alpha: 0.12),
-                                        blurRadius: 0,
-                                        spreadRadius: 4,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                )),
-                const SizedBox(height: 26),
-                rise(0.36, AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 280),
-                  child: Text(
-                    _status,
-                    key: ValueKey(_status),
-                    style: AppText.body(AppColors.inkSoft)
-                        .copyWith(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                )),
-              ],
-            ),
-
-            // editorial footer
-            Positioned(
-              bottom: 40,
-              child: rise(0.52, Row(
+              // center column: lockup + loader + status
+              Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _hairline(),
-                  const SizedBox(width: 10),
-                  Text('CAIRO · CLAY COURT',
-                      style: AppText.tag(AppColors.inkFaint)
-                          .copyWith(fontSize: 8.5, letterSpacing: 2.5)),
-                  const SizedBox(width: 10),
-                  _hairline(),
+                  rise(0.0, _lockup()),
+                  const SizedBox(height: 42),
+                  rise(
+                      0.22,
+                      SizedBox(
+                        width: trackW,
+                        child: AnimatedBuilder(
+                          animation: Listenable.merge([_progress, _hop]),
+                          builder: (_, __) {
+                            final p = _progress.value;
+                            final hop = -4.0 * (1 - (2 * _hop.value - 1).abs());
+                            return SizedBox(
+                              height: ballSize + 8,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.centerLeft,
+                                children: [
+                                  // track
+                                  Container(
+                                    height: 2.5,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.line,
+                                      borderRadius: BorderRadius.circular(99),
+                                    ),
+                                  ),
+                                  // fill
+                                  Container(
+                                    height: 2.5,
+                                    width: trackW * p,
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [
+                                          AppColors.primary,
+                                          AppColors.gold
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(99),
+                                    ),
+                                  ),
+                                  // ball head
+                                  Positioned(
+                                    left: (trackW * p) - ballSize / 2,
+                                    child: Transform.translate(
+                                      offset: Offset(0, hop),
+                                      child: Container(
+                                        width: ballSize,
+                                        height: ballSize,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: AppColors.primary,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: AppColors.primary
+                                                  .withValues(alpha: 0.5),
+                                              blurRadius: 8,
+                                              offset: const Offset(0, 3),
+                                            ),
+                                            BoxShadow(
+                                              color: AppColors.primary
+                                                  .withValues(alpha: 0.12),
+                                              blurRadius: 0,
+                                              spreadRadius: 4,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      )),
+                  const SizedBox(height: 26),
+                  rise(
+                      0.36,
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 280),
+                        child: Text(
+                          _status,
+                          key: ValueKey(_status),
+                          style: AppText.body(AppColors.inkSoft).copyWith(
+                              fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
+                      )),
                 ],
-              )),
-            ),
-          ],
+              ),
+
+              // editorial footer
+              Positioned(
+                bottom: 40,
+                child: rise(
+                    0.52,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _hairline(),
+                        const SizedBox(width: 10),
+                        Text('CAIRO · CLAY COURT',
+                            style: AppText.tag(AppColors.inkFaint)
+                                .copyWith(fontSize: 8.5, letterSpacing: 2.5)),
+                        const SizedBox(width: 10),
+                        _hairline(),
+                      ],
+                    )),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _hairline() => Container(width: 26, height: 1.5, color: AppColors.line);
+  Widget _hairline() =>
+      Container(width: 26, height: 1.5, color: AppColors.line);
 
   Widget _lockup() {
     return Row(
@@ -282,7 +300,9 @@ class _SplashScreenState extends State<SplashScreen>
             borderRadius: BorderRadius.circular(15),
             boxShadow: const [
               BoxShadow(
-                  color: Color(0x383C2A14), blurRadius: 30, offset: Offset(0, 12)),
+                  color: Color(0x383C2A14),
+                  blurRadius: 30,
+                  offset: Offset(0, 12)),
             ],
           ),
           clipBehavior: Clip.antiAlias,
@@ -295,7 +315,8 @@ class _SplashScreenState extends State<SplashScreen>
                 fontSize: 27, fontWeight: FontWeight.w900, letterSpacing: 1.5),
             children: const [
               TextSpan(text: 'PADEL '),
-              TextSpan(text: 'RIVALS', style: TextStyle(color: AppColors.primary)),
+              TextSpan(
+                  text: 'RIVALS', style: TextStyle(color: AppColors.primary)),
             ],
           ),
         ),
@@ -329,7 +350,10 @@ class _CourtArcPainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.bottomCenter,
         end: Alignment.topCenter,
-        colors: [AppColors.line.withValues(alpha: 0.5), AppColors.line.withValues(alpha: 0)],
+        colors: [
+          AppColors.line.withValues(alpha: 0.5),
+          AppColors.line.withValues(alpha: 0)
+        ],
       ).createShader(Rect.fromLTWH(cx - 1, 0, 2, 120))
       ..strokeWidth = 1.5;
     canvas.drawLine(Offset(cx, 0), Offset(cx, 120), grad);
