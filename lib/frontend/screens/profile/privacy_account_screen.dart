@@ -11,10 +11,6 @@ class PrivacyAccountScreen extends StatefulWidget {
 }
 
 class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
-  bool _publicProfile = true;
-  bool _showElo = true;
-  bool _showOnline = false;
-
   User? get _user => Supabase.instance.client.auth.currentUser;
 
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
@@ -49,30 +45,6 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
               onTap: () => _snack('Update your phone from Edit Profile.')),
           NavTile(icon: Icons.lock_outline_rounded, title: 'Change Password',
               subtitle: 'Sends a reset link to your email', onTap: _changePassword),
-        ]),
-        const SizedBox(height: 22),
-
-        const SectionLabel('Privacy'),
-        TileGroup(children: [
-          SwitchTile(
-            icon: Icons.public_rounded,
-            title: 'Public Profile',
-            subtitle: 'Anyone can view your stats',
-            value: _publicProfile,
-            onChanged: (v) => setState(() => _publicProfile = v),
-          ),
-          SwitchTile(
-            icon: Icons.leaderboard_outlined,
-            title: 'Show ELO & Ranking',
-            value: _showElo,
-            onChanged: (v) => setState(() => _showElo = v),
-          ),
-          SwitchTile(
-            icon: Icons.circle_outlined,
-            title: 'Show Online Status',
-            value: _showOnline,
-            onChanged: (v) => setState(() => _showOnline = v),
-          ),
         ]),
         const SizedBox(height: 22),
 

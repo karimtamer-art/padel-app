@@ -771,7 +771,6 @@ class _TradeInSheetState extends State<_TradeInSheet> {
   int _step = 0;
   int _cond = -1;
   bool _busy = false;
-  final List<bool> _photos = [false, false, false];
   final _nameC = TextEditingController();
   final _brandC = TextEditingController();
   final _notesC = TextEditingController();
@@ -788,7 +787,6 @@ class _TradeInSheetState extends State<_TradeInSheet> {
     super.dispose();
   }
 
-  int get _photoCount => _photos.where((v) => v).length;
   int get _ask => int.tryParse(_askC.text) ?? 0;
   Map<String, dynamic>? get _targetP =>
       _target >= 0 && _target < _rackets.length ? _rackets[_target] : null;
@@ -810,8 +808,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
       case 0:
         return _cond >= 0;
       case 1:
-        return _photoCount > 0 &&
-            _nameC.text.trim().isNotEmpty &&
+        return _nameC.text.trim().isNotEmpty &&
             _brandC.text.trim().isNotEmpty;
       case 2:
         return _ask > 0;
@@ -1090,19 +1087,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _heading('Tell us about your racket',
-              'Photos and details help buyers and speed up approval.'),
-          _field(
-            'PHOTOS',
-            Row(
-              children: [
-                for (int i = 0; i < _photos.length; i++) ...[
-                  Expanded(child: _photoSlot(i)),
-                  if (i < _photos.length - 1) const SizedBox(width: 10),
-                ],
-              ],
-            ),
-            hint: '$_photoCount/3 added',
-          ),
+              'Details help us assess it and speed up approval.'),
           _field(
               'RACKET NAME',
               TextField(
@@ -1130,59 +1115,6 @@ class _TradeInSheetState extends State<_TradeInSheet> {
           ),
         ],
       );
-
-  Widget _photoSlot(int i) {
-    final filled = _photos[i];
-    return GestureDetector(
-      onTap: () => setState(() => _photos[i] = !_photos[i]),
-      child: AspectRatio(
-        aspectRatio: 1,
-        child: Container(
-          decoration: BoxDecoration(
-            color: filled ? AppColors.wash(AppColors.primary) : AppColors.field,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: filled ? AppColors.primary : AppColors.line,
-              width: 1.5,
-            ),
-          ),
-          child: Stack(
-            children: [
-              Center(
-                child: filled
-                    ? const Icon(Icons.sports_tennis_rounded,
-                        size: 26, color: AppColors.primary)
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(i == 0 ? Icons.photo_camera_rounded : Icons.add_rounded,
-                              size: 22, color: AppColors.inkFaint),
-                          if (i == 0)
-                            Text('Add',
-                                style: AppText.tag(AppColors.inkFaint)
-                                    .copyWith(fontSize: 10)),
-                        ],
-                      ),
-              ),
-              if (filled)
-                Positioned(
-                  top: 5,
-                  right: 5,
-                  child: Container(
-                    width: 18,
-                    height: 18,
-                    decoration: const BoxDecoration(
-                        color: AppColors.primary, shape: BoxShape.circle),
-                    child: const Icon(Icons.check_rounded,
-                        size: 11, color: AppColors.primaryInk),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   // ── STEP 2 — asking price ──
   Widget _priceStep() {
@@ -1335,13 +1267,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
                       Text(_nameC.text.isEmpty ? 'Your racket' : _nameC.text,
                           style: AppText.cardTitle().copyWith(fontSize: 15)),
                       const SizedBox(height: 4),
-                      Row(children: [
-                        AppTag(_cond >= 0 ? _conditions[_cond].label : '—',
-                            color: AppColors.primary),
-                        const SizedBox(width: 6),
-                        Text('· $_photoCount photo${_photoCount == 1 ? '' : 's'}',
-                            style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
-                      ]),
+                      AppTag(_cond >= 0 ? _conditions[_cond].label : '—',
+                          color: AppColors.primary),
                     ],
                   ),
                 ),
