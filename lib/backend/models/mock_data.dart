@@ -28,12 +28,6 @@ class MatchInfo {
   bool get competitive => type == 'Competitive';
 }
 
-class NearbyPlayer {
-  final String bi, name, tier;
-  final int elo, km;
-  const NearbyPlayer(this.bi, this.name, this.tier, this.elo, this.km);
-}
-
 class RankRow {
   final int rank;
   final String name, bi, tier;
@@ -78,23 +72,6 @@ class BracketTeam {
   final int seed;
   final bool me;
   const BracketTeam(this.p1, this.p2, this.bi, this.seed, {this.me = false});
-}
-
-/// A player line in a past-match recap (doubles: partner + two opponents).
-class FormPlayer {
-  final String name, bi, tier;
-  final int elo;
-  const FormPlayer(this.name, this.bi, this.tier, this.elo);
-}
-
-class FormMatch {
-  final bool won;
-  final String date, when, type, court, score;
-  final int eloDelta;
-  final FormPlayer partner;
-  final List<FormPlayer> opp;
-  const FormMatch(this.won, this.date, this.when, this.type, this.court,
-      this.score, this.eloDelta, this.partner, this.opp);
 }
 
 class Product {
@@ -170,14 +147,6 @@ class MockData {
     MatchInfo(type: 'Casual', court: 'Smash Padel — Heliopolis', date: 'Saturday', time: '10:00 AM', by: 'Tarek A.', bi: 'TA', players: 2, max: 4),
   ];
 
-  static const nearby = <NearbyPlayer>[
-    NearbyPlayer('OA', 'Omar A.', 'Gold', 1654, 2),
-    NearbyPlayer('MH', 'Mohamed H.', 'Silver', 1320, 3),
-    NearbyPlayer('SR', 'Sayed R.', 'Platinum', 2150, 4),
-    NearbyPlayer('HM', 'Hassan M.', 'Gold', 1780, 5),
-    NearbyPlayer('AZ', 'Ali Z.', 'Bronze', 980, 6),
-  ];
-
   static const podium = <RankRow>[
     RankRow(1, 'Ahmed Hassan', 'AH', 'Platinum', 2450, 0),
     RankRow(2, 'Rami Samir', 'RS', 'Platinum', 2280, 0),
@@ -238,28 +207,6 @@ class MockData {
     Partner('TA', 'Tarek Ali', 'Gold', 1980, 'Right · Net play', 5),
     Partner('AG', 'Amr Gamal', 'Silver', 1870, 'Left · Counter', 3),
     Partner('KI', 'Khaled Ibrahim', 'Gold', 1920, 'Right · Power', 6),
-  ];
-
-  // Last 6 rated matches in detail (doubles), most-recent first.
-  static const formHistory = <FormMatch>[
-    FormMatch(true, 'May 25', 'Sun · 6:00 PM', 'Competitive', 'Gezira Club — Court 2', '6-3, 6-4', 18,
-        FormPlayer('Hassan Maher', 'HM', 'Gold', 1780),
-        [FormPlayer('Adel Mansour', 'AM', 'Gold', 1855), FormPlayer('Amr Gamal', 'AG', 'Silver', 1870)]),
-    FormMatch(false, 'May 22', 'Thu · 8:00 PM', 'Competitive', 'Maadi Club', '5-7, 4-6', -14,
-        FormPlayer('Tarek Ali', 'TA', 'Gold', 1980),
-        [FormPlayer('Sayed Roushdy', 'SR', 'Platinum', 2150), FormPlayer('Khaled Ibrahim', 'KI', 'Gold', 1920)]),
-    FormMatch(true, 'May 18', 'Sun · 7:00 AM', 'Casual', 'New Cairo Padel Club', '7-5, 6-3', 12,
-        FormPlayer('Omar Adel', 'OA', 'Gold', 1654),
-        [FormPlayer('Mohamed Helmy', 'MH', 'Silver', 1320), FormPlayer('Ali Zaki', 'AZ', 'Bronze', 980)]),
-    FormMatch(true, 'May 14', 'Wed · 9:00 PM', 'Competitive', 'Smash Padel — Heliopolis', '6-4, 7-6', 21,
-        FormPlayer('Hassan Maher', 'HM', 'Gold', 1780),
-        [FormPlayer('Nader Samy', 'NS', 'Silver', 1820), FormPlayer('Samir Lotfy', 'SL', 'Silver', 1800)]),
-    FormMatch(false, 'May 10', 'Sat · 10:00 AM', 'Competitive', 'Katameya Heights', '6-7, 3-6', -16,
-        FormPlayer('Tarek Ali', 'TA', 'Gold', 1980),
-        [FormPlayer('Ahmed Hassan', 'AH', 'Platinum', 2450), FormPlayer('Rami Samir', 'RS', 'Platinum', 2280)]),
-    FormMatch(true, 'May 6', 'Tue · 6:00 PM', 'Casual', 'Wadi Degla Club', '6-2, 6-4', 9,
-        FormPlayer('Omar Adel', 'OA', 'Gold', 1654),
-        [FormPlayer('Sherif Youssef', 'SY', 'Silver', 1880), FormPlayer('Walid Hassan', 'WH', 'Bronze', 1780)]),
   ];
 
   static const productCats = <String>['All', 'Rackets', 'Shoes', 'Apparel', 'Accessories', 'Balls'];

@@ -165,8 +165,6 @@ class PlayerProfile {
   // History
   final List<int> eloHistory;
   final List<RecentMatch> recent;
-  final List<FormMatch> formHistory;
-  final int achievementsUnlocked;
 
   const PlayerProfile({
     required this.isNew,
@@ -184,8 +182,6 @@ class PlayerProfile {
     this.progress = 0,
     this.eloHistory = const [],
     this.recent = const [],
-    this.formHistory = const [],
-    this.achievementsUnlocked = 0,
   });
 
   bool get hasMatches => played > 0;
@@ -202,7 +198,5 @@ class PlayerProfile {
     progress: 0,
     eloHistory: [],
     recent: [],
-    formHistory: [],
-    achievementsUnlocked: 0,
   );
 }
