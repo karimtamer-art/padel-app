@@ -28,8 +28,8 @@ class HelpSupportScreen extends StatelessWidget {
         'Players are grouped into divisions (D → A) and tiers (Low / Mid / High) within each. Win consistently against players at or above your level to get promoted.'),
     ('Can I cancel a registered tournament?',
         'Yes — open the tournament from My Tournaments and tap Withdraw. Withdrawals close 48 hours before the first round.'),
-    ('How do I find players near me?',
-        'Make sure "Discoverable Nearby" is on in Privacy & Account. You\'ll then appear in the Players Near You section based on your favourite clubs.'),
+    ('How do I find a match?',
+        'Open Home to browse open matches near your level, or create your own from the + button and wait for players to join. You can contact players from the match lobby to coordinate.'),
   ];
 
   @override

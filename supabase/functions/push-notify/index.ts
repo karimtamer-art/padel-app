@@ -79,6 +79,34 @@ async function getAccessToken(sa: {
   return json.access_token as string;
 }
 
+// The recipient's push preferences (profiles.notify_*). Missing columns
+// (pre-migration) come back undefined and are treated as "on".
+async function prefsForUser(userId: string): Promise<Record<string, boolean>> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=notify_push,notify_match,notify_tournament,notify_order`,
+    { headers: { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` } },
+  );
+  const rows = (await res.json()) as Record<string, boolean>[];
+  return rows[0] ?? {};
+}
+
+// Whether a notification of this type is allowed to push, given the user's
+// prefs. Master toggle gates everything; category toggles gate their own type.
+// Broadcasts, DMs and admin alerts are gated by the master toggle only.
+function pushAllowed(type: string | undefined, prefs: Record<string, boolean>): boolean {
+  if (prefs.notify_push === false) return false; // master off → no push at all
+  switch (type) {
+    case "match":
+      return prefs.notify_match !== false;
+    case "tournament":
+      return prefs.notify_tournament !== false;
+    case "order":
+      return prefs.notify_order !== false;
+    default:
+      return true;
+  }
+}
+
 async function tokensForUser(userId: string): Promise<string[]> {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/device_tokens?user_id=eq.${userId}&select=token`,
@@ -107,6 +135,13 @@ Deno.serve(async (req) => {
     const payload = await req.json();
     const record: NotificationRow | undefined = payload.record;
     if (!record?.user_id) return new Response("no record", { status: 200 });
+
+    // Respect the recipient's push preferences (the in-app row still exists).
+    const prefs = await prefsForUser(record.user_id);
+    if (!pushAllowed(record.type, prefs)) {
+      console.log(`push-notify: type=${record.type} muted by prefs`);
+      return new Response("muted by prefs", { status: 200 });
+    }
 
     const tokens = await tokensForUser(record.user_id);
     if (tokens.length === 0) return new Response("no tokens", { status: 200 });

@@ -1653,7 +1653,22 @@ do $$ begin
   create policy "notifications: own update" on public.notifications
     for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 exception when duplicate_object then null; end $$;
-grant select, update on public.notifications to authenticated;
+-- Own delete: the client prunes rows past its 30-day retention window.
+do $$ begin
+  create policy "notifications: own delete" on public.notifications
+    for delete using (auth.uid() = user_id);
+exception when duplicate_object then null; end $$;
+grant select, update, delete on public.notifications to authenticated;
+
+-- Per-user push preferences (mirrored in the Notifications screen). All default
+-- ON so existing users keep receiving push. The push-notify Edge Function reads
+-- these and skips the FCM send when the relevant toggle is off; the in-app
+-- inbox row is inserted regardless.
+alter table public.profiles
+  add column if not exists notify_push       boolean not null default true,
+  add column if not exists notify_match      boolean not null default true,
+  add column if not exists notify_tournament boolean not null default true,
+  add column if not exists notify_order      boolean not null default true;
 
 -- ── FCM device tokens (Android push) ───────────────────────────
 -- The push-notify Edge Function reads these to fan a notifications insert out

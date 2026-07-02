@@ -9,6 +9,7 @@ import 'my_orders_screen.dart';
 import 'settings_common.dart';
 
 class _Notif {
+  final String? id; // notifications.id — for per-row mark-read
   final IconData icon;
   final Color tint;
   final String title, body, time;
@@ -17,7 +18,11 @@ class _Notif {
   final String? type;
   final Map<String, dynamic>? data; // {conversation_id, sender_id, ...}
   const _Notif(this.icon, this.tint, this.title, this.body, this.time, this.unread,
-      {this.at, this.type, this.data});
+      {this.id, this.at, this.type, this.data});
+
+  /// Copy with the unread flag flipped (keeps id/type/data intact).
+  _Notif read() =>
+      _Notif(icon, tint, title, body, time, false, id: id, at: at, type: type, data: data);
 
   /// Icon + tint for a personal notification's `type`.
   static (IconData, Color) styleFor(String? type) => switch (type) {
@@ -37,10 +42,13 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  // Push preferences (persisted to profiles.notify_*). Master gates everything;
+  // the category toggles gate their own notification type. Honoured server-side
+  // by the push-notify Edge Function.
   bool _push = true;
-  bool _invites = true;
-  bool _results = true;
-  bool _tournaments = false;
+  bool _match = true;
+  bool _tournaments = true;
+  bool _orders = true;
 
   List<_Notif> _items = [];
 
@@ -48,6 +56,26 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void initState() {
     super.initState();
     _load();
+    _loadPrefs();
+    // Best-effort: drop rows older than the retention window.
+    NotificationService.pruneOld();
+  }
+
+  Future<void> _loadPrefs() async {
+    final p = await NotificationService.fetchPrefs();
+    if (!mounted) return;
+    setState(() {
+      _push = p['push'] ?? true;
+      _match = p['match'] ?? true;
+      _tournaments = p['tournament'] ?? true;
+      _orders = p['order'] ?? true;
+    });
+  }
+
+  /// Flip a toggle locally and persist it (fire-and-forget).
+  void _setPref(String key, bool value, void Function(bool) apply) {
+    setState(() => apply(value));
+    NotificationService.setPref(key, value);
   }
 
   /// Personal notifications, newest first. Broadcasts now arrive here too: a DB
@@ -67,6 +95,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         (n['body'] as String?) ?? '',
         _ago(n['created_at'] as String?),
         n['read'] != true,
+        id: n['id'] as String?,
         at: at,
         type: n['type'] as String?,
         data: n['data'] is Map
@@ -85,10 +114,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (!mounted) return;
     setState(() {
       for (var i = 0; i < _items.length; i++) {
-        final n = _items[i];
-        _items[i] = _Notif(n.icon, n.tint, n.title, n.body, n.time, false, at: n.at);
+        _items[i] = _items[i].read();
       }
     });
+  }
+
+  /// Mark one row read locally + in the DB (called on tap-through).
+  void _markReadLocal(_Notif n) {
+    if (!n.unread) return;
+    final i = _items.indexOf(n);
+    if (i >= 0) setState(() => _items[i] = n.read());
+    if (n.id != null) NotificationService.markRead(n.id!);
   }
 
   static String _ago(String? iso) {
@@ -124,32 +160,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         else
           TileGroup(children: [for (final n in _items) _row(n)]),
         const SizedBox(height: 22),
-        const SectionLabel('Preferences'),
+        const SectionLabel('Push Alerts'),
         TileGroup(children: [
           SwitchTile(
             icon: Icons.notifications_active_outlined,
             title: 'Push Notifications',
             subtitle: 'Allow Padel to send alerts',
             value: _push,
-            onChanged: (v) => setState(() => _push = v),
+            onChanged: (v) => _setPref('push', v, (x) => _push = x),
           ),
           SwitchTile(
-            icon: Icons.person_add_alt_outlined,
-            title: 'Match Invites',
-            value: _invites,
-            onChanged: (v) => setState(() => _invites = v),
-          ),
-          SwitchTile(
-            icon: Icons.scoreboard_outlined,
-            title: 'Match Results & ELO',
-            value: _results,
-            onChanged: (v) => setState(() => _results = v),
+            icon: Icons.sports_tennis_outlined,
+            title: 'Match Updates',
+            subtitle: 'Joins, results & ELO changes',
+            value: _match,
+            onChanged: (v) => _setPref('match', v, (x) => _match = x),
           ),
           SwitchTile(
             icon: Icons.emoji_events_outlined,
             title: 'Tournament Updates',
             value: _tournaments,
-            onChanged: (v) => setState(() => _tournaments = v),
+            onChanged: (v) => _setPref('tournament', v, (x) => _tournaments = x),
+          ),
+          SwitchTile(
+            icon: Icons.shopping_bag_outlined,
+            title: 'Store & Orders',
+            subtitle: 'Order status & trade-ins',
+            value: _orders,
+            onChanged: (v) => _setPref('order', v, (x) => _orders = x),
           ),
         ]),
       ],
@@ -175,6 +213,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _open(_Notif n) {
+    // Tapping any notification clears its unread state.
+    _markReadLocal(n);
     switch (n.type) {
       case 'message':
         _openChat(n);
@@ -249,13 +289,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void _openChat(_Notif n) {
     final senderId = n.data?['sender_id'] as String?;
     if (senderId == null) return;
-    // Optimistically clear the unread dot for this row.
-    final i = _items.indexOf(n);
-    if (i >= 0 && n.unread) {
-      setState(() => _items[i] = _Notif(
-          n.icon, n.tint, n.title, n.body, n.time, false,
-          at: n.at, type: n.type, data: n.data));
-    }
+    // Unread state already cleared by _open() before we got here.
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => DMChatScreen(
         otherId: senderId,

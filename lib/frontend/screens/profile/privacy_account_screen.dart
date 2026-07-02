@@ -14,7 +14,6 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
   bool _publicProfile = true;
   bool _showElo = true;
   bool _showOnline = false;
-  bool _discoverable = true;
 
   User? get _user => Supabase.instance.client.auth.currentUser;
 
@@ -73,13 +72,6 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
             title: 'Show Online Status',
             value: _showOnline,
             onChanged: (v) => setState(() => _showOnline = v),
-          ),
-          SwitchTile(
-            icon: Icons.travel_explore_rounded,
-            title: 'Discoverable Nearby',
-            subtitle: 'Appear in "Players Near You"',
-            value: _discoverable,
-            onChanged: (v) => setState(() => _discoverable = v),
           ),
         ]),
         const SizedBox(height: 22),
