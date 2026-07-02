@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
-import '../../widgets/app_toast.dart';
 import '../../widgets/elo_chart.dart';
 import '../../widgets/padel_refresh.dart';
 import '../../../backend/models/ranking_scale.dart';
@@ -164,8 +163,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
 
-  /// Share button — copies a short profile + invite blurb to the clipboard
-  /// (no share_plus dependency; mirrors the match-detail share pattern).
+  /// Share button — opens the native share sheet with a short profile + invite
+  /// blurb (share_plus). sharePositionOrigin anchors the iPad popover.
   void _shareProfile(BuildContext context) {
     final name = widget.displayName.isNotEmpty ? widget.displayName : 'A player';
     final r = _profile.ranking;
@@ -173,9 +172,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final record = _profile.played > 0
         ? ' · ${_profile.wins}W-${_profile.losses}L (${_profile.winRate})'
         : '';
-    Clipboard.setData(ClipboardData(
-        text: '$name on Padel Rivals — $rankLine$record.\nJoin me on the court! 🎾'));
-    AppToast.show(context, 'Profile copied — paste anywhere to share');
+    final box = context.findRenderObject() as RenderBox?;
+    Share.share(
+      '$name on Padel Rivals — $rankLine$record.\nJoin me on the court! 🎾',
+      subject: 'Padel Rivals',
+      sharePositionOrigin:
+          box != null ? box.localToGlobal(Offset.zero) & box.size : null,
+    );
   }
 
   /// Settings gear — quick sheet to the account/settings screens (also reachable
