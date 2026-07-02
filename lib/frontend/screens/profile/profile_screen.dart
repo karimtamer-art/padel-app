@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -125,11 +124,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               colors: [AppColors.surfaceAlt, AppColors.bg]),
         ),
         child: Column(children: [
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            _circleBtn(Icons.ios_share_rounded, onTap: () => _shareProfile(context)),
-            const SizedBox(width: 8),
-            _circleBtn(Icons.settings_outlined, onTap: () => _openSettings(context)),
-          ]),
           AppAvatar(widget.initials.isNotEmpty ? widget.initials : 'P', size: 88, ring: 2.5),
           const SizedBox(height: 10),
           Text(widget.displayName.isNotEmpty ? widget.displayName : 'Player',
@@ -151,80 +145,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ]),
       );
 
-  Widget _circleBtn(IconData icon, {VoidCallback? onTap}) => GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          width: 34,
-          height: 34,
-          decoration: const BoxDecoration(
-              color: AppColors.surface, shape: BoxShape.circle, boxShadow: kCardShadow),
-          child: Icon(icon, size: 18, color: AppColors.inkSoft),
-        ),
-      );
-
-  /// Share button — opens the native share sheet with a short profile + invite
-  /// blurb (share_plus). sharePositionOrigin anchors the iPad popover.
-  void _shareProfile(BuildContext context) {
-    final name = widget.displayName.isNotEmpty ? widget.displayName : 'A player';
-    final r = _profile.ranking;
-    final rankLine = r.placed ? 'Level ${r.level.toStringAsFixed(1)}' : 'getting ranked';
-    final record = _profile.played > 0
-        ? ' · ${_profile.wins}W-${_profile.losses}L (${_profile.winRate})'
-        : '';
-    final box = context.findRenderObject() as RenderBox?;
-    Share.share(
-      '$name on Padel Rivals — $rankLine$record.\nJoin me on the court! 🎾',
-      subject: 'Padel Rivals',
-      sharePositionOrigin:
-          box != null ? box.localToGlobal(Offset.zero) & box.size : null,
-    );
-  }
-
-  /// Settings gear — quick sheet to the account/settings screens (also reachable
-  /// from the menu below, but this is the conventional top-of-profile shortcut).
-  void _openSettings(BuildContext context) {
-    final items = <(IconData, String, Widget)>[
-      (Icons.notifications_none_rounded, 'Notifications', const NotificationsScreen()),
-      (Icons.shield_outlined, 'Privacy & Account', const PrivacyAccountScreen()),
-      (Icons.help_outline_rounded, 'Help & Support', const HelpSupportScreen()),
-    ];
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (sheetCtx) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const SizedBox(height: 10),
-          Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: AppColors.line, borderRadius: BorderRadius.circular(99))),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-            child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Settings', style: AppText.cardTitle())),
-          ),
-          for (final it in items)
-            ListTile(
-              leading: Icon(it.$1, size: 22, color: AppColors.inkSoft),
-              title: Text(it.$2,
-                  style: AppText.body().copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
-              trailing: const Icon(Icons.chevron_right_rounded,
-                  size: 18, color: AppColors.inkFaint),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                _push(context, it.$3);
-              },
-            ),
-          const SizedBox(height: 12),
-        ]),
-      ),
-    );
-  }
 
   Widget _statsRow() {
     final stats = [
