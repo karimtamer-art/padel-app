@@ -89,6 +89,13 @@ class RankingScale {
 
   static String fmtLevel(double n) => n.toStringAsFixed(1);
 
+  /// Rating v2 stores 2 decimals but the spec displays levels rounded to the
+  /// nearest 0.25 step. Use this for the headline level chip.
+  static double toQuarter(double lv) => (lv * 4).round() / 4;
+
+  /// Level shown to 0.25 precision, e.g. 4.25.
+  static String fmtQuarter(double n) => toQuarter(n).toStringAsFixed(2);
+
   /// Compact display tag, e.g. "Lv 4.3 · Division B".
   static String levelTag(double lv) =>
       'Lv ${fmtLevel(lv)} · ${divisionFor(lv).name}';
