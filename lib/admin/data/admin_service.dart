@@ -11,14 +11,25 @@ class AdminService {
   // ── Players ───────────────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> fetchPlayers() async {
-    final res = await _db
-        .from('profiles')
-        .select(
-            'id, name, phone, city, avatar_url, elo, tier, division_pts, '
-            'level, placement_played, status, verified, is_admin, created_at')
-        .eq('is_admin', false)
-        .order('elo', ascending: false);
-    return List<Map<String, dynamic>>.from(res as List);
+    const base = 'id, name, phone, city, avatar_url, elo, tier, division_pts, '
+        'level, placement_played, status, verified, is_admin, created_at';
+    // Rating engine v2 columns; fall back for pre-migration databases.
+    try {
+      final res = await _db
+          .from('profiles')
+          .select('$base, rating, sigma, is_anchor, competitive_matches, '
+              'is_provisional, reliability')
+          .eq('is_admin', false)
+          .order('elo', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (_) {
+      final res = await _db
+          .from('profiles')
+          .select(base)
+          .eq('is_admin', false)
+          .order('elo', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    }
   }
 
   static Future<void> setPlayerStatus(String id, String status) async {
@@ -32,6 +43,33 @@ class AdminService {
     try {
       final res = await _db.rpc('admin_set_player_rating',
           params: {'p_player_id': id, 'p_elo': elo});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Rating engine v2: hand-set a player's 0..7 [rating] with an explicit
+  /// [sigma] and [isAnchor] flag (server derives level/tier, logs audit_log).
+  /// Two console actions map here: Mark anchor (isAnchor, sigma 0.30) and
+  /// Leveling session (sigma 0.50). Returns an error string or null.
+  static Future<String?> setRating(
+    String id, {
+    required double rating,
+    required double sigma,
+    required bool isAnchor,
+    String? notes,
+  }) async {
+    try {
+      final res = await _db.rpc('admin_set_rating', params: {
+        'p_player_id': id,
+        'p_rating': rating,
+        'p_sigma': sigma,
+        'p_is_anchor': isAnchor,
+        'p_notes': notes,
+      });
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;

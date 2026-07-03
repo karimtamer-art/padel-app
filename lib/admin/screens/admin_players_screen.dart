@@ -304,67 +304,67 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         ),
       );
 
-  static String _tierForElo(int elo) {
-    final lv = ((elo - 800) / 200.0).clamp(0.0, 7.0);
-    if (lv >= 5.0) return 'elite';
-    if (lv >= 3.5) return 'gold';
-    if (lv >= 2.0) return 'silver';
-    return 'bronze';
-  }
-
   void _editRanking(Map<String, dynamic> p) {
     final id = p['id'] as String;
     final name = p['name'] as String? ?? 'Player';
-    final curElo = (p['elo'] as num?)?.toInt() ?? 1000;
-    // Snap the current ELO to the nearest 0.5 level for the picker.
-    double level = (((curElo - 800) / 200.0).clamp(0.0, 7.0) / 0.5).round() * 0.5;
+    final curRating = (p['rating'] as num?)?.toDouble() ??
+        (p['level'] as num?)?.toDouble() ??
+        ((((p['elo'] as num?)?.toInt() ?? 1000) - 800) / 200.0).clamp(0.0, 7.0);
+    // Snap to the nearest 0.25 step for the picker.
+    double rating = ((curRating / 0.25).round() * 0.25).clamp(0.0, 7.0).toDouble();
+    bool anchor = p['is_anchor'] == true;
 
-    const levels = [
-      0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0
-    ];
+    final levels = [for (var i = 0; i <= 28; i++) i * 0.25];
 
     adminSheet(
       context,
-      title: 'Set player level',
+      title: 'Set player rating',
       sub: name,
-      heightFactor: 0.6,
+      heightFactor: 0.72,
       footer: AdminButton(
         'Apply',
         full: true,
         height: 50,
         icon: Icons.check_rounded,
         onPressed: () async {
-          final elo = (800 + level * 200).round();
+          final sigma = anchor ? 0.30 : 0.50;
           Navigator.pop(context);
-          final err = await AdminService.setPlayerRating(id, elo);
+          final err = await AdminService.setRating(id,
+              rating: rating, sigma: sigma, isAnchor: anchor);
           if (!mounted) return;
           if (err != null) {
             adminToast(context, err, ok: false);
             return;
           }
-          final tier = _tierForElo(elo);
+          final tier = _tierForRating(rating);
           final idx = _all.indexWhere((x) => x['id'] == id);
           if (idx != -1) {
             setState(() {
               _all[idx] = {
                 ..._all[idx],
-                'elo': elo,
-                'level': (elo - 800) / 200.0,
+                'rating': rating,
+                'level': rating,
                 'tier': tier,
+                'elo': (800 + rating * 200).round(),
+                'sigma': sigma,
+                'is_anchor': anchor,
+                'competitive_matches': 10,
                 'placement_played': 5,
               };
               _all.sort((a, b) => ((b['elo'] as num?)?.toInt() ?? 0)
                   .compareTo((a['elo'] as num?)?.toInt() ?? 0));
             });
           }
-          adminToast(context, '$name set to ${_divLabel(tier)}');
+          adminToast(context,
+              '$name set to Lv ${rating.toStringAsFixed(2)}${anchor ? ' · Anchor' : ''}');
         },
       ),
       body: StatefulBuilder(builder: (c, setSheet) {
-        final elo = (800 + level * 200).round();
-        final tier = _tierForElo(elo);
+        final tier = _tierForRating(rating);
+        final sigma = anchor ? 0.30 : 0.50;
+        final reliability = ((1 - sigma) * 100).round();
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Level', style: AdminText.strong(AdminColors.inkSoft)),
+          Text('Rating', style: AdminText.strong(AdminColors.inkSoft)),
           const SizedBox(height: 7),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -374,17 +374,17 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                 border: Border.all(color: AdminColors.line)),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<double>(
-                value: level,
+                value: rating,
                 isExpanded: true,
                 dropdownColor: AdminColors.surface,
                 style: AdminText.body(),
-                onChanged: (v) => setSheet(() => level = v ?? level),
+                onChanged: (v) => setSheet(() => rating = v ?? rating),
                 items: [
                   for (final l in levels)
                     DropdownMenuItem(
                       value: l,
                       child: Text(
-                          'Lv ${l.toStringAsFixed(1)}  ·  ${_divLabel(_tierForElo((800 + l * 200).round()))}',
+                          'Lv ${l.toStringAsFixed(2)}  ·  ${_divLabel(_tierForRating(l))}',
                           style: AdminText.body()),
                     ),
                 ],
@@ -405,18 +405,48 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                   decoration: BoxDecoration(
                       color: AdminColors.tier(tier), shape: BoxShape.circle)),
               const SizedBox(width: 8),
-              Text('Lv ${level.toStringAsFixed(1)} · ELO $elo · ${_divLabel(tier)}',
-                  style: AdminText.sans(13.5, FontWeight.w800, AdminColors.ink)),
+              Expanded(
+                child: Text(
+                    'Lv ${rating.toStringAsFixed(2)} · ${_divLabel(tier)} · σ ${sigma.toStringAsFixed(2)} ($reliability% reliable)',
+                    style: AdminText.sans(13.5, FontWeight.w800, AdminColors.ink)),
+              ),
             ]),
           ),
+          const SizedBox(height: 14),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child:
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Anchor player',
+                    style: AdminText.sans(14, FontWeight.w800, AdminColors.ink)),
+                const SizedBox(height: 2),
+                Text(
+                    'Hand-calibrated reference — barely moves in matches (σ 0.30). '
+                    'Off = leveling session (σ 0.50), self-tunes from play.',
+                    style: AdminText.small(AdminColors.inkFaint)),
+              ]),
+            ),
+            const SizedBox(width: 10),
+            Switch.adaptive(
+              value: anchor,
+              onChanged: (v) => setSheet(() => anchor = v),
+            ),
+          ]),
           const SizedBox(height: 12),
           Text(
-              'Seeds a known player and marks them ranked (skips placement). '
-              'Their first matches still fine-tune it.',
+              'Sets the rating server-side and marks the player established '
+              '(non-provisional). Logged to the audit trail.',
               style: AdminText.small(AdminColors.inkFaint)),
         ]);
       }),
     );
+  }
+
+  static String _tierForRating(double lv) {
+    if (lv >= 5.0) return 'elite';
+    if (lv >= 3.5) return 'gold';
+    if (lv >= 2.0) return 'silver';
+    return 'bronze';
   }
 
   Future<void> _setStatus(String id, String status) async {
