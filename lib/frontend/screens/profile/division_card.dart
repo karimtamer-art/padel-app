@@ -92,12 +92,20 @@ class DivisionCard extends StatelessWidget {
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('CURRENT LEVEL', style: _kick),
+            Row(children: [
+              Text('CURRENT LEVEL', style: _kick),
+              if (ranking.provisional) ...[
+                const SizedBox(width: 8),
+                _provisionalPill(),
+              ],
+            ]),
             const SizedBox(height: 5),
-            Text(RankingScale.fmtLevel(lv),
+            Text(RankingScale.fmtQuarter(lv),
                 style: AppText.stat(46, _gold).copyWith(letterSpacing: -2.5, height: 0.9)),
             const SizedBox(height: 6),
             Text(d.league, style: AppText.bodyStrong(_gold).copyWith(fontSize: 14.5)),
+            const SizedBox(height: 11),
+            _reliabilityRow(),
           ]),
         ),
         const SizedBox(width: 12),
@@ -130,7 +138,7 @@ class DivisionCard extends StatelessWidget {
       _weekStrip(),
       if (ranking.lastMatch != null) ...[
         const SizedBox(height: 14),
-        Text('LAST MATCH', style: _kick),
+        Text('WHY YOUR LEVEL MOVED', style: _kick),
         const SizedBox(height: 9),
         _lastMatch(ranking.lastMatch!),
       ],
@@ -159,6 +167,45 @@ class DivisionCard extends StatelessWidget {
         const SizedBox(height: 6),
         Text('LEVEL', style: AppText.tag(_gold).copyWith(fontSize: 9, letterSpacing: 1.3)),
       ]);
+
+  Widget _provisionalPill() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+            color: _cream.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: _gold.withValues(alpha: 0.45))),
+        child: Text('PROVISIONAL',
+            style: AppText.tag(_gold).copyWith(fontSize: 8.5, letterSpacing: 1.2)),
+      );
+
+  /// Reliability ring — rating confidence (1 − sigma), 0–100%.
+  Widget _reliabilityRow() {
+    final pct = ranking.reliability.clamp(0, 100).toDouble();
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      SizedBox(
+        width: 34,
+        height: 34,
+        child: Stack(alignment: Alignment.center, children: [
+          SizedBox(
+            width: 34,
+            height: 34,
+            child: CircularProgressIndicator(
+              value: (pct / 100).clamp(0, 1).toDouble(),
+              strokeWidth: 3.5,
+              backgroundColor: _cream.withValues(alpha: 0.12),
+              valueColor: const AlwaysStoppedAnimation<Color>(_gold),
+            ),
+          ),
+          Text('${pct.round()}',
+              style: AppText.stat(11, _cream).copyWith(height: 1)),
+        ]),
+      ),
+      const SizedBox(width: 9),
+      Text('rating confidence',
+          style: AppText.small(_faint)
+              .copyWith(fontSize: 12, fontWeight: FontWeight.w700)),
+    ]);
+  }
 
   Widget _tierSegments(String tier) {
     const tiers = ['Low', 'Mid', 'High'];
@@ -288,8 +335,19 @@ class DivisionCard extends StatelessWidget {
         ),
         const SizedBox(width: 9),
         Expanded(
-          child: Text('vs Level ${RankingScale.fmtLevel(m.vsLevel)} players',
-              style: AppText.body(_cream).copyWith(fontSize: 11.5, fontWeight: FontWeight.w600)),
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('vs Level ${RankingScale.fmtLevel(m.vsLevel)}',
+                    style: AppText.body(_cream)
+                        .copyWith(fontSize: 11.5, fontWeight: FontWeight.w600)),
+                if (m.hasScore) ...[
+                  const SizedBox(height: 2),
+                  Text('${m.won ? 'won' : 'lost'} ${m.gamesFor}–${m.gamesAgainst} games',
+                      style: AppText.small(_faint).copyWith(fontSize: 10.5)),
+                ],
+              ]),
         ),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
           Text(RankingScale.fmtSigned(m.delta),

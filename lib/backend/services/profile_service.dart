@@ -96,11 +96,23 @@ class ProfileService {
   /// career stats, ELO history and recent matches — all from live Supabase data.
   static Future<PlayerProfile> fetchPlayerProfile(String userId) async {
     try {
-      final profileRow = await _db
-          .from('profiles')
-          .select('elo, tier, level, placement_played')
-          .eq('id', userId)
-          .single();
+      // Rating v2 adds sigma/reliability/is_provisional; fall back for
+      // pre-migration databases that don't have those columns yet.
+      dynamic profileRow;
+      try {
+        profileRow = await _db
+            .from('profiles')
+            .select('elo, tier, level, placement_played, '
+                'reliability, is_provisional')
+            .eq('id', userId)
+            .single();
+      } catch (_) {
+        profileRow = await _db
+            .from('profiles')
+            .select('elo, tier, level, placement_played')
+            .eq('id', userId)
+            .single();
+      }
 
       // Try with creator profile join; fall back without it if FK hint missing.
       List rawMatches;
@@ -199,9 +211,54 @@ class ProfileService {
 
       final level = (profileRow['level'] as num?)?.toDouble() ?? 0.0;
       final placementPlayed = (profileRow['placement_played'] as num?)?.toInt() ?? 0;
+      final reliability =
+          (profileRow['reliability'] as num?)?.toDouble() ?? 100.0;
+      final provisional = profileRow['is_provisional'] == true;
+
+      // Rating-move breakdown + weekly delta from the player's OWN
+      // ranking_history rows (RLS read-own). Skipped on pre-migration DBs.
+      double weeklyDelta = 0;
+      LastRankedMatch? lastMatch;
+      try {
+        final weekAgo = DateTime.now()
+            .subtract(const Duration(days: 7))
+            .toIso8601String();
+        final week = await _db
+            .from('ranking_history')
+            .select('delta')
+            .eq('profile_id', userId)
+            .gte('created_at', weekAgo);
+        for (final row in (week as List)) {
+          weeklyDelta += (row['delta'] as num?)?.toDouble() ?? 0;
+        }
+        final lastRows = await _db
+            .from('ranking_history')
+            .select('delta, opp_avg_rating, games_for, games_against, won')
+            .eq('profile_id', userId)
+            .not('match_id', 'is', null)
+            .order('created_at', ascending: false)
+            .limit(1);
+        if ((lastRows as List).isNotEmpty) {
+          final lr = lastRows.first as Map;
+          lastMatch = LastRankedMatch(
+            won: lr['won'] == true,
+            vsLevel: (lr['opp_avg_rating'] as num?)?.toDouble() ?? level,
+            delta: (lr['delta'] as num?)?.toDouble() ?? 0,
+            gamesFor: (lr['games_for'] as num?)?.toInt() ?? 0,
+            gamesAgainst: (lr['games_against'] as num?)?.toInt() ?? 0,
+          );
+        }
+      } catch (_) {/* pre-migration: no breakdown available */}
+
       final ranking = placementPlayed < RankingScale.placementTotal
           ? Ranking.placement(placementPlayed)
-          : Ranking.placed(level: level);
+          : Ranking.placed(
+              level: level,
+              reliability: reliability,
+              provisional: provisional,
+              weeklyDelta: weeklyDelta,
+              lastMatch: lastMatch,
+            );
 
       return PlayerProfile(
         isNew: played == 0,

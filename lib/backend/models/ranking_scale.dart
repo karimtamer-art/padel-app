@@ -93,8 +93,13 @@ class RankingScale {
   /// nearest 0.25 step. Use this for the headline level chip.
   static double toQuarter(double lv) => (lv * 4).round() / 4;
 
-  /// Level shown to 0.25 precision, e.g. 4.25.
-  static String fmtQuarter(double n) => toQuarter(n).toStringAsFixed(2);
+  /// Level shown to 0.25 precision, trimmed: 4 · 4.25 · 4.5 · 4.75.
+  static String fmtQuarter(double n) {
+    var s = toQuarter(n).toStringAsFixed(2);
+    if (s.endsWith('0')) s = s.substring(0, s.length - 1); // 4.50 -> 4.5
+    if (s.endsWith('.0')) s = s.substring(0, s.length - 2); // 4.0 -> 4
+    return s;
+  }
 
   /// Compact display tag, e.g. "Lv 4.3 · Division B".
   static String levelTag(double lv) =>
@@ -113,13 +118,23 @@ class RankingScale {
 /// How a player's level changed this period — drives the card's status banner.
 enum RankMovement { promoted, dropped, steady }
 
-/// Last rated result, shown on the placed card.
+/// Last rated result, shown on the placed card — the "why did my level move"
+/// breakdown (opponent average level, games margin, level delta).
 class LastRankedMatch {
   final bool won;
-  final double vsLevel;
+  final double vsLevel; // opponent team average level
   final double delta; // signed level change
-  const LastRankedMatch(
-      {required this.won, required this.vsLevel, required this.delta});
+  final int gamesFor; // games this player's team won
+  final int gamesAgainst; // games conceded
+  const LastRankedMatch({
+    required this.won,
+    required this.vsLevel,
+    required this.delta,
+    this.gamesFor = 0,
+    this.gamesAgainst = 0,
+  });
+
+  bool get hasScore => gamesFor > 0 || gamesAgainst > 0;
 }
 
 /// A player's ranking state. Construct one of the two named constructors:
@@ -132,6 +147,8 @@ class Ranking {
   final String movedFrom;
   final double weeklyDelta;
   final LastRankedMatch? lastMatch;
+  final double reliability; // 0..100 — rating confidence (1 - sigma)
+  final bool provisional; // still finding their level (high sigma / few matches)
 
   const Ranking.placement(this.placement)
       : placed = false,
@@ -139,7 +156,9 @@ class Ranking {
         movement = RankMovement.steady,
         movedFrom = '',
         weeklyDelta = 0,
-        lastMatch = null;
+        lastMatch = null,
+        reliability = 0,
+        provisional = true;
 
   const Ranking.placed({
     required this.level,
@@ -147,6 +166,8 @@ class Ranking {
     this.movedFrom = '',
     this.weeklyDelta = 0,
     this.lastMatch,
+    this.reliability = 100,
+    this.provisional = false,
   })  : placed = true,
         placement = RankingScale.placementTotal;
 

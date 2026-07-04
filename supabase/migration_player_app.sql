@@ -2190,7 +2190,11 @@ alter table public.ranking_history
   add column if not exists rating_after  numeric,
   add column if not exists sigma_before  numeric,
   add column if not exists sigma_after   numeric,
-  add column if not exists delta         numeric;
+  add column if not exists delta         numeric,
+  add column if not exists opp_avg_rating numeric,
+  add column if not exists games_for      int,
+  add column if not exists games_against  int,
+  add column if not exists won            boolean;
 
 do $$
 begin
@@ -2299,9 +2303,14 @@ begin
     where id = r.player_id;
     insert into ranking_history
       (profile_id, match_id, level_before, level_after,
-       rating_before, rating_after, sigma_before, sigma_after, delta)
+       rating_before, rating_after, sigma_before, sigma_after, delta,
+       opp_avg_rating, games_for, games_against, won)
     values (r.player_id, p_match_id, r.rating, v_after,
-       r.rating, v_after, r.sigma, v_sig_after, round(v_after - r.rating, 2));
+       r.rating, v_after, r.sigma, v_sig_after, round(v_after - r.rating, 2),
+       round((case when r.team = 'a' then v_avg_b else v_avg_a end)::numeric, 2),
+       case when r.team = 'a' then v_ga else v_gb end,
+       case when r.team = 'a' then v_gb else v_ga end,
+       (r.team = v_winner));
   end loop;
 
   update matches set rating_applied = true where id = p_match_id;
