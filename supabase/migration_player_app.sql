@@ -2200,7 +2200,7 @@ begin
         select count(*) from public.ranking_history h
          where h.profile_id = p.id and h.match_id is not null), 0);
     update public.profiles p set
-      rating = round(coalesce(level, public.level_from_elo(coalesce(elo, 1000))), 2),
+      rating = round(coalesce(level, public.level_from_elo(coalesce(elo, 1000)))::numeric, 2),
       last_competitive_match_at = (
         select max(h.created_at) from public.ranking_history h
          where h.profile_id = p.id and h.match_id is not null);
@@ -2396,7 +2396,7 @@ begin
     and (p.last_competitive_match_at is null
          or p.last_competitive_match_at < now() - interval '14 days');
   for r in
-    select p.id, coalesce(p.rating, coalesce(p.level, 0)) as rating
+    select p.id, coalesce(p.rating, coalesce(p.level, 0))::numeric as rating
       from profiles p
      where coalesce(p.is_admin, false) = false
        and coalesce(p.competitive_matches, 0) >= 5
