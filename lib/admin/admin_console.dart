@@ -4,6 +4,8 @@ import '../frontend/navigation/push_router.dart';
 import 'theme/admin_colors.dart';
 import 'widgets/admin_kit.dart';
 import 'data/admin_service.dart';
+import 'data/roles_model.dart';
+import 'screens/admin_team_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/admin_players_screen.dart';
 import 'screens/admin_matches_screen.dart';
@@ -30,12 +32,6 @@ class AdminConsole extends StatefulWidget {
   State<AdminConsole> createState() => _AdminConsoleState();
 }
 
-class _NavItem {
-  final String id, label, group;
-  final IconData icon;
-  const _NavItem(this.id, this.label, this.icon, this.group);
-}
-
 class _AdminConsoleState extends State<AdminConsole> {
   String _active = 'dashboard';
   final _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -43,9 +39,17 @@ class _AdminConsoleState extends State<AdminConsole> {
   Map<String, int> _sectionAlerts = {}; // per-section unread (payments/requests/tournaments)
   RealtimeChannel? _notifChannel;
 
+  // RBAC — the signed-in staffer's role + which sections they can open.
+  // Defaults to full super-admin access until the profile row loads.
+  RoleId _role = RoleId.superAdmin;
+  List<String> _access = _allSectionIds;
+  static final List<String> _allSectionIds =
+      kSections.map((s) => s.id).toList();
+
   @override
   void initState() {
     super.initState();
+    _loadStaff();
     _loadAlerts();
     _subscribeAlerts();
     // A tapped admin push may have set a target section before this mounted.
@@ -89,9 +93,31 @@ class _AdminConsoleState extends State<AdminConsole> {
     }
   }
 
+  /// Load the signed-in staffer's role + effective access, then land them on
+  /// their home section. A legacy super admin whose backfill hasn't run yet
+  /// (admin_role null but is_admin true) is treated as super admin.
+  Future<void> _loadStaff() async {
+    final row = await AdminService.currentStaff();
+    var role = RoleId.superAdmin;
+    List<String>? custom;
+    if (row != null) {
+      role = roleFromString(row['admin_role'] as String?) ??
+          (row['is_admin'] == true ? RoleId.superAdmin : RoleId.support);
+      custom = (row['admin_access'] as List?)?.map((e) => e.toString()).toList();
+    }
+    final access = effectiveAccess(role, custom);
+    if (!mounted) return;
+    setState(() {
+      _role = role;
+      _access = access;
+      if (!access.contains(_active)) _active = homeForAccess(access);
+    });
+  }
+
   /// Switch to a section; if it carries unread alerts, mark them read so its
   /// badge clears (both the sidebar item and the bell total drop).
   Future<void> _navTo(String id) async {
+    if (!_access.contains(id)) return; // guard — out-of-scope for this role
     if (mounted) setState(() => _active = id);
     if ((_sectionAlerts[id] ?? 0) > 0) {
       await AdminService.markAdminSectionRead(id);
@@ -159,26 +185,6 @@ class _AdminConsoleState extends State<AdminConsole> {
     await _loadAlerts();
   }
 
-  // Nav mirrors the design screenshot exactly
-  static const _nav = <_NavItem>[
-    // Overview
-    _NavItem('dashboard', 'Dashboard', Icons.grid_view_rounded, 'Overview'),
-    _NavItem('reports', 'Reports', Icons.bar_chart_rounded, 'Overview'),
-    // Operations
-    _NavItem('players', 'Players', Icons.groups_outlined, 'Operations'),
-    _NavItem('matches', 'Matches', Icons.sports_tennis_rounded, 'Operations'),
-    _NavItem('tournaments', 'Tournaments', Icons.emoji_events_outlined, 'Operations'),
-    _NavItem('courts', 'Courts', Icons.place_outlined, 'Operations'),
-    // Commerce
-    _NavItem('store', 'Store & Orders', Icons.shopping_bag_outlined, 'Commerce'),
-    _NavItem('promotions', 'Promotions', Icons.local_offer_outlined, 'Commerce'),
-    _NavItem('payments', 'Payments', Icons.credit_card_rounded, 'Commerce'),
-    // Service
-    _NavItem('requests', 'Requests', Icons.build_outlined, 'Service'),
-    // Engage
-    _NavItem('broadcasts', 'Broadcasts', Icons.notifications_outlined, 'Engage'),
-  ];
-
   static const _meta = <String, List<String>>{
     'dashboard':   ['Dashboard',    'Operations overview'],
     'reports':     ['Reports',      'Analytics & exports'],
@@ -191,6 +197,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     'payments':    ['Payments',     'Orders & transactions'],
     'requests':    ['Requests',     'Repairs & trade-ins'],
     'broadcasts':  ['Broadcasts',   'Push notifications'],
+    'team':        ['Team & Roles', 'Invite & assign access'],
   };
 
   Widget _body() {
@@ -205,8 +212,9 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'payments':    return const AdminPaymentsScreen();
       case 'requests':    return const AdminRequestsScreen();
       case 'broadcasts':  return const AdminBroadcastsScreen();
+      case 'team':        return const AdminTeamScreen();
       default:
-        return AdminDashboardScreen(onNavigate: (id) => setState(() => _active = id));
+        return AdminDashboardScreen(onNavigate: _navTo);
     }
   }
 
@@ -218,6 +226,8 @@ class _AdminConsoleState extends State<AdminConsole> {
       backgroundColor: AdminColors.canvas,
       drawer: _Drawer(
         active: _active,
+        sections: navForAccess(_access),
+        role: _role,
         sectionAlerts: _sectionAlerts,
         onNav: (id) {
           Navigator.pop(context);
@@ -331,6 +341,8 @@ class _AdminConsoleState extends State<AdminConsole> {
 
 class _Drawer extends StatelessWidget {
   final String active;
+  final List<Section> sections;
+  final RoleId role;
   final Map<String, int> sectionAlerts;
   final void Function(String) onNav;
   final VoidCallback? onExit;
@@ -338,6 +350,8 @@ class _Drawer extends StatelessWidget {
   final String initials;
   const _Drawer({
     required this.active,
+    required this.sections,
+    required this.role,
     required this.sectionAlerts,
     required this.onNav,
     required this.displayName,
@@ -347,8 +361,14 @@ class _Drawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final groups = <String, List<_NavItem>>{};
-    for (final item in _AdminConsoleState._nav) {
+    final def = kRoles[role]!;
+    final accessTag = role == RoleId.superAdmin
+        ? 'FULL ACCESS'
+        : def.readonly
+            ? 'READ-ONLY ACCESS'
+            : 'SCOPED ACCESS';
+    final groups = <String, List<Section>>{};
+    for (final item in sections) {
       groups.putIfAbsent(item.group, () => []).add(item);
     }
     return Drawer(
@@ -386,6 +406,37 @@ class _Drawer extends StatelessWidget {
                   style: AdminText.mono(
                       8.5, FontWeight.w600, AdminColors.sidebarFaint, ls: 1.5)),
             ]),
+          ]),
+        ),
+        // Role chip — current role + access scope
+        Container(
+          margin: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+          padding: const EdgeInsets.all(11),
+          decoration: BoxDecoration(
+            color: def.color.withValues(alpha: 0.20),
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: def.color.withValues(alpha: 0.45)),
+          ),
+          child: Row(children: [
+            Container(
+              width: 28,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: def.color, borderRadius: BorderRadius.circular(8)),
+              child: Icon(def.icon, size: 15, color: Colors.white),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(def.label,
+                    style: AdminText.sans(
+                        12.5, FontWeight.w800, AdminColors.sidebarInk)),
+                Text(accessTag,
+                    style: AdminText.mono(
+                        9, FontWeight.w600, AdminColors.sidebarFaint, ls: 0.6)),
+              ]),
+            ),
           ]),
         ),
         // Nav groups
@@ -431,7 +482,7 @@ class _Drawer extends StatelessWidget {
                         12.5, FontWeight.w700, AdminColors.sidebarInk),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
-                Text('Super Admin',
+                Text(def.label,
                     style: AdminText.mono(
                         9.5, FontWeight.w500, AdminColors.sidebarFaint)),
               ]),
@@ -447,7 +498,7 @@ class _Drawer extends StatelessWidget {
     );
   }
 
-  Widget _navItem(_NavItem item) {
+  Widget _navItem(Section item) {
     final on = active == item.id;
     final badge = sectionAlerts[item.id] ?? 0;
     return Padding(

@@ -737,4 +737,85 @@ class AdminService {
       'sent_at': DateTime.now().toIso8601String(),
     });
   }
+
+  // ── Team & Roles (RBAC) ───────────────────────────────────────
+  // Reads/writes go through SECURITY DEFINER RPCs; all are gated to super
+  // admins server-side, so a lower role calling them gets nothing / an error.
+
+  /// The signed-in staffer's own role + access row (plain own-read select).
+  /// Returns null when not signed in. `admin_role` may be null for a legacy
+  /// admin whose backfill hasn't run — the caller treats is_admin as super.
+  static Future<Map<String, dynamic>?> currentStaff() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return null;
+    try {
+      final row = await _db
+          .from('profiles')
+          .select('admin_role, admin_access, admin_scope, is_owner, is_admin')
+          .eq('id', uid)
+          .maybeSingle();
+      return row == null ? null : Map<String, dynamic>.from(row);
+    } catch (e) {
+      debugPrint('[AdminService] currentStaff error: $e');
+      return null;
+    }
+  }
+
+  /// All staff (admin_role not null) for the Team & Roles directory.
+  static Future<List<Map<String, dynamic>>> fetchStaff() async {
+    try {
+      final res = await _db.rpc('admin_list_staff');
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] fetchStaff error: $e');
+      return [];
+    }
+  }
+
+  /// Non-staff users matching [term] (name/email), to invite. Empty on <2 chars.
+  static Future<List<Map<String, dynamic>>> searchUsers(String term) async {
+    if (term.trim().length < 2) return [];
+    try {
+      final res = await _db.rpc('admin_search_users', params: {'p_term': term.trim()});
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] searchUsers error: $e');
+      return [];
+    }
+  }
+
+  /// Grant/update a staffer's role + access. Pass [access] = null to use the
+  /// role's default set. Returns an error string or null on success.
+  static Future<String?> grantRole(
+    String userId, {
+    required String role,
+    List<String>? access,
+    String? scope,
+  }) async {
+    try {
+      final res = await _db.rpc('admin_grant_role', params: {
+        'p_user': userId,
+        'p_role': role,
+        'p_access': access,
+        'p_scope': scope,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Remove all console access from a staffer. Returns an error string or null.
+  static Future<String?> revokeRole(String userId) async {
+    try {
+      final res = await _db.rpc('admin_revoke_role', params: {'p_user': userId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
 }

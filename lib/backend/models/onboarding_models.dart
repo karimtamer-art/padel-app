@@ -68,6 +68,7 @@ class OnboardingProfile {
   final CourtSidePref? side;
   final String? phone;
   final bool isAdmin;
+  final String? adminRole; // super_admin | organizer | support | analyst | null
 
   const OnboardingProfile({
     this.dateOfBirth,
@@ -76,7 +77,11 @@ class OnboardingProfile {
     this.side,
     this.phone,
     this.isAdmin = false,
+    this.adminRole,
   });
+
+  /// Any console access — a super admin (is_admin) or a granted staff role.
+  bool get isStaff => isAdmin || adminRole != null;
 
   /// Mirrors the server's generated `onboarding_completed` column.
   bool get isComplete =>
@@ -93,6 +98,7 @@ class OnboardingProfile {
     CourtSidePref? side,
     String? phone,
     bool? isAdmin,
+    String? adminRole,
   }) =>
       OnboardingProfile(
         dateOfBirth: dateOfBirth ?? this.dateOfBirth,
@@ -101,6 +107,7 @@ class OnboardingProfile {
         side: side ?? this.side,
         phone: phone ?? this.phone,
         isAdmin: isAdmin ?? this.isAdmin,
+        adminRole: adminRole ?? this.adminRole,
       );
 
   factory OnboardingProfile.fromJson(Map<String, dynamic> j) {
@@ -115,6 +122,7 @@ class OnboardingProfile {
       side: CourtSidePref.fromId(j['preferred_court_side'] as String?),
       phone: j['phone'] as String?,
       isAdmin: j['is_admin'] as bool? ?? false,
+      adminRole: j['admin_role'] as String?,
     );
   }
 

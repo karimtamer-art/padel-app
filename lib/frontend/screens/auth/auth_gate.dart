@@ -46,7 +46,7 @@ class _AuthGateState extends State<AuthGate> {
   _Phase _phase = _Phase.booting;
   OnboardingProfile _existing = const OnboardingProfile();
   StreamSubscription<AuthState>? _sub;
-  bool _isAdmin = false;
+  bool _isStaff = false; // super admin OR a granted staff role (RBAC)
 
   String _displayName = '';
   String _initials = 'P';
@@ -96,20 +96,20 @@ class _AuthGateState extends State<AuthGate> {
       final profile = await widget.profileService.fetch(user.id);
       if (!mounted) return;
       _existing = profile ?? const OnboardingProfile();
-      _isAdmin = profile?.isAdmin ?? false;
+      _isStaff = profile?.isStaff ?? false;
       final meta = user.userMetadata ?? {};
       final rawName = (meta['full_name'] ?? meta['name'] ?? user.email ?? 'Player') as String;
       _displayName = rawName.trim();
       _initials = _buildInitials(_displayName);
       _memberSince = _buildMemberSince(DateTime.tryParse(user.createdAt) ?? DateTime.now());
       final complete = profile?.isComplete ?? false;
-      // Admins skip player onboarding entirely — straight to the console. They
-      // have no player profile to load, and never see the phone/onboarding step.
-      if (!_isAdmin && complete) {
+      // Staff (super admin or a granted role) skip player onboarding entirely —
+      // straight to the console. They never see the phone/onboarding step.
+      if (!_isStaff && complete) {
         _playerProfile = await ProfileService.fetchPlayerProfile(user.id);
       }
       if (!mounted) return;
-      final ready = _isAdmin || complete;
+      final ready = _isStaff || complete;
       setState(() => _phase = ready ? _Phase.ready : _Phase.onboarding);
       // Signed in & resolved → register this device for push (Android-only,
       // no-op elsewhere). Fire-and-forget; failures are swallowed internally.
@@ -161,7 +161,7 @@ class _AuthGateState extends State<AuthGate> {
           onCompleted: _resolve,
           onSignOut: _signOut,
         ),
-      _Phase.ready => _isAdmin
+      _Phase.ready => _isStaff
           ? AdminConsole(
               key: const ValueKey('admin'),
               onExit: _signOut,

@@ -2472,5 +2472,143 @@ begin
 end $$;
 grant execute on function public.admin_set_rating(uuid, numeric, numeric, boolean, text) to authenticated;
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- RBAC — role-based console access (Phase 1 of Roles/Organizer/Community).
+-- Full notes: supabase/changes/2026-07-10_rbac_roles.sql. Adds a finer role on
+-- top of `is_admin` WITHOUT weakening security: only super admins keep
+-- is_admin=true (full DB access); organizer/support/analyst are is_admin=false,
+-- so every existing _is_admin()-gated table stays locked at the database.
+-- ════════════════════════════════════════════════════════════════════════════
+alter table public.profiles add column if not exists admin_role   text;
+alter table public.profiles add column if not exists admin_access jsonb;
+alter table public.profiles add column if not exists admin_scope  text;
+alter table public.profiles add column if not exists is_owner     boolean not null default false;
+
+do $$ begin
+  alter table public.profiles
+    add constraint profiles_admin_role_chk
+    check (admin_role is null or admin_role in ('super_admin','organizer','support','analyst'));
+exception when duplicate_object then null; end $$;
+
+create index if not exists idx_profiles_admin_role
+  on public.profiles (admin_role) where admin_role is not null;
+
+-- One-time backfill: existing admins become super_admins (guarded so re-runs
+-- never clobber roles assigned later). Oldest admin becomes the locked owner.
+do $$
+begin
+  if not exists (select 1 from public.app_settings where key = 'rbac_backfilled') then
+    update public.profiles
+       set admin_role = 'super_admin'
+     where coalesce(is_admin, false) = true
+       and admin_role is null;
+    if not exists (select 1 from public.profiles where is_owner = true) then
+      update public.profiles set is_owner = true
+       where id = (select id from public.profiles
+                    where coalesce(is_admin, false) = true
+                    order by created_at nulls last, id
+                    limit 1);
+    end if;
+    insert into public.app_settings (key, value)
+    values ('rbac_backfilled', 'true')
+    on conflict (key) do nothing;
+  end if;
+end $$;
+
+create or replace function public.admin_grant_role(
+  p_user   uuid,
+  p_role   text,
+  p_access jsonb default null,
+  p_scope  text  default null)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_old_role text; v_old_access jsonb; v_old_scope text; v_owner boolean;
+begin
+  if not public._is_admin() then return 'Not authorised.'; end if;
+  if p_role not in ('super_admin','organizer','support','analyst') then
+    return 'Unknown role.';
+  end if;
+  select admin_role, admin_access, admin_scope, coalesce(is_owner, false)
+    into v_old_role, v_old_access, v_old_scope, v_owner
+    from public.profiles where id = p_user;
+  if not found then return 'User not found.'; end if;
+  if v_owner then return 'The owner always has full access and can''t be changed.'; end if;
+  update public.profiles set
+    admin_role   = p_role,
+    admin_access = p_access,
+    admin_scope  = nullif(btrim(coalesce(p_scope, '')), ''),
+    is_admin     = (p_role = 'super_admin')
+  where id = p_user;
+  insert into public.audit_log
+    (admin_id, action, target_type, target_id, old_value, new_value, notes)
+  values (v_uid, 'grant_role', 'profile', p_user,
+    jsonb_build_object('role', v_old_role, 'access', v_old_access, 'scope', v_old_scope),
+    jsonb_build_object('role', p_role,     'access', p_access,     'scope', p_scope),
+    null);
+  return null;
+end $$;
+grant execute on function public.admin_grant_role(uuid, text, jsonb, text) to authenticated;
+
+create or replace function public.admin_revoke_role(p_user uuid)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_old_role text; v_owner boolean;
+begin
+  if not public._is_admin() then return 'Not authorised.'; end if;
+  select admin_role, coalesce(is_owner, false) into v_old_role, v_owner
+    from public.profiles where id = p_user;
+  if not found then return 'User not found.'; end if;
+  if v_owner then return 'The owner can''t be removed.'; end if;
+  update public.profiles set
+    admin_role = null, admin_access = null, admin_scope = null, is_admin = false
+  where id = p_user;
+  insert into public.audit_log
+    (admin_id, action, target_type, target_id, old_value, new_value, notes)
+  values (v_uid, 'revoke_role', 'profile', p_user,
+    jsonb_build_object('role', v_old_role), jsonb_build_object('role', null), null);
+  return null;
+end $$;
+grant execute on function public.admin_revoke_role(uuid) to authenticated;
+
+create or replace function public.admin_list_staff()
+returns table (
+  id uuid, name text, email text, username text,
+  admin_role text, admin_access jsonb, admin_scope text,
+  is_owner boolean, avatar_url text, level numeric)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public._is_admin() then return; end if;
+  return query
+    select p.id, p.name, u.email, p.username,
+           p.admin_role, p.admin_access, p.admin_scope,
+           coalesce(p.is_owner, false), p.avatar_url, p.level
+      from public.profiles p
+      join auth.users u on u.id = p.id
+     where p.admin_role is not null
+     order by coalesce(p.is_owner, false) desc, p.name nulls last;
+end $$;
+grant execute on function public.admin_list_staff() to authenticated;
+
+create or replace function public.admin_search_users(p_term text)
+returns table (id uuid, name text, email text, level numeric, avatar_url text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public._is_admin() then return; end if;
+  if length(btrim(coalesce(p_term, ''))) < 2 then return; end if;
+  return query
+    select p.id, p.name, u.email, p.level, p.avatar_url
+      from public.profiles p
+      join auth.users u on u.id = p.id
+     where p.admin_role is null
+       and (p.name ilike '%' || p_term || '%' or u.email ilike '%' || p_term || '%')
+     order by p.name nulls last
+     limit 8;
+end $$;
+grant execute on function public.admin_search_users(text) to authenticated;
+
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

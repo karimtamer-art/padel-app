@@ -19,12 +19,23 @@ class ProfileService {
       'date_of_birth, gender, preferred_hand, preferred_court_side, phone, is_admin';
 
   /// Current user's profile, or `null` if the row doesn't exist yet.
+  /// Selects the RBAC `admin_role` too, falling back for pre-migration DBs that
+  /// don't have that column yet (so sign-in never breaks).
   Future<OnboardingProfile?> fetch(String userId) async {
-    final row = await _sb
-        .from('profiles')
-        .select(_onbCols)
-        .eq('id', userId)
-        .maybeSingle();
+    Map<String, dynamic>? row;
+    try {
+      row = await _sb
+          .from('profiles')
+          .select('$_onbCols, admin_role')
+          .eq('id', userId)
+          .maybeSingle();
+    } catch (_) {
+      row = await _sb
+          .from('profiles')
+          .select(_onbCols)
+          .eq('id', userId)
+          .maybeSingle();
+    }
     if (row == null) return null;
     return OnboardingProfile.fromJson(row);
   }
