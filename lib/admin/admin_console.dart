@@ -6,6 +6,7 @@ import 'widgets/admin_kit.dart';
 import 'data/admin_service.dart';
 import 'data/roles_model.dart';
 import 'screens/admin_team_screen.dart';
+import 'screens/organizer_overview_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/admin_players_screen.dart';
 import 'screens/admin_matches_screen.dart';
@@ -42,7 +43,8 @@ class _AdminConsoleState extends State<AdminConsole> {
   // RBAC — the signed-in staffer's role + which sections they can open.
   // Defaults to full super-admin access until the profile row loads.
   RoleId _role = RoleId.superAdmin;
-  List<String> _access = _allSectionIds;
+  List<Section> _navSections =
+      navForStaff(RoleId.superAdmin, _allSectionIds);
   static final List<String> _allSectionIds =
       kSections.map((s) => s.id).toList();
 
@@ -106,18 +108,21 @@ class _AdminConsoleState extends State<AdminConsole> {
       custom = (row['admin_access'] as List?)?.map((e) => e.toString()).toList();
     }
     final access = effectiveAccess(role, custom);
+    final nav = navForStaff(role, access);
     if (!mounted) return;
     setState(() {
       _role = role;
-      _access = access;
-      if (!access.contains(_active)) _active = homeForAccess(access);
+      _navSections = nav;
+      if (!nav.any((s) => s.id == _active)) {
+        _active = homeIdForStaff(role, access);
+      }
     });
   }
 
   /// Switch to a section; if it carries unread alerts, mark them read so its
   /// badge clears (both the sidebar item and the bell total drop).
   Future<void> _navTo(String id) async {
-    if (!_access.contains(id)) return; // guard — out-of-scope for this role
+    if (!_navSections.any((s) => s.id == id)) return; // guard — out of scope
     if (mounted) setState(() => _active = id);
     if ((_sectionAlerts[id] ?? 0) > 0) {
       await AdminService.markAdminSectionRead(id);
@@ -186,6 +191,7 @@ class _AdminConsoleState extends State<AdminConsole> {
   }
 
   static const _meta = <String, List<String>>{
+    'org-home':    ['Organizer',    'Your events & community'],
     'dashboard':   ['Dashboard',    'Operations overview'],
     'reports':     ['Reports',      'Analytics & exports'],
     'players':     ['Players',      'Profiles & rankings'],
@@ -201,11 +207,16 @@ class _AdminConsoleState extends State<AdminConsole> {
   };
 
   Widget _body() {
+    final orgId = _role == RoleId.organizer
+        ? Supabase.instance.client.auth.currentUser?.id
+        : null;
     switch (_active) {
+      case 'org-home':    return OrganizerOverviewScreen(
+          onOpenTournaments: () => _navTo('tournaments'));
       case 'reports':     return const AdminReportsScreen();
       case 'players':     return const AdminPlayersScreen();
       case 'matches':     return const AdminMatchesScreen();
-      case 'tournaments': return const AdminTournamentsScreen();
+      case 'tournaments': return AdminTournamentsScreen(organizerId: orgId);
       case 'courts':      return const AdminCourtsScreen();
       case 'store':       return const AdminInventoryScreen();
       case 'promotions':  return const AdminPromotionsScreen();
@@ -226,7 +237,7 @@ class _AdminConsoleState extends State<AdminConsole> {
       backgroundColor: AdminColors.canvas,
       drawer: _Drawer(
         active: _active,
-        sections: navForAccess(_access),
+        sections: _navSections,
         role: _role,
         sectionAlerts: _sectionAlerts,
         onNav: (id) {

@@ -98,7 +98,9 @@ const Map<RoleId, RoleDef> kRoles = {
       Icons.emoji_events_outlined,
       AdminColors.gold,
       'Runs tournaments and reaches the community — no store or platform payments.',
-      ['tournaments', 'matches', 'courts', 'broadcasts']),
+      // Organizers broadcast from their Overview (scoped to their participants),
+      // not the all-players Broadcasts section.
+      ['tournaments', 'matches', 'courts']),
   RoleId.support: RoleDef(
       RoleId.support,
       'Support · Moderator',
@@ -135,16 +137,29 @@ List<String> effectiveAccess(RoleId role, List<String>? access) {
   return defaultAccessFor(role);
 }
 
-/// Ordered nav sections a staffer can open, filtered by [access] and preserving
-/// [kSections] order. Home is the first entry.
+/// Ordered grantable nav sections for [access], preserving [kSections] order.
 List<Section> navForAccess(List<String> access) {
   final set = access.toSet();
   return kSections.where((s) => set.contains(s.id)).toList();
 }
 
-/// First section id the staffer lands on (their home). Falls back to dashboard.
-String homeForAccess(List<String> access) {
-  final nav = navForAccess(access);
+/// A role's own landing section (e.g. the Organizer Overview), or null. Not a
+/// grantable section — it's prepended to the nav and is that role's home.
+Section? homeSectionFor(RoleId r) => switch (r) {
+      RoleId.organizer => const Section('org-home', 'Overview',
+          Icons.grid_view_rounded, 'Overview', 'Your events at a glance'),
+      _ => null,
+    };
+
+/// Full ordered nav for a staffer: role home (if any) then granted sections.
+List<Section> navForStaff(RoleId role, List<String> access) {
+  final home = homeSectionFor(role);
+  return [if (home != null) home, ...navForAccess(access)];
+}
+
+/// The section the staffer lands on. Falls back to dashboard if they have none.
+String homeIdForStaff(RoleId role, List<String> access) {
+  final nav = navForStaff(role, access);
   return nav.isEmpty ? 'dashboard' : nav.first.id;
 }
 

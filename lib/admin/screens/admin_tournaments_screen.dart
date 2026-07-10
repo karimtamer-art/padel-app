@@ -6,7 +6,10 @@ import '../widgets/admin_kit.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 
 class AdminTournamentsScreen extends StatefulWidget {
-  const AdminTournamentsScreen({super.key});
+  /// When set (organizer console), the list is scoped to this organizer's own
+  /// tournaments. Null (super admin) shows every tournament.
+  final String? organizerId;
+  const AdminTournamentsScreen({super.key, this.organizerId});
   @override
   State<AdminTournamentsScreen> createState() => _AdminTournamentsScreenState();
 }
@@ -23,7 +26,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
   Future<void> _load() async {
     if (!_loading) setState(() => _loading = true);
-    final data = await AdminService.fetchTournaments();
+    final data =
+        await AdminService.fetchTournaments(organizerId: widget.organizerId);
     if (!mounted) return;
     setState(() {
       _list = data;

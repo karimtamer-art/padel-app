@@ -952,7 +952,7 @@ declare
   i int;
   e1 uuid; e2 uuid;
 begin
-  if not public._is_admin() then return 'Admins only.'; end if;
+  if not public.owns_tournament(p_tournament_id) then return 'Not authorised.'; end if;
 
   -- seed: best pairs first (pair level = avg of player + partner if known)
   select array_agg(id order by lvl desc) into v_entries from (
@@ -1040,10 +1040,9 @@ declare
   v_lb_slot int;
   v_open record;
 begin
-  if not public._is_admin() then return 'Admins only.'; end if;
-
   select * into m from tournament_matches where id = p_match_id for update;
   if not found then return 'Match not found.'; end if;
+  if not public.owns_tournament(m.tournament_id) then return 'Not authorised.'; end if;
   if m.winner_entry is not null then return 'Winner already recorded.'; end if;
   if p_winner not in (m.entry1, m.entry2) then return 'Winner must be one of the two pairs.'; end if;
   if m.entry1 is null or m.entry2 is null then return 'This match is still waiting for a pair.'; end if;
@@ -2609,6 +2608,114 @@ begin
      limit 8;
 end $$;
 grant execute on function public.admin_search_users(text) to authenticated;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- Organizer role — Phase 2 of Roles/Organizer/Community.
+-- Full notes: supabase/changes/2026-07-10_organizer.sql. Organizers run their
+-- own tournaments; the two bracket RPC gates above were switched from
+-- _is_admin() to owns_tournament() (defined here — plpgsql resolves it at call
+-- time, so the forward reference is fine on a full re-run).
+-- ════════════════════════════════════════════════════════════════════════════
+alter table public.tournaments
+  add column if not exists organizer_id uuid references public.profiles(id) on delete set null;
+create index if not exists idx_tournaments_organizer
+  on public.tournaments (organizer_id) where organizer_id is not null;
+
+create or replace function public.current_admin_role()
+returns text language sql stable security definer set search_path = public as $$
+  select admin_role from public.profiles where id = auth.uid();
+$$;
+grant execute on function public.current_admin_role() to authenticated;
+
+create or replace function public.owns_tournament(p_tid uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select public._is_admin() or exists (
+    select 1 from public.tournaments t
+     where t.id = p_tid
+       and t.organizer_id = auth.uid()
+       and public.current_admin_role() = 'organizer'
+  );
+$$;
+grant execute on function public.owns_tournament(uuid) to authenticated;
+
+create or replace function public.set_tournament_organizer()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.organizer_id is null and public.current_admin_role() = 'organizer' then
+    new.organizer_id := auth.uid();
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_tournaments_set_organizer on public.tournaments;
+create trigger trg_tournaments_set_organizer
+  before insert on public.tournaments
+  for each row execute function public.set_tournament_organizer();
+
+do $$ begin
+  create policy "tournaments: organizer write own" on public.tournaments for all
+    using (organizer_id = auth.uid() and public.current_admin_role() = 'organizer')
+    with check (organizer_id = auth.uid() and public.current_admin_role() = 'organizer');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create policy "entries: organizer write own" on public.tournament_entries for update
+    using (public.owns_tournament(tournament_id))
+    with check (public.owns_tournament(tournament_id));
+exception when duplicate_object then null; end $$;
+
+create or replace function public.organizer_overview()
+returns json language plpgsql stable security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+    return json_build_object('error', 'not_organizer');
+  end if;
+  return json_build_object(
+    'tournaments', (select count(*) from tournaments where organizer_id = v_uid),
+    'accepting',   (select count(*) from tournaments
+                     where organizer_id = v_uid and status in ('open','upcoming')),
+    'entrants',    (select count(*) from tournament_entries te
+                     where te.tournament_id in (select id from tournaments where organizer_id = v_uid)
+                       and te.status not in ('withdrawn','cancelled')),
+    'reach',       (select count(distinct te.player_id) from tournament_entries te
+                     where te.tournament_id in (select id from tournaments where organizer_id = v_uid)
+                       and te.status not in ('withdrawn','cancelled')),
+    'fees',        (select coalesce(sum(coalesce(paid_amount,0)),0) from tournament_entries te
+                     where te.tournament_id in (select id from tournaments where organizer_id = v_uid)
+                       and te.status = 'paid'),
+    'to_verify',   (select count(*) from tournament_entries te
+                     where te.tournament_id in (select id from tournaments where organizer_id = v_uid)
+                       and te.status = 'pending')
+  );
+end $$;
+grant execute on function public.organizer_overview() to authenticated;
+
+create or replace function public.organizer_broadcast(
+  p_title text, p_body text, p_tournament_id uuid default null)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+    return 'Organizers only.';
+  end if;
+  if btrim(coalesce(p_title, '')) = '' then return 'Title required.'; end if;
+  if p_tournament_id is not null and not public.owns_tournament(p_tournament_id) then
+    return 'Not your tournament.';
+  end if;
+  insert into public.notifications (user_id, type, title, body, data)
+  select distinct te.player_id, 'broadcast', p_title, nullif(btrim(p_body), ''),
+         jsonb_build_object('from', 'organizer')
+    from public.tournament_entries te
+   where te.status not in ('withdrawn','cancelled')
+     and te.tournament_id in (
+       select id from public.tournaments
+        where organizer_id = v_uid
+          and (p_tournament_id is null or id = p_tournament_id));
+  return null;
+end $$;
+grant execute on function public.organizer_broadcast(text, text, uuid) to authenticated;
 
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

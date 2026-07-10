@@ -164,14 +164,18 @@ class AdminService {
 
   // ── Tournaments ───────────────────────────────────────────────
 
-  static Future<List<Map<String, dynamic>>> fetchTournaments() async {
-    final res = await _db
+  /// Tournaments (with entries). Pass [organizerId] to scope to one organizer's
+  /// own events (the Organizer console view); omit for the full admin list.
+  static Future<List<Map<String, dynamic>>> fetchTournaments(
+      {String? organizerId}) async {
+    var query = _db
         .from('tournaments')
         .select('*, tournament_entries(id, player_id, player_name, '
             'partner_id, partner_name, status, registered_at, '
             'payment_method, paid_amount, instapay_sender, instapay_proof_url, '
-            'refund_status)')
-        .order('start_date', ascending: false);
+            'refund_status)');
+    if (organizerId != null) query = query.eq('organizer_id', organizerId);
+    final res = await query.order('start_date', ascending: false);
     return List<Map<String, dynamic>>.from(res as List);
   }
 
@@ -811,6 +815,45 @@ class AdminService {
   static Future<String?> revokeRole(String userId) async {
     try {
       final res = await _db.rpc('admin_revoke_role', params: {'p_user': userId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  // ── Organizer console ─────────────────────────────────────────
+  // Scoped to the signed-in organizer's own events (server-enforced).
+
+  /// KPI counts for the Organizer Overview home: tournaments, accepting,
+  /// entrants, reach, fees, to_verify. Empty map on error/not-organizer.
+  static Future<Map<String, dynamic>> organizerOverview() async {
+    try {
+      final res = await _db.rpc('organizer_overview');
+      final map = Map<String, dynamic>.from(res as Map);
+      if (map['error'] != null) return {};
+      return map;
+    } catch (e) {
+      debugPrint('[AdminService] organizerOverview error: $e');
+      return {};
+    }
+  }
+
+  /// Broadcast to the organizer's participants (push + in-app). Pass
+  /// [tournamentId] to target one event, or null for all their events.
+  /// Returns an error string or null on success.
+  static Future<String?> organizerBroadcast({
+    required String title,
+    required String body,
+    String? tournamentId,
+  }) async {
+    try {
+      final res = await _db.rpc('organizer_broadcast', params: {
+        'p_title': title,
+        'p_body': body,
+        'p_tournament_id': tournamentId,
+      });
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;
