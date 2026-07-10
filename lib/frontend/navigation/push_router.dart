@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import '../widgets/app_toast.dart';
@@ -60,6 +61,10 @@ class PushRouter {
   static void _onForeground(RemoteMessage m) {
     final ctx = navigatorKey.currentContext;
     if (ctx == null) return;
+    // Buzz so the user notices something arrived even with the app on screen
+    // (no system banner is drawn in the foreground). VIBRATE permission is
+    // declared in AndroidManifest; iOS maps this to its haptic engine.
+    HapticFeedback.vibrate();
     final title = m.notification?.title ?? 'New notification';
     final body = m.notification?.body ?? '';
     final text = body.isEmpty ? title : '$title — $body';

@@ -2,6 +2,10 @@
     <!-- Android 13+ (API 33): without this, requestPermission() can never grant
          and the OS silently drops every push. Required for any notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Buzz the phone when a push lands while the app is in the foreground
+         (HapticFeedback.vibrate in push_router.dart) — otherwise the toast is
+         silent and easy to miss. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <application
         android:label="Padel Rivals"
         android:name="${applicationName}"
