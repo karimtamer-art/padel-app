@@ -640,6 +640,7 @@ class AdminService {
         'admin_order' => 'payments',
         'admin_trade' || 'admin_repair' => 'requests',
         'admin_tournament' => 'tournaments',
+        'admin_community' => 'community',
         _ => null,
       };
 
@@ -647,6 +648,7 @@ class AdminService {
     'payments': ['admin_order'],
     'requests': ['admin_trade', 'admin_repair'],
     'tournaments': ['admin_tournament'],
+    'community': ['admin_community'],
   };
 
   /// Unread admin-alert counts grouped by nav section ('payments' / 'requests'

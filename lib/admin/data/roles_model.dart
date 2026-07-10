@@ -151,10 +151,25 @@ Section? homeSectionFor(RoleId r) => switch (r) {
       _ => null,
     };
 
-/// Full ordered nav for a staffer: role home (if any) then granted sections.
+/// Role-specific sections appended after the granted ones (e.g. an organizer's
+/// Community). Not part of the grantable catalogue.
+List<Section> extraSectionsFor(RoleId r) => switch (r) {
+      RoleId.organizer => const [
+          Section('community', 'Community', Icons.groups_2_outlined, 'Community',
+              'Members & inbox'),
+        ],
+      _ => const [],
+    };
+
+/// Full ordered nav for a staffer: role home (if any), granted sections, then
+/// any role-specific extras (Community).
 List<Section> navForStaff(RoleId role, List<String> access) {
   final home = homeSectionFor(role);
-  return [if (home != null) home, ...navForAccess(access)];
+  return [
+    if (home != null) home,
+    ...navForAccess(access),
+    ...extraSectionsFor(role),
+  ];
 }
 
 /// The section the staffer lands on. Falls back to dashboard if they have none.

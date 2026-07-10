@@ -7,6 +7,7 @@ import 'data/admin_service.dart';
 import 'data/roles_model.dart';
 import 'screens/admin_team_screen.dart';
 import 'screens/organizer_overview_screen.dart';
+import 'screens/admin_community_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/admin_players_screen.dart';
 import 'screens/admin_matches_screen.dart';
@@ -192,6 +193,7 @@ class _AdminConsoleState extends State<AdminConsole> {
 
   static const _meta = <String, List<String>>{
     'org-home':    ['Organizer',    'Your events & community'],
+    'community':   ['Community',     'Members, inbox & announcements'],
     'dashboard':   ['Dashboard',    'Operations overview'],
     'reports':     ['Reports',      'Analytics & exports'],
     'players':     ['Players',      'Profiles & rankings'],
@@ -213,6 +215,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     switch (_active) {
       case 'org-home':    return OrganizerOverviewScreen(
           onOpenTournaments: () => _navTo('tournaments'));
+      case 'community':   return const AdminCommunityScreen();
       case 'reports':     return const AdminReportsScreen();
       case 'players':     return const AdminPlayersScreen();
       case 'matches':     return const AdminMatchesScreen();

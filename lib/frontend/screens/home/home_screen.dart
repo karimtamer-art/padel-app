@@ -12,10 +12,12 @@ import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
 import 'package:padel_clay/backend/services/store_service.dart';
+import 'package:padel_clay/backend/services/community_service.dart';
 import '../matches/find_match_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import '../profile/notifications_screen.dart';
+import '../community/community_hub_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onSeeStore;
@@ -43,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _myMatches = [];
   List<Map<String, dynamic>> _tournaments = [];
   List<Map<String, dynamic>> _featured = [];
+  Community? _community;
   int _unread = 0;
   bool _loading = true;
   RealtimeChannel? _notifChannel;
@@ -84,8 +87,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     setState(() => _loading = true);
-    await Future.wait(
-        [_fetchMatches(), _fetchTournaments(), _fetchUnread(), _fetchFeatured()]);
+    await Future.wait([
+      _fetchMatches(),
+      _fetchTournaments(),
+      _fetchUnread(),
+      _fetchFeatured(),
+      _fetchCommunity(),
+    ]);
     if (mounted) setState(() => _loading = false);
   }
 
@@ -160,6 +168,20 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) _featured = rows;
   }
 
+  Future<void> _fetchCommunity() async {
+    final c = await CommunityService.homeCommunity();
+    if (mounted) _community = c;
+  }
+
+  Future<void> _openCommunity(BuildContext c) async {
+    final community = _community;
+    if (community == null) return;
+    await Navigator.of(c).push(MaterialPageRoute(
+        builder: (_) => CommunityHubScreen(communityId: community.id)));
+    _fetchCommunity();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openNotifications(BuildContext c) async {
     await Navigator.of(c)
         .push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
@@ -197,6 +219,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     ranking: widget.profile.ranking,
                     onFindMatch: () => _openFindMatch(context),
                   ),
+                if (_community != null) ...[
+                  const SizedBox(height: 24),
+                  SectionHeader(
+                      _community!.isMember ? 'Your Community' : 'Discover a Community'),
+                  _communitySection(),
+                ],
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
                 _recentForm(),
@@ -221,6 +249,56 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // ── Your Community ───────────────────────────────────────────────────────
+
+  Widget _communitySection() {
+    final c = _community!;
+    return Padding(
+      padding: AppSpacing.screenH,
+      child: AppCard(
+        onTap: () => _openCommunity(context),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: AppColors.gold.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.groups_2_rounded, size: 23, color: AppColors.gold),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Flexible(
+                    child: Text(c.name,
+                        style: AppText.bodyStrong(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis)),
+                if (c.verified) ...[
+                  const SizedBox(width: 5),
+                  const Icon(Icons.verified_rounded, size: 14, color: AppColors.gold),
+                ],
+              ]),
+              const SizedBox(height: 2),
+              Text(
+                  '${c.organizerName} · ${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
+                  style: AppText.small(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          if (c.isMember)
+            const Icon(Icons.chevron_right_rounded, color: AppColors.inkFaint)
+          else
+            const AppTag('Join', color: AppColors.primary, solid: true),
+        ]),
+      ),
     );
   }
 
