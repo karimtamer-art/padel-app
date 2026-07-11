@@ -136,6 +136,20 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
               '${row['name'] ?? ''}${(row['area'] as String?)?.isNotEmpty == true ? ' · ${row['area']}' : ''} · ${row['indoor'] == true ? 'Indoor' : 'Outdoor'}',
               style: AdminText.small(),
             ),
+            // Which community this court belongs to (admin view of organizer courts).
+            if (!_isOrganizer && (row['owner_label'] as String?)?.isNotEmpty == true) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const Icon(Icons.groups_2_rounded, size: 13, color: AdminColors.gold),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text('${row['owner_label']} community',
+                      style: AdminText.sans(12, FontWeight.w700, AdminColors.gold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ]),
+            ],
             const SizedBox(height: 12),
             Wrap(spacing: 6, runSpacing: 6, children: [
               _tag(Icons.payments_outlined, '${_egp(row['price_per_hour'])}/hr'),
@@ -188,7 +202,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
 
   Widget _visibilityPill(Map row) {
     final isPublic = row['is_public'] != false; // null/absent → public (default)
-    final tone = isPublic ? AdminColors.green : AdminColors.info;
+    final tone = isPublic ? AdminColors.green : AdminColors.gold;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
       decoration: BoxDecoration(
@@ -309,9 +323,12 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     final venueCt = TextEditingController(text: row?['venue_name'] ?? '');
     final nameCt = TextEditingController(text: row?['name'] ?? '');
     final areaCt = TextEditingController(text: row?['area'] ?? '');
+    final cityCt = TextEditingController(text: row?['city'] ?? '');
+    final surfaceCt = TextEditingController(text: row?['surface'] ?? '');
     final priceCt =
         TextEditingController(text: row?['price_per_hour']?.toString() ?? '');
     final indoor = ValueNotifier<bool>(row?['indoor'] == true);
+    final active = ValueNotifier<bool>(row?['is_active'] != false);
 
     adminSheet(
       context,
@@ -321,7 +338,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
               ? 'New court — private to your community'
               : 'New court — visible in the app')
           : ((row['venue_name'] as String?) ?? ''),
-      heightFactor: 0.75,
+      heightFactor: 0.9,
       footer: ValueListenableBuilder<bool>(
         valueListenable: indoor,
         builder: (_, v, __) => AdminButton(
@@ -341,6 +358,8 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 venue: venueCt.text.trim(),
                 name: nameCt.text.trim(),
                 area: areaCt.text.trim(),
+                city: cityCt.text.trim(),
+                surface: surfaceCt.text.trim(),
                 price: num.tryParse(priceCt.text),
                 indoor: v,
               );
@@ -350,9 +369,11 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'venue_name': venueCt.text.trim(),
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
+                  'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
+                  'surface': surfaceCt.text.trim().isEmpty ? null : surfaceCt.text.trim(),
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
-                  'is_active': true,
+                  'is_active': active.value,
                   'in_maintenance': false,
                 });
               } catch (e) {
@@ -364,8 +385,11 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'venue_name': venueCt.text.trim(),
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
+                  'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
+                  'surface': surfaceCt.text.trim().isEmpty ? null : surfaceCt.text.trim(),
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
+                  'is_active': active.value,
                 }).eq('id', row['id'] as String);
               } catch (e) {
                 err = e.toString();
@@ -387,37 +411,50 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
             const SizedBox(height: 14),
             _field('Court name', nameCt, hint: 'e.g. Court 1'),
             const SizedBox(height: 14),
-            _field('Area', areaCt, hint: 'e.g. Zamalek, Cairo'),
+            _field('Area', areaCt, hint: 'e.g. Zamalek'),
+            const SizedBox(height: 14),
+            _field('City', cityCt, hint: 'e.g. Cairo'),
+            const SizedBox(height: 14),
+            _field('Surface', surfaceCt, hint: 'e.g. Artificial grass'),
             const SizedBox(height: 14),
             _field('Price / hour', priceCt, prefix: 'EGP'),
-            const SizedBox(height: 14),
-            GestureDetector(
-              onTap: () => indoor.value = !v,
-              child: Row(children: [
-                Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: v ? AdminColors.primary : Colors.transparent,
-                    borderRadius: BorderRadius.circular(5),
-                    border: Border.all(
-                        color: v ? AdminColors.primary : AdminColors.line,
-                        width: 1.6),
-                  ),
-                  alignment: Alignment.center,
-                  child: v
-                      ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
-                      : null,
-                ),
-                const SizedBox(width: 10),
-                Text('Indoor court', style: AdminText.body()),
-              ]),
-            ),
+            const SizedBox(height: 16),
+            _check('Indoor court', v, () => indoor.value = !v),
+            if (!_isOrganizer) ...[
+              const SizedBox(height: 12),
+              ValueListenableBuilder<bool>(
+                valueListenable: active,
+                builder: (_, a, __) => _check(
+                    'Active (bookable in the app)', a, () => active.value = !a),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
+
+  Widget _check(String label, bool on, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Row(children: [
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: on ? AdminColors.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                  color: on ? AdminColors.primary : AdminColors.line, width: 1.6),
+            ),
+            alignment: Alignment.center,
+            child: on
+                ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
+                : null,
+          ),
+          const SizedBox(width: 10),
+          Text(label, style: AdminText.body()),
+        ]),
+      );
 
   Widget _field(String label, TextEditingController c,
       {String? hint, String? prefix}) {

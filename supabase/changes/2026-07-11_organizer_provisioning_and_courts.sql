@@ -27,14 +27,17 @@ alter table public.courts
   add column if not exists owner_id uuid references public.profiles(id) on delete set null;
 alter table public.courts
   add column if not exists is_public boolean not null default true;
+alter table public.courts add column if not exists city text;
+alter table public.courts add column if not exists surface text;
 create index if not exists idx_courts_owner on public.courts(owner_id);
 
 -- Organizers are is_admin = false, so they can't write to courts directly under
 -- RLS. These SECURITY DEFINER helpers let an organizer manage ONLY their own
 -- courts (community-only), and admins manage any. Gated by role.
+drop function if exists public.organizer_save_court(uuid, text, text, text, numeric, boolean);
 create or replace function public.organizer_save_court(
-  p_id uuid, p_venue text, p_name text, p_area text,
-  p_price numeric, p_indoor boolean)
+  p_id uuid, p_venue text, p_name text, p_area text, p_city text,
+  p_surface text, p_price numeric, p_indoor boolean)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_id uuid;
 begin
@@ -42,22 +45,28 @@ begin
     raise exception 'Organizers only';
   end if;
   if p_id is null then
-    insert into public.courts (venue_name, name, area, price_per_hour, indoor,
+    insert into public.courts (venue_name, name, area, city, surface,
+                               price_per_hour, indoor,
                                is_active, in_maintenance, owner_id, is_public)
-    values (p_venue, coalesce(nullif(btrim(p_name), ''), 'Court'), p_area, p_price,
-            coalesce(p_indoor, false), true, false, v_uid, false)
+    values (p_venue, coalesce(nullif(btrim(p_name), ''), 'Court'), p_area,
+            nullif(btrim(coalesce(p_city, '')), ''),
+            nullif(btrim(coalesce(p_surface, '')), ''),
+            p_price, coalesce(p_indoor, false), true, false, v_uid, false)
     returning id into v_id;
     return v_id;
   else
     update public.courts set
       venue_name = p_venue,
       name = coalesce(nullif(btrim(p_name), ''), 'Court'),
-      area = p_area, price_per_hour = p_price, indoor = coalesce(p_indoor, false)
+      area = p_area,
+      city = nullif(btrim(coalesce(p_city, '')), ''),
+      surface = nullif(btrim(coalesce(p_surface, '')), ''),
+      price_per_hour = p_price, indoor = coalesce(p_indoor, false)
     where id = p_id and (owner_id = v_uid or public._is_admin());
     return p_id;
   end if;
 end $$;
-grant execute on function public.organizer_save_court(uuid, text, text, text, numeric, boolean) to authenticated;
+grant execute on function public.organizer_save_court(uuid, text, text, text, text, text, numeric, boolean) to authenticated;
 
 create or replace function public.organizer_delete_court(p_id uuid)
 returns void language plpgsql security definer set search_path = public as $$

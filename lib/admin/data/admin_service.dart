@@ -135,20 +135,55 @@ class AdminService {
   // ── Courts ────────────────────────────────────────────────────
 
   /// All courts (admin) or just one organizer's own courts when [ownerId] is
-  /// set. Pre-migration DBs without owner_id fall back to selecting all.
+  /// set. Pre-migration DBs without owner_id fall back to selecting all. In the
+  /// admin view, owner-owned courts are tagged with `owner_label` (the owning
+  /// community's name, else the organizer's name) so the console shows which
+  /// community a court belongs to.
   static Future<List<Map<String, dynamic>>> fetchCourts({String? ownerId}) async {
+    List<Map<String, dynamic>> courts;
     try {
       var q = _db.from('courts').select('*');
       if (ownerId != null) q = q.eq('owner_id', ownerId);
       final res = await q.order('created_at', ascending: false);
-      return List<Map<String, dynamic>>.from(res as List);
+      courts = List<Map<String, dynamic>>.from(res as List);
     } catch (_) {
       final res = await _db
           .from('courts')
           .select('*')
           .order('created_at', ascending: false);
-      return List<Map<String, dynamic>>.from(res as List);
+      courts = List<Map<String, dynamic>>.from(res as List);
     }
+    // Admin view: label each organizer-owned court with its community/owner.
+    if (ownerId == null) {
+      final owners = courts
+          .map((c) => c['owner_id'])
+          .whereType<String>()
+          .toSet()
+          .toList();
+      if (owners.isNotEmpty) {
+        try {
+          final comms = await _db
+              .from('communities')
+              .select('organizer_id, name')
+              .inFilter('organizer_id', owners);
+          final profs = await _db
+              .from('profiles')
+              .select('id, name')
+              .inFilter('id', owners);
+          final byComm = {
+            for (final r in (comms as List)) r['organizer_id']: r['name']
+          };
+          final byProf = {for (final r in (profs as List)) r['id']: r['name']};
+          for (final c in courts) {
+            final oid = c['owner_id'];
+            if (oid != null) {
+              c['owner_label'] = byComm[oid] ?? byProf[oid] ?? 'Organizer';
+            }
+          }
+        } catch (_) {/* enrichment is best-effort */}
+      }
+    }
+    return courts;
   }
 
   static Future<void> setCourt(Map<String, dynamic> data) async {
@@ -172,6 +207,8 @@ class AdminService {
     required String venue,
     required String name,
     required String area,
+    String? city,
+    String? surface,
     num? price,
     required bool indoor,
   }) async {
@@ -181,6 +218,8 @@ class AdminService {
         'p_venue': venue,
         'p_name': name,
         'p_area': area,
+        'p_city': city,
+        'p_surface': surface,
         'p_price': price,
         'p_indoor': indoor,
       });
