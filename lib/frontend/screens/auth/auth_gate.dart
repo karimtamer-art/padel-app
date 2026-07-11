@@ -15,6 +15,7 @@ import '../splash/splash_screen.dart';
 import '../../../../admin/admin_console.dart';
 import 'auth_flow.dart';
 import 'onboarding/onboarding_flow.dart';
+import 'set_password_screen.dart';
 
 /// Root of the app once Supabase is initialised. Owns the routing decision:
 ///
@@ -40,7 +41,7 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
-enum _Phase { booting, signedOut, checking, onboarding, ready, error }
+enum _Phase { booting, signedOut, checking, onboarding, mustSetPassword, ready, error }
 
 class _AuthGateState extends State<AuthGate> {
   _Phase _phase = _Phase.booting;
@@ -102,6 +103,13 @@ class _AuthGateState extends State<AuthGate> {
       _displayName = rawName.trim();
       _initials = _buildInitials(_displayName);
       _memberSince = _buildMemberSince(DateTime.tryParse(user.createdAt) ?? DateTime.now());
+      // A provisioned organizer signed in with a temp password must set a real
+      // one before reaching the console.
+      if (_isStaff && _existing.mustChangePassword) {
+        if (!mounted) return;
+        setState(() => _phase = _Phase.mustSetPassword);
+        return;
+      }
       final complete = profile?.isComplete ?? false;
       // Staff (super admin or a granted role) skip player onboarding entirely —
       // straight to the console. They never see the phone/onboarding step.
@@ -159,6 +167,12 @@ class _AuthGateState extends State<AuthGate> {
           profileService: widget.profileService,
           initial: _existing,
           onCompleted: _resolve,
+          onSignOut: _signOut,
+        ),
+      _Phase.mustSetPassword => SetPasswordScreen(
+          key: const ValueKey('set-password'),
+          displayName: _displayName,
+          onDone: _resolve,
           onSignOut: _signOut,
         ),
       _Phase.ready => _isStaff

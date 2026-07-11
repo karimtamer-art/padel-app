@@ -134,12 +134,21 @@ class AdminService {
 
   // ── Courts ────────────────────────────────────────────────────
 
-  static Future<List<Map<String, dynamic>>> fetchCourts() async {
-    final res = await _db
-        .from('courts')
-        .select('*')
-        .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(res as List);
+  /// All courts (admin) or just one organizer's own courts when [ownerId] is
+  /// set. Pre-migration DBs without owner_id fall back to selecting all.
+  static Future<List<Map<String, dynamic>>> fetchCourts({String? ownerId}) async {
+    try {
+      var q = _db.from('courts').select('*');
+      if (ownerId != null) q = q.eq('owner_id', ownerId);
+      final res = await q.order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (_) {
+      final res = await _db
+          .from('courts')
+          .select('*')
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    }
   }
 
   static Future<void> setCourt(Map<String, dynamic> data) async {
@@ -148,6 +157,58 @@ class AdminService {
 
   static Future<void> deleteCourt(String id) async {
     await _db.from('courts').delete().eq('id', id);
+  }
+
+  /// Publish a court to all players (true) or keep it community-only (false).
+  static Future<void> setCourtPublic(String id, bool isPublic) async {
+    await _db.from('courts').update({'is_public': isPublic}).eq('id', id);
+  }
+
+  // ── Organizer provisioning ────────────────────────────────────
+
+  /// Super admin creates an organizer account (username + temp password) via the
+  /// `create-organizer` Edge Function. Returns null on success, else a message.
+  static Future<String?> createOrganizer({
+    required String name,
+    required String username,
+    required String password,
+    String? scope,
+  }) async {
+    try {
+      final res = await _db.functions.invoke('create-organizer', body: {
+        'name': name,
+        'username': username,
+        'password': password,
+        'scope': scope,
+      });
+      final data = res.data;
+      if (data is Map && data['error'] != null) return data['error'].toString();
+      return null;
+    } on FunctionException catch (e) {
+      final d = e.details;
+      if (d is Map && d['error'] != null) return d['error'].toString();
+      return 'Could not create organizer (status ${e.status}).';
+    } catch (e) {
+      debugPrint('[AdminService] createOrganizer: $e');
+      return 'Could not create organizer. Try again.';
+    }
+  }
+
+  /// Clears the forced-reset flag after a provisioned organizer sets a real
+  /// password on first login.
+  static Future<void> clearMustChangePassword() async {
+    try {
+      await _db.rpc('clear_must_change_password');
+    } catch (e) {
+      debugPrint('[AdminService] clearMustChangePassword: $e');
+    }
+  }
+
+  /// A random, easy-to-read temporary password for a new organizer.
+  static String generateTempPassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    final r = Random.secure();
+    return List.generate(10, (_) => chars[r.nextInt(chars.length)]).join();
   }
 
   // ── Matches ───────────────────────────────────────────────────

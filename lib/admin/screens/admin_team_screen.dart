@@ -6,6 +6,7 @@
 // Writes go through AdminService → SECURITY DEFINER RPCs (super-admin-gated).
 // ============================================================================
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../backend/models/ranking_scale.dart';
 import '../data/admin_service.dart';
 import '../data/roles_model.dart';
@@ -40,6 +41,16 @@ class _AdminTeamScreenState extends State<AdminTeamScreen> {
   }
 
   int _count(RoleId r) => _staff.where((s) => s.role == r).length;
+
+  Future<void> _openCreateOrganizer() async {
+    final created = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _CreateOrganizerSheet(),
+    );
+    if (created == true) _load();
+  }
 
   Future<void> _openInvite() async {
     final changed = await showModalBottomSheet<bool>(
@@ -81,8 +92,15 @@ class _AdminTeamScreenState extends State<AdminTeamScreen> {
             'sections each person can open.',
             style: AdminText.small()),
         const SizedBox(height: 14),
-        AdminButton('Invite teammate',
-            icon: Icons.add, variant: AdminBtn.primary, onPressed: _openInvite),
+        AdminButton('Create organizer',
+            icon: Icons.person_add_alt_1,
+            variant: AdminBtn.primary,
+            onPressed: _openCreateOrganizer),
+        const SizedBox(height: 8),
+        AdminButton('Invite an existing user',
+            icon: Icons.mail_outline,
+            variant: AdminBtn.ghost,
+            onPressed: _openInvite),
         const SizedBox(height: 16),
         // filter chips
         Wrap(spacing: 8, runSpacing: 8, children: [
@@ -248,6 +266,256 @@ class _AdminTeamScreenState extends State<AdminTeamScreen> {
                 style: AdminText.sans(12, FontWeight.w700, r.color)),
           ]),
         ]),
+      );
+}
+
+// ── Create organizer (provision a new account) ──────────────────────────────
+class _CreateOrganizerSheet extends StatefulWidget {
+  const _CreateOrganizerSheet();
+  @override
+  State<_CreateOrganizerSheet> createState() => _CreateOrganizerSheetState();
+}
+
+class _CreateOrganizerSheetState extends State<_CreateOrganizerSheet> {
+  final _name = TextEditingController();
+  final _username = TextEditingController();
+  final _scope = TextEditingController();
+  late final _password =
+      TextEditingController(text: AdminService.generateTempPassword());
+  bool _busy = false;
+  String? _error;
+  // Set once the account is created — shows the shareable credentials.
+  Map<String, String>? _created;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _username.dispose();
+    _scope.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  String? _validate() {
+    if (_name.text.trim().isEmpty) return 'Enter the organizer\'s name.';
+    final u = _username.text.trim().toLowerCase();
+    if (!RegExp(r'^[a-z0-9_]{3,20}$').hasMatch(u)) {
+      return 'Username: 3–20 chars, lowercase letters, numbers or underscore.';
+    }
+    if (_password.text.length < 6) return 'Temp password: at least 6 characters.';
+    return null;
+  }
+
+  Future<void> _create() async {
+    final v = _validate();
+    if (v != null) {
+      setState(() => _error = v);
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final username = _username.text.trim().toLowerCase();
+    final err = await AdminService.createOrganizer(
+      name: _name.text.trim(),
+      username: username,
+      password: _password.text,
+      scope: _scope.text.trim().isEmpty ? null : _scope.text.trim(),
+    );
+    if (!mounted) return;
+    if (err != null) {
+      setState(() {
+        _busy = false;
+        _error = err;
+      });
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _created = {'username': username, 'password': _password.text};
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.5,
+      expand: false,
+      builder: (_, scroll) => Container(
+        decoration: const BoxDecoration(
+            color: AdminColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 12, 12),
+            child: Row(children: [
+              Expanded(
+                  child: Text(_created == null ? 'Create organizer' : 'Account created',
+                      style: AdminText.h2())),
+              IconButton(
+                  icon: const Icon(Icons.close_rounded, color: AdminColors.inkSoft),
+                  onPressed: () => Navigator.pop(context, _created != null)),
+            ]),
+          ),
+          const Divider(height: 1, color: AdminColors.lineSoft),
+          Expanded(
+            child: _created == null
+                ? _form(scroll)
+                : _createdView(scroll, _created!),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _form(ScrollController scroll) => ListView(
+        controller: scroll,
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+                color: AdminColors.wash(AdminColors.primary, 0.08),
+                borderRadius: AdminUI.cardR),
+            child: Text(
+                'Creates a console-only organizer. They log in with the username '
+                'and temp password below, then set their own password on first '
+                'sign-in.',
+                style: AdminText.small()),
+          ),
+          const SizedBox(height: 16),
+          _label('Full name'),
+          _field(_name, 'e.g. Ahmed Hassan'),
+          const SizedBox(height: 14),
+          _label('Username (login)'),
+          _field(_username, 'e.g. ahmedpadel', prefix: Icons.alternate_email),
+          const SizedBox(height: 14),
+          _label('Temporary password'),
+          _field(_password, 'Temp password', trailing: IconButton(
+            icon: const Icon(Icons.refresh_rounded, size: 20, color: AdminColors.primary),
+            tooltip: 'Generate a new one',
+            onPressed: () => setState(
+                () => _password.text = AdminService.generateTempPassword()),
+          )),
+          const SizedBox(height: 14),
+          _label('Region / venue scope (optional)'),
+          _field(_scope, 'e.g. Cairo & New Cairo'),
+          if (_error != null) ...[
+            const SizedBox(height: 14),
+            Row(children: [
+              const Icon(Icons.error_outline_rounded, size: 16, color: AdminColors.danger),
+              const SizedBox(width: 6),
+              Expanded(child: Text(_error!, style: AdminText.small(AdminColors.danger))),
+            ]),
+          ],
+          const SizedBox(height: 20),
+          AdminButton(_busy ? 'Creating…' : 'Create organizer',
+              full: true,
+              height: 50,
+              icon: Icons.person_add_alt_1,
+              variant: AdminBtn.primary,
+              onPressed: _busy ? null : _create),
+        ],
+      );
+
+  Widget _createdView(ScrollController scroll, Map<String, String> creds) {
+    final line = 'Username: ${creds['username']}\nTemp password: ${creds['password']}';
+    return ListView(
+      controller: scroll,
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      children: [
+        Row(children: [
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: AdminColors.wash(AdminColors.green, 0.15),
+                borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.check_circle_outline_rounded,
+                size: 24, color: AdminColors.green),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+                'Share these credentials with the organizer. They\'ll be asked to '
+                'set a new password on first login.',
+                style: AdminText.small()),
+          ),
+        ]),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+              color: AdminColors.surfaceAlt,
+              borderRadius: AdminUI.cardR,
+              border: Border.all(color: AdminColors.line)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _credRow('USERNAME', creds['username']!),
+            const Divider(height: 20, color: AdminColors.lineSoft),
+            _credRow('TEMP PASSWORD', creds['password']!),
+          ]),
+        ),
+        const SizedBox(height: 16),
+        AdminButton('Copy credentials',
+            full: true,
+            height: 48,
+            icon: Icons.copy_rounded,
+            variant: AdminBtn.ghost,
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: line));
+              adminToast(context, 'Credentials copied');
+            }),
+        const SizedBox(height: 8),
+        AdminButton('Done',
+            full: true,
+            height: 50,
+            variant: AdminBtn.primary,
+            onPressed: () => Navigator.pop(context, true)),
+      ],
+    );
+  }
+
+  Widget _credRow(String label, String value) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: AdminText.kicker()),
+        const SizedBox(height: 3),
+        SelectableText(value,
+            style: AdminText.mono(15, FontWeight.w800, AdminColors.ink)),
+      ]);
+
+  Widget _label(String t) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(t, style: AdminText.strong(AdminColors.inkSoft)));
+
+  Widget _field(TextEditingController c, String hint,
+          {IconData? prefix, Widget? trailing}) =>
+      TextField(
+        controller: c,
+        style: AdminText.body(),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: AdminText.small(AdminColors.inkFaint),
+          prefixIcon: prefix == null
+              ? null
+              : Icon(prefix, size: 18, color: AdminColors.inkFaint),
+          suffixIcon: trailing,
+          filled: true,
+          fillColor: AdminColors.surfaceAlt,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          border: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide: const BorderSide(color: AdminColors.line)),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide: const BorderSide(color: AdminColors.line)),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide: const BorderSide(color: AdminColors.primary)),
+        ),
       );
 }
 

@@ -5,7 +5,11 @@ import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
 
 class AdminCourtsScreen extends StatefulWidget {
-  const AdminCourtsScreen({super.key});
+  /// When set, the screen is scoped to one organizer's own courts (they add
+  /// their own, private to their community). When null, it's the super-admin
+  /// view of ALL courts, with the publish toggle.
+  final String? organizerId;
+  const AdminCourtsScreen({super.key, this.organizerId});
   @override
   State<AdminCourtsScreen> createState() => _AdminCourtsScreenState();
 }
@@ -13,6 +17,8 @@ class AdminCourtsScreen extends StatefulWidget {
 class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
   List<Map<String, dynamic>> _courts = [];
   bool _loading = true;
+
+  bool get _isOrganizer => widget.organizerId != null;
 
   @override
   void initState() {
@@ -22,7 +28,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
 
   Future<void> _load() async {
     if (!_loading) setState(() => _loading = true);
-    final data = await AdminService.fetchCourts();
+    final data = await AdminService.fetchCourts(ownerId: widget.organizerId);
     if (!mounted) return;
     setState(() {
       _courts = data;
@@ -60,8 +66,10 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
           ]),
           const SizedBox(height: 16),
           AdminSection(
-            'Courts',
-            sub: '$total court${total != 1 ? 's' : ''}',
+            _isOrganizer ? 'Your Courts' : 'Courts',
+            sub: _isOrganizer
+                ? 'Your own courts — private to your community until an admin publishes them'
+                : '$total court${total != 1 ? 's' : ''}',
             action: AdminButton('Add', icon: Icons.add_rounded, height: 34, onPressed: _add),
           ),
           if (_loading)
@@ -116,6 +124,8 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                     color: iconTone),
               ),
               const Spacer(),
+              _visibilityPill(row),
+              const SizedBox(width: 6),
               StatusBadge(status, dot: true),
             ]),
             const SizedBox(height: 12),
@@ -149,6 +159,22 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   ),
                 ),
               ),
+              if (!_isOrganizer) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => _togglePublic(row),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                        color: AdminColors.surfaceAlt,
+                        borderRadius: BorderRadius.circular(9)),
+                    child: Text(
+                      row['is_public'] != false ? 'Make private' : 'Publish to all',
+                      style: AdminText.sans(12.5, FontWeight.w700, AdminColors.ink),
+                    ),
+                  ),
+                ),
+              ],
               const Spacer(),
               _iconBtn(Icons.edit_outlined, () => _edit(row)),
               const SizedBox(width: 8),
@@ -158,6 +184,34 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _visibilityPill(Map row) {
+    final isPublic = row['is_public'] != false; // null/absent → public (default)
+    final tone = isPublic ? AdminColors.green : AdminColors.info;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(
+          color: AdminColors.wash(tone, 0.14),
+          borderRadius: BorderRadius.circular(999)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(isPublic ? Icons.public_rounded : Icons.groups_2_rounded,
+            size: 11, color: tone),
+        const SizedBox(width: 4),
+        Text(isPublic ? 'Public' : 'Community',
+            style: AdminText.sans(10.5, FontWeight.w700, tone)),
+      ]),
+    );
+  }
+
+  Future<void> _togglePublic(Map<String, dynamic> row) async {
+    final makePublic = row['is_public'] == false; // currently private → publish
+    await AdminService.setCourtPublic(row['id'] as String, makePublic);
+    await _load();
+    if (mounted) {
+      adminToast(context,
+          makePublic ? 'Court published to all players' : 'Court set to community-only');
+    }
   }
 
   Widget _tag(IconData? icon, String text) => Container(
@@ -250,7 +304,11 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     adminSheet(
       context,
       title: isNew ? 'Add court' : 'Edit court',
-      sub: isNew ? 'New court — visible in the app' : ((row['venue_name'] as String?) ?? ''),
+      sub: isNew
+          ? (_isOrganizer
+              ? 'New court — private to your community'
+              : 'New court — visible in the app')
+          : ((row['venue_name'] as String?) ?? ''),
       heightFactor: 0.75,
       footer: ValueListenableBuilder<bool>(
         valueListenable: indoor,
@@ -271,6 +329,10 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 'indoor': v,
                 'is_active': true,
                 'in_maintenance': false,
+                // Organizer courts belong to them and stay community-only until
+                // an admin publishes them; admin-added courts are public.
+                if (_isOrganizer) 'owner_id': widget.organizerId,
+                if (_isOrganizer) 'is_public': false,
               });
             } else {
               await Supabase.instance.client.from('courts').update({

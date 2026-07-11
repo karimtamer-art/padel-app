@@ -132,9 +132,9 @@ language plpgsql stable security definer set search_path = public as $$
 begin
   if not public._is_admin() then return; end if;
   return query
-    select p.id, p.name, u.email, p.username,
+    select p.id, p.name, u.email::text, p.username,
            p.admin_role, p.admin_access, p.admin_scope,
-           coalesce(p.is_owner, false), p.avatar_url, p.level
+           coalesce(p.is_owner, false), p.avatar_url, p.level::numeric
       from public.profiles p
       join auth.users u on u.id = p.id
      where p.admin_role is not null
@@ -150,7 +150,7 @@ begin
   if not public._is_admin() then return; end if;
   if length(btrim(coalesce(p_term, ''))) < 2 then return; end if;
   return query
-    select p.id, p.name, u.email, p.level, p.avatar_url
+    select p.id, p.name, u.email::text, p.level::numeric, p.avatar_url
       from public.profiles p
       join auth.users u on u.id = p.id
      where p.admin_role is null

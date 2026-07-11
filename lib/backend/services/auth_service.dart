@@ -137,6 +137,19 @@ class AuthService {
     }
   }
 
+  /// Sets a new password for the signed-in user (used by the forced first-login
+  /// reset for provisioned organizers). Returns null on success, else a message.
+  static Future<String?> setPassword(String newPassword) async {
+    try {
+      await _db.auth.updateUser(UserAttributes(password: newPassword));
+      return null;
+    } on AuthException catch (e) {
+      return _friendlyAuthError(e);
+    } catch (e) {
+      return 'Could not update your password. Please try again.';
+    }
+  }
+
   /// Whether [email] is registered. Returns null if the check itself failed
   /// (so the caller falls back to a generic message rather than guessing).
   static Future<bool?> _emailExists(String email) async {

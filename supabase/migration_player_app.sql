@@ -2582,9 +2582,9 @@ language plpgsql stable security definer set search_path = public as $$
 begin
   if not public._is_admin() then return; end if;
   return query
-    select p.id, p.name, u.email, p.username,
+    select p.id, p.name, u.email::text, p.username,
            p.admin_role, p.admin_access, p.admin_scope,
-           coalesce(p.is_owner, false), p.avatar_url, p.level
+           coalesce(p.is_owner, false), p.avatar_url, p.level::numeric
       from public.profiles p
       join auth.users u on u.id = p.id
      where p.admin_role is not null
@@ -2599,7 +2599,7 @@ begin
   if not public._is_admin() then return; end if;
   if length(btrim(coalesce(p_term, ''))) < 2 then return; end if;
   return query
-    select p.id, p.name, u.email, p.level, p.avatar_url
+    select p.id, p.name, u.email::text, p.level::numeric, p.avatar_url
       from public.profiles p
       join auth.users u on u.id = p.id
      where p.admin_role is null
@@ -2998,6 +2998,26 @@ begin
      order by last.created_at desc;
 end $$;
 grant execute on function public.community_inbox() to authenticated;
+
+-- ── Organizer provisioning + court ownership (2026-07-11) ───────────────────
+-- Admin-provisioned organizers must reset their temp password on first login.
+alter table public.profiles
+  add column if not exists must_change_password boolean not null default false;
+
+create or replace function public.clear_must_change_password()
+returns void language sql security definer set search_path = public as $$
+  update public.profiles set must_change_password = false where id = auth.uid();
+$$;
+grant execute on function public.clear_must_change_password() to authenticated;
+
+-- Courts get an owner + a public flag. Organizer courts (owner set, is_public
+-- false) show only to his community; the admin can flip is_public = true to
+-- publish to all players. Existing courts default is_public = true.
+alter table public.courts
+  add column if not exists owner_id uuid references public.profiles(id) on delete set null;
+alter table public.courts
+  add column if not exists is_public boolean not null default true;
+create index if not exists idx_courts_owner on public.courts(owner_id);
 
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

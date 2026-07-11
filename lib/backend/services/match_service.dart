@@ -54,20 +54,31 @@ class MatchService {
     }
   }
 
-  /// Active courts for the create flow.
+  /// Active courts for the create flow. Only public courts are offered to
+  /// players — organizer courts (is_public = false) stay inside the community.
+  /// Falls back to the unfiltered query on pre-migration DBs without is_public.
   static Future<List<Map<String, dynamic>>> fetchCourts() async {
+    List rows;
     try {
-      final rows = await _db
+      rows = await _db
           .from('courts')
-          .select('id, name, venue_name, in_maintenance')
+          .select('id, name, venue_name, in_maintenance, is_public')
+          .eq('is_public', true)
           .order('venue_name');
-      return List<Map<String, dynamic>>.from(rows as List)
-          .where((c) => c['in_maintenance'] != true)
-          .toList();
-    } catch (e) {
-      debugPrint('[MatchService] fetchCourts: $e');
-      return [];
+    } catch (_) {
+      try {
+        rows = await _db
+            .from('courts')
+            .select('id, name, venue_name, in_maintenance')
+            .order('venue_name');
+      } catch (e) {
+        debugPrint('[MatchService] fetchCourts: $e');
+        return [];
+      }
     }
+    return List<Map<String, dynamic>>.from(rows)
+        .where((c) => c['in_maintenance'] != true)
+        .toList();
   }
 
   /// Player search for the partner picker (excludes self + admins).

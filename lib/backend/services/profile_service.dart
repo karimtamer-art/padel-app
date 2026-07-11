@@ -26,7 +26,7 @@ class ProfileService {
     try {
       row = await _sb
           .from('profiles')
-          .select('$_onbCols, admin_role')
+          .select('$_onbCols, admin_role, must_change_password')
           .eq('id', userId)
           .maybeSingle();
     } catch (_) {

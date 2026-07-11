@@ -69,6 +69,7 @@ class OnboardingProfile {
   final String? phone;
   final bool isAdmin;
   final String? adminRole; // super_admin | organizer | support | analyst | null
+  final bool mustChangePassword; // provisioned organizer on a temp password
 
   const OnboardingProfile({
     this.dateOfBirth,
@@ -78,6 +79,7 @@ class OnboardingProfile {
     this.phone,
     this.isAdmin = false,
     this.adminRole,
+    this.mustChangePassword = false,
   });
 
   /// Any console access — a super admin (is_admin) or a granted staff role.
@@ -99,6 +101,7 @@ class OnboardingProfile {
     String? phone,
     bool? isAdmin,
     String? adminRole,
+    bool? mustChangePassword,
   }) =>
       OnboardingProfile(
         dateOfBirth: dateOfBirth ?? this.dateOfBirth,
@@ -108,6 +111,7 @@ class OnboardingProfile {
         phone: phone ?? this.phone,
         isAdmin: isAdmin ?? this.isAdmin,
         adminRole: adminRole ?? this.adminRole,
+        mustChangePassword: mustChangePassword ?? this.mustChangePassword,
       );
 
   factory OnboardingProfile.fromJson(Map<String, dynamic> j) {
@@ -123,6 +127,7 @@ class OnboardingProfile {
       phone: j['phone'] as String?,
       isAdmin: j['is_admin'] as bool? ?? false,
       adminRole: j['admin_role'] as String?,
+      mustChangePassword: j['must_change_password'] as bool? ?? false,
     );
   }
 

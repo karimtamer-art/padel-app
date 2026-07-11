@@ -220,7 +220,7 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'players':     return const AdminPlayersScreen();
       case 'matches':     return const AdminMatchesScreen();
       case 'tournaments': return AdminTournamentsScreen(organizerId: orgId);
-      case 'courts':      return const AdminCourtsScreen();
+      case 'courts':      return AdminCourtsScreen(organizerId: orgId);
       case 'store':       return const AdminInventoryScreen();
       case 'promotions':  return const AdminPromotionsScreen();
       case 'payments':    return const AdminPaymentsScreen();
