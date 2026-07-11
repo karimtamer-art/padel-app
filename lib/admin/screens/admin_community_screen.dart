@@ -5,6 +5,7 @@
 // community_messages (organizers are console-only). Uses admin_kit.
 // ============================================================================
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../backend/services/community_service.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
@@ -114,40 +115,73 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
   }
 
   Widget _summary(Community c) => AdminCard(
-        child: Row(children: [
-          Container(
-            width: 50,
-            height: 50,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: AdminColors.gold.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(13)),
-            child: const Icon(Icons.groups_2_rounded, size: 25, color: AdminColors.gold),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Flexible(
-                    child: Text(c.name,
-                        style: AdminText.cardTitle(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis)),
-                if (c.verified) ...[
-                  const SizedBox(width: 5),
-                  const Icon(Icons.verified_rounded, size: 15, color: AdminColors.gold),
-                ],
+        onTap: c.handle != null
+            ? () {
+                Clipboard.setData(ClipboardData(text: '@${c.handle}'));
+                adminToast(context, 'Join code copied — share it with members');
+              }
+            : null,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              width: 50,
+              height: 50,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: AdminColors.gold.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(13)),
+              child: const Icon(Icons.groups_2_rounded, size: 25, color: AdminColors.gold),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Flexible(
+                      child: Text(c.name,
+                          style: AdminText.cardTitle(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis)),
+                  if (c.verified) ...[
+                    const SizedBox(width: 5),
+                    const Icon(Icons.verified_rounded, size: 15, color: AdminColors.gold),
+                  ],
+                ]),
+                const SizedBox(height: 2),
+                Text(
+                    [
+                      if (c.city != null) c.city!,
+                      '${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
+                    ].join(' · '),
+                    style: AdminText.small()),
               ]),
-              const SizedBox(height: 2),
-              Text(
-                  [
-                    if (c.handle != null) '@${c.handle}',
-                    if (c.city != null) c.city!,
-                    '${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
-                  ].join(' · '),
+            ),
+          ]),
+          if (c.handle != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                  color: AdminColors.wash(AdminColors.primary, 0.10),
+                  borderRadius: BorderRadius.circular(11)),
+              child: Row(children: [
+                const Icon(Icons.key_rounded, size: 16, color: AdminColors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('JOIN CODE', style: AdminText.kicker()),
+                    Text('@${c.handle}',
+                        style: AdminText.sans(15, FontWeight.w800, AdminColors.ink)),
+                  ]),
+                ),
+                const Icon(Icons.copy_rounded, size: 16, color: AdminColors.primary),
+              ]),
+            ),
+          ] else
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text('Add a handle to give members a join code.',
                   style: AdminText.small()),
-            ]),
-          ),
+            ),
         ]),
       );
 

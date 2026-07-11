@@ -139,6 +139,29 @@ class CommunityService {
   static Future<String?> leave(String communityId) =>
       _rpc('leave_community', {'p_community_id': communityId});
 
+  /// Join by the organizer's shared handle/code. Returns the community id on
+  /// success, or an error message to show the player.
+  static Future<({String? communityId, String? error})> joinByHandle(
+      String handle) async {
+    try {
+      final res = await _db
+          .rpc('join_community_by_handle', params: {'p_handle': handle});
+      final m = Map<String, dynamic>.from(res as Map);
+      if (m['ok'] == true) {
+        return (communityId: m['community_id'] as String?, error: null);
+      }
+      return (
+        communityId: null,
+        error: (m['error'] as String?) ?? 'Could not join.'
+      );
+    } on PostgrestException catch (e) {
+      return (communityId: null, error: e.message);
+    } catch (e) {
+      debugPrint('[CommunityService] joinByHandle: $e');
+      return (communityId: null, error: 'Could not join. Try again.');
+    }
+  }
+
   /// Toggle RSVP; returns the new going state (defaults false on error).
   static Future<bool> toggleRsvp(String announcementId) async {
     try {

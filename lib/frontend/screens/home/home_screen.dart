@@ -7,6 +7,7 @@ import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/frontend/widgets/skeleton.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
@@ -219,12 +220,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     ranking: widget.profile.ranking,
                     onFindMatch: () => _openFindMatch(context),
                   ),
-                if (_community != null) ...[
-                  const SizedBox(height: 24),
-                  SectionHeader(
-                      _community!.isMember ? 'Your Community' : 'Discover a Community'),
-                  _communitySection(),
-                ],
+                const SizedBox(height: 24),
+                SectionHeader(
+                    _community == null
+                        ? 'Community'
+                        : (_community!.isMember
+                            ? 'Your Community'
+                            : 'Discover a Community'),
+                    action: 'Have a code?',
+                    onAction: () => _promptJoinByCode(context)),
+                if (_community != null)
+                  _communitySection()
+                else
+                  _communityCodePrompt(),
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
                 _recentForm(),
@@ -300,6 +308,108 @@ class _HomeScreenState extends State<HomeScreen> {
         ]),
       ),
     );
+  }
+
+  // Empty state: no community surfaced — invite the player to enter a code.
+  Widget _communityCodePrompt() {
+    return Padding(
+      padding: AppSpacing.screenH,
+      child: AppCard(
+        onTap: () => _promptJoinByCode(context),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: AppColors.field, borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.key_rounded, size: 22, color: AppColors.inkFaint),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Have a community code?', style: AppText.bodyStrong()),
+              const SizedBox(height: 2),
+              Text('Enter the code your organizer gave you to join.',
+                  style: AppText.small(), maxLines: 2, overflow: TextOverflow.ellipsis),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          const AppTag('Enter', color: AppColors.primary, solid: true),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _promptJoinByCode(BuildContext c) async {
+    final controller = TextEditingController();
+    final id = await showModalBottomSheet<String>(
+      context: c,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        bool busy = false;
+        return StatefulBuilder(builder: (ctx, setSheet) {
+          Future<void> submit() async {
+            final code = controller.text.trim();
+            if (code.isEmpty || busy) return;
+            setSheet(() => busy = true);
+            final res = await CommunityService.joinByHandle(code);
+            if (!ctx.mounted) return;
+            if (res.communityId != null) {
+              Navigator.of(ctx).pop(res.communityId);
+            } else {
+              setSheet(() => busy = false);
+              AppToast.show(ctx, res.error ?? 'Could not join.',
+                  kind: ToastKind.error);
+            }
+          }
+
+          return Padding(
+            padding: EdgeInsets.only(
+                left: AppSpacing.screen,
+                right: AppSpacing.screen,
+                top: 20,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(20)),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('Join a community', style: AppText.cardTitle()),
+                const SizedBox(height: 6),
+                Text('Enter the code your organizer shared with you.',
+                    style: AppText.small(), textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textInputAction: TextInputAction.go,
+                  textCapitalization: TextCapitalization.none,
+                  onSubmitted: (_) => submit(),
+                  decoration: const InputDecoration(
+                    prefixText: '@',
+                    hintText: 'community code',
+                  ),
+                ),
+                const SizedBox(height: 18),
+                AppButton(busy ? 'Joining…' : 'Join',
+                    full: true,
+                    onPressed: busy ? null : submit),
+              ]),
+            ),
+          );
+        });
+      },
+    );
+    controller.dispose();
+    if (id == null || !mounted) return;
+    // Joined — open the hub, then refresh Home so the card flips to "Your Community".
+    await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => CommunityHubScreen(communityId: id)));
+    await _fetchCommunity();
+    if (mounted) setState(() {});
   }
 
   // ── Recent Form ──────────────────────────────────────────────────────────
