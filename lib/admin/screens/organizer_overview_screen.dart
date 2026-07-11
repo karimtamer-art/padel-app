@@ -80,7 +80,7 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
           physics: const NeverScrollableScrollPhysics(),
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
-          childAspectRatio: 1.5,
+          childAspectRatio: 1.2,
           children: [
             _kpiCard(Icons.emoji_events_outlined, AdminColors.gold, 'Your tournaments',
                 '${_n('tournaments')}',

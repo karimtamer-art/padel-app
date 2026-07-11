@@ -245,10 +245,15 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
 
   Future<void> _toggleMaintenance(Map<String, dynamic> row) async {
     final current = row['in_maintenance'] == true;
-    await Supabase.instance.client
-        .from('courts')
-        .update({'in_maintenance': !current})
-        .eq('id', row['id'] as String);
+    final id = row['id'] as String;
+    if (_isOrganizer) {
+      await AdminService.organizerSetCourtMaintenance(id, !current);
+    } else {
+      await Supabase.instance.client
+          .from('courts')
+          .update({'in_maintenance': !current})
+          .eq('id', id);
+    }
     await _load();
   }
 
@@ -268,9 +273,16 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
             icon: Icons.delete_outline_rounded,
             onPressed: () async {
               Navigator.pop(context);
-              await AdminService.deleteCourt(row['id'] as String);
+              final id = row['id'] as String;
+              String? err;
+              if (_isOrganizer) {
+                err = await AdminService.organizerDeleteCourt(id);
+              } else {
+                await AdminService.deleteCourt(id);
+              }
               await _load();
-              if (mounted) adminToast(context, '"$name" removed');
+              if (!mounted) return;
+              adminToast(context, err ?? '"$name" removed', ok: err == null);
             },
           ),
         ),
@@ -320,31 +332,49 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
           onPressed: () async {
             if (venueCt.text.trim().isEmpty) return;
             Navigator.pop(context);
-            if (isNew) {
-              await Supabase.instance.client.from('courts').insert({
-                'venue_name': venueCt.text.trim(),
-                'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
-                'area': areaCt.text.trim(),
-                'price_per_hour': num.tryParse(priceCt.text),
-                'indoor': v,
-                'is_active': true,
-                'in_maintenance': false,
-                // Organizer courts belong to them and stay community-only until
-                // an admin publishes them; admin-added courts are public.
-                if (_isOrganizer) 'owner_id': widget.organizerId,
-                if (_isOrganizer) 'is_public': false,
-              });
+            String? err;
+            if (_isOrganizer) {
+              // Organizers write via a SECURITY DEFINER RPC (RLS blocks direct
+              // writes); it stamps owner + community-only visibility.
+              err = await AdminService.organizerSaveCourt(
+                id: isNew ? null : row['id'] as String,
+                venue: venueCt.text.trim(),
+                name: nameCt.text.trim(),
+                area: areaCt.text.trim(),
+                price: num.tryParse(priceCt.text),
+                indoor: v,
+              );
+            } else if (isNew) {
+              try {
+                await Supabase.instance.client.from('courts').insert({
+                  'venue_name': venueCt.text.trim(),
+                  'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
+                  'area': areaCt.text.trim(),
+                  'price_per_hour': num.tryParse(priceCt.text),
+                  'indoor': v,
+                  'is_active': true,
+                  'in_maintenance': false,
+                });
+              } catch (e) {
+                err = e.toString();
+              }
             } else {
-              await Supabase.instance.client.from('courts').update({
-                'venue_name': venueCt.text.trim(),
-                'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
-                'area': areaCt.text.trim(),
-                'price_per_hour': num.tryParse(priceCt.text),
-                'indoor': v,
-              }).eq('id', row['id'] as String);
+              try {
+                await Supabase.instance.client.from('courts').update({
+                  'venue_name': venueCt.text.trim(),
+                  'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
+                  'area': areaCt.text.trim(),
+                  'price_per_hour': num.tryParse(priceCt.text),
+                  'indoor': v,
+                }).eq('id', row['id'] as String);
+              } catch (e) {
+                err = e.toString();
+              }
             }
             await _load();
-            if (mounted) adminToast(context, isNew ? 'Court added' : 'Court updated');
+            if (!mounted) return;
+            adminToast(context, err ?? (isNew ? 'Court added' : 'Court updated'),
+                ok: err == null);
           },
         ),
       ),

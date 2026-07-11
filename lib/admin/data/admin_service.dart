@@ -164,6 +164,50 @@ class AdminService {
     await _db.from('courts').update({'is_public': isPublic}).eq('id', id);
   }
 
+  // Organizer court management goes through SECURITY DEFINER RPCs (organizers are
+  // is_admin=false, so direct writes are blocked by RLS). Return null on success.
+
+  static Future<String?> organizerSaveCourt({
+    String? id,
+    required String venue,
+    required String name,
+    required String area,
+    num? price,
+    required bool indoor,
+  }) async {
+    try {
+      await _db.rpc('organizer_save_court', params: {
+        'p_id': id,
+        'p_venue': venue,
+        'p_name': name,
+        'p_area': area,
+        'p_price': price,
+        'p_indoor': indoor,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not save the court. Try again.';
+    }
+  }
+
+  static Future<String?> organizerDeleteCourt(String id) async {
+    try {
+      await _db.rpc('organizer_delete_court', params: {'p_id': id});
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not remove the court. Try again.';
+    }
+  }
+
+  static Future<void> organizerSetCourtMaintenance(String id, bool on) async {
+    await _db.rpc('organizer_set_court_maintenance',
+        params: {'p_id': id, 'p_on': on});
+  }
+
   // ── Staff provisioning ────────────────────────────────────────
 
   /// Super admin creates a staff account of any role (username + temp password)
