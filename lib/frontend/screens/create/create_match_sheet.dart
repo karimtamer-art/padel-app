@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
@@ -19,7 +20,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
   int _step = 0;
   int _type = 0; // 0 competitive 1 casual
   int _date = 0;
-  int _time = -1;
+  late TimeOfDay _tod; // scroll-picked time
   bool _open = true;
   int _minElo = 0;
   bool _busy = false;
@@ -35,7 +36,6 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
   final _search = TextEditingController();
 
   late final List<DateTime> _days;
-  static const _slots = [7, 8, 9, 12, 16, 18, 19, 21]; // hours
   static const _minEloValues = [0, 1000, 1500, 1800];
 
   @override
@@ -44,6 +44,8 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
     final now = DateTime.now();
     _days = List.generate(
         7, (i) => DateTime(now.year, now.month, now.day).add(Duration(days: i)));
+    // Default to the next full hour so the picker starts on a valid slot.
+    _tod = TimeOfDay(hour: (now.hour + 1) % 24, minute: 0);
     _load();
   }
 
@@ -82,19 +84,19 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
     return '${wd[_days[i].weekday - 1]} ${_days[i].day}';
   }
 
-  String _slotLabel(int h) {
-    final ap = h < 12 ? 'AM' : 'PM';
-    final hh = h % 12 == 0 ? 12 : h % 12;
-    return '$hh:00 $ap';
+  String _todLabel(TimeOfDay t) {
+    final ap = t.hour < 12 ? 'AM' : 'PM';
+    final hh = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    final mm = t.minute.toString().padLeft(2, '0');
+    return '$hh:$mm $ap';
   }
 
   DateTime get _scheduledAt =>
-      _days[_date].add(Duration(hours: _slots[_time < 0 ? 0 : _time]));
+      _days[_date].add(Duration(hours: _tod.hour, minutes: _tod.minute));
 
   /// On step 1, the chosen slot must be in the future.
   bool get _canNext {
     if (_step != 1) return true;
-    if (_time < 0) return false;
     return _scheduledAt.isAfter(DateTime.now());
   }
 
@@ -224,15 +226,20 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
 
   // ── Step 1: schedule ──
   Widget _scheduleStep() {
-    final pastSlot = _time >= 0 && !_scheduledAt.isAfter(DateTime.now());
+    final pastSlot = !_scheduledAt.isAfter(DateTime.now());
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _label('Date'),
       _pills([for (int i = 0; i < _days.length; i++) _dayLabel(i)], _date,
           (i) => setState(() => _date = i)),
       const SizedBox(height: 22),
-      _label('Time'),
-      _pills([for (final h in _slots) _slotLabel(h)], _time,
-          (i) => setState(() => _time = i)),
+      Row(children: [
+        _label('Time'),
+        const Spacer(),
+        Text(_todLabel(_tod),
+            style: AppText.bodyStrong().copyWith(color: AppColors.primary)),
+      ]),
+      const SizedBox(height: 8),
+      _timeWheel(),
       if (pastSlot)
         Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -278,6 +285,32 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         ]),
     ]);
   }
+
+  Widget _timeWheel() => Container(
+        height: 168,
+        decoration: BoxDecoration(
+          color: AppColors.field,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: CupertinoTheme(
+          data: CupertinoThemeData(
+            textTheme: CupertinoTextThemeData(
+              dateTimePickerTextStyle:
+                  AppText.bodyStrong().copyWith(fontSize: 20),
+            ),
+          ),
+          child: CupertinoDatePicker(
+            mode: CupertinoDatePickerMode.time,
+            minuteInterval: 5,
+            use24hFormat: false,
+            initialDateTime: DateTime(2020, 1, 1, _tod.hour, _tod.minute),
+            onDateTimeChanged: (dt) => setState(
+                () => _tod = TimeOfDay(hour: dt.hour, minute: dt.minute)),
+          ),
+        ),
+      );
 
   Widget _courtTile(Map<String, dynamic> c) {
     final id = c['id'] as String;
@@ -344,7 +377,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
             Text('SUMMARY', style: AppText.kicker()),
             const SizedBox(height: 8),
             _sumRow('Type', _type == 0 ? 'Competitive · Doubles' : 'Casual · Doubles'),
-            _sumRow('When', '${_dayLabel(_date)}${_time >= 0 ? ', ${_slotLabel(_slots[_time])}' : ''}'),
+            _sumRow('When', '${_dayLabel(_date)}, ${_todLabel(_tod)}'),
             _sumRow('Court', _courtName()),
             _sumRow('Your partner', _partner?['name'] as String? ?? 'Open spot'),
             _sumRow('Other team', _open ? 'Open lobby' : 'Invite only'),
