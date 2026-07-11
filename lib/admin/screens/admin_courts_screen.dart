@@ -309,7 +309,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
         ),
       ]),
       body: Text(
-        'This will hide "$name" from the booking screen. Existing bookings are unaffected.',
+        'This will hide "$name" from the venue list when players create a match.',
         style: AdminText.body().copyWith(height: 1.6),
       ),
     );
@@ -425,7 +425,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
               ValueListenableBuilder<bool>(
                 valueListenable: active,
                 builder: (_, a, __) => _check(
-                    'Active (bookable in the app)', a, () => active.value = !a),
+                    'Active (shown as a match venue)', a, () => active.value = !a),
               ),
             ],
           ],
