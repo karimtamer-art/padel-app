@@ -42,12 +42,12 @@ class _AdminTeamScreenState extends State<AdminTeamScreen> {
 
   int _count(RoleId r) => _staff.where((s) => s.role == r).length;
 
-  Future<void> _openCreateOrganizer() async {
+  Future<void> _openCreateStaff() async {
     final created = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _CreateOrganizerSheet(),
+      builder: (_) => const _CreateStaffSheet(),
     );
     if (created == true) _load();
   }
@@ -92,10 +92,10 @@ class _AdminTeamScreenState extends State<AdminTeamScreen> {
             'sections each person can open.',
             style: AdminText.small()),
         const SizedBox(height: 14),
-        AdminButton('Create organizer',
+        AdminButton('Create teammate',
             icon: Icons.person_add_alt_1,
             variant: AdminBtn.primary,
-            onPressed: _openCreateOrganizer),
+            onPressed: _openCreateStaff),
         const SizedBox(height: 8),
         AdminButton('Invite an existing user',
             icon: Icons.mail_outline,
@@ -269,19 +269,20 @@ class _AdminTeamScreenState extends State<AdminTeamScreen> {
       );
 }
 
-// ── Create organizer (provision a new account) ──────────────────────────────
-class _CreateOrganizerSheet extends StatefulWidget {
-  const _CreateOrganizerSheet();
+// ── Create teammate (provision a new account of any role) ───────────────────
+class _CreateStaffSheet extends StatefulWidget {
+  const _CreateStaffSheet();
   @override
-  State<_CreateOrganizerSheet> createState() => _CreateOrganizerSheetState();
+  State<_CreateStaffSheet> createState() => _CreateStaffSheetState();
 }
 
-class _CreateOrganizerSheetState extends State<_CreateOrganizerSheet> {
+class _CreateStaffSheetState extends State<_CreateStaffSheet> {
   final _name = TextEditingController();
   final _username = TextEditingController();
   final _scope = TextEditingController();
   late final _password =
       TextEditingController(text: AdminService.generateTempPassword());
+  RoleId _role = RoleId.organizer;
   bool _busy = false;
   String? _error;
   // Set once the account is created — shows the shareable credentials.
@@ -317,11 +318,14 @@ class _CreateOrganizerSheetState extends State<_CreateOrganizerSheet> {
       _error = null;
     });
     final username = _username.text.trim().toLowerCase();
-    final err = await AdminService.createOrganizer(
+    final err = await AdminService.createStaff(
       name: _name.text.trim(),
       username: username,
       password: _password.text,
-      scope: _scope.text.trim().isEmpty ? null : _scope.text.trim(),
+      role: roleToString(_role),
+      scope: _role == RoleId.organizer && _scope.text.trim().isNotEmpty
+          ? _scope.text.trim()
+          : null,
     );
     if (!mounted) return;
     if (err != null) {
@@ -353,7 +357,7 @@ class _CreateOrganizerSheetState extends State<_CreateOrganizerSheet> {
             padding: const EdgeInsets.fromLTRB(18, 16, 12, 12),
             child: Row(children: [
               Expanded(
-                  child: Text(_created == null ? 'Create organizer' : 'Account created',
+                  child: Text(_created == null ? 'Create teammate' : 'Account created',
                       style: AdminText.h2())),
               IconButton(
                   icon: const Icon(Icons.close_rounded, color: AdminColors.inkSoft),
@@ -381,11 +385,42 @@ class _CreateOrganizerSheetState extends State<_CreateOrganizerSheet> {
                 color: AdminColors.wash(AdminColors.primary, 0.08),
                 borderRadius: AdminUI.cardR),
             child: Text(
-                'Creates a console-only organizer. They log in with the username '
-                'and temp password below, then set their own password on first '
+                'Creates a console account. They log in with the username and '
+                'temp password below, then set their own password on first '
                 'sign-in.',
                 style: AdminText.small()),
           ),
+          const SizedBox(height: 16),
+          _label('Role'),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final r in RoleId.values)
+              GestureDetector(
+                onTap: () => setState(() => _role = r),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: _role == r
+                        ? kRoles[r]!.color.withValues(alpha: 0.1)
+                        : AdminColors.surface,
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(
+                        color: _role == r ? kRoles[r]!.color : AdminColors.line,
+                        width: 1.5),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(kRoles[r]!.icon,
+                        size: 15,
+                        color: _role == r ? kRoles[r]!.color : AdminColors.ink),
+                    const SizedBox(width: 7),
+                    Text(kRoles[r]!.label,
+                        style: AdminText.sans(13, FontWeight.w700,
+                            _role == r ? kRoles[r]!.color : AdminColors.ink)),
+                  ]),
+                ),
+              ),
+          ]),
+          const SizedBox(height: 6),
+          Text(kRoles[_role]!.tagline, style: AdminText.small()),
           const SizedBox(height: 16),
           _label('Full name'),
           _field(_name, 'e.g. Ahmed Hassan'),
@@ -400,9 +435,11 @@ class _CreateOrganizerSheetState extends State<_CreateOrganizerSheet> {
             onPressed: () => setState(
                 () => _password.text = AdminService.generateTempPassword()),
           )),
-          const SizedBox(height: 14),
-          _label('Region / venue scope (optional)'),
-          _field(_scope, 'e.g. Cairo & New Cairo'),
+          if (_role == RoleId.organizer) ...[
+            const SizedBox(height: 14),
+            _label('Region / venue scope (optional)'),
+            _field(_scope, 'e.g. Cairo & New Cairo'),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 14),
             Row(children: [
@@ -412,7 +449,7 @@ class _CreateOrganizerSheetState extends State<_CreateOrganizerSheet> {
             ]),
           ],
           const SizedBox(height: 20),
-          AdminButton(_busy ? 'Creating…' : 'Create organizer',
+          AdminButton(_busy ? 'Creating…' : 'Create ${kRoles[_role]!.label}',
               full: true,
               height: 50,
               icon: Icons.person_add_alt_1,

@@ -1,12 +1,13 @@
-// create-organizer — Supabase Edge Function.
+// create-staff — Supabase Edge Function.
 //
-// A super admin provisions an organizer account: a username + a temporary
-// password. We synthesize a login email (<username>@padelegypt.app — the same
-// scheme the app's username login already uses), create the auth user with the
-// service role, and stamp the profile as an organizer that must reset its
+// A super admin provisions a staff account of ANY role (super_admin, organizer,
+// support, analyst): a username + a temporary password. We synthesize a login
+// email (<username>@padelegypt.app — the same scheme the app's username login
+// already uses), create the auth user with the service role, and stamp the
+// profile with the chosen role, flagged must_change_password so they reset the
 // password on first login.
 //
-// Called from the admin console via supabase.functions.invoke('create-organizer').
+// Called from the admin console via supabase.functions.invoke('create-staff').
 // The caller's JWT is forwarded automatically; we verify it belongs to a
 // super admin before doing anything.
 //
@@ -20,6 +21,7 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 // Must match AuthService.usernameDomain in the Flutter app.
 const USERNAME_DOMAIN = "padelegypt.app";
+const ROLES = ["super_admin", "organizer", "support", "analyst"];
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -65,7 +67,7 @@ Deno.serve(async (req) => {
     const isSuperAdmin =
       me?.is_admin === true || me?.admin_role === "super_admin";
     if (!isSuperAdmin) {
-      return json({ error: "Only a super admin can create organizers." }, 403);
+      return json({ error: "Only a super admin can create staff." }, 403);
     }
 
     // 2. Validate input.
@@ -73,9 +75,13 @@ Deno.serve(async (req) => {
     const name = String(body.name ?? "").trim();
     const username = String(body.username ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
+    const role = String(body.role ?? "").trim();
     const scope = body.scope ? String(body.scope).trim() : null;
+    // Optional custom section list; null → the role's default access.
+    const access = Array.isArray(body.access) ? body.access.map(String) : null;
 
     if (!name) return json({ error: "Name is required." }, 400);
+    if (!ROLES.includes(role)) return json({ error: "Invalid role." }, 400);
     if (!/^[a-z0-9_]{3,20}$/.test(username)) {
       return json({
         error:
@@ -88,7 +94,7 @@ Deno.serve(async (req) => {
 
     const email = `${username}@${USERNAME_DOMAIN}`;
 
-    // 3. Reject a taken username (either as a profile handle or a login email).
+    // 3. Reject a taken username.
     const { data: clash } = await admin
       .from("profiles")
       .select("id")
@@ -106,7 +112,6 @@ Deno.serve(async (req) => {
       });
     if (createErr || !created?.user) {
       const msg = createErr?.message ?? "Could not create the account.";
-      // Duplicate email → username effectively taken.
       if (/already|exists|registered/i.test(msg)) {
         return json({ error: "That username is already taken." }, 409);
       }
@@ -115,25 +120,24 @@ Deno.serve(async (req) => {
 
     const newId = created.user.id;
 
-    // 5. Stamp the profile as an organizer that must reset its password.
-    //    upsert so it works whether or not a signup trigger pre-created the row.
+    // 5. Stamp the profile with the chosen role. Only super_admin keeps
+    //    is_admin=true (full DB access); other roles are is_admin=false.
     const { error: upErr } = await admin.from("profiles").upsert({
       id: newId,
       name,
       username,
-      is_admin: false,
-      admin_role: "organizer",
-      admin_access: null, // null → organizer role default
+      is_admin: role === "super_admin",
+      admin_role: role,
+      admin_access: access, // null → role default
       admin_scope: scope,
       must_change_password: true,
     }, { onConflict: "id" });
     if (upErr) {
-      // Roll back the orphaned auth user so the admin can retry cleanly.
       await admin.auth.admin.deleteUser(newId).catch(() => {});
       return json({ error: `Profile setup failed: ${upErr.message}` }, 400);
     }
 
-    return json({ ok: true, user_id: newId, email, username });
+    return json({ ok: true, user_id: newId, email, username, role });
   } catch (e) {
     return json({ error: `Unexpected error: ${e}` }, 500);
   }

@@ -164,21 +164,26 @@ class AdminService {
     await _db.from('courts').update({'is_public': isPublic}).eq('id', id);
   }
 
-  // ── Organizer provisioning ────────────────────────────────────
+  // ── Staff provisioning ────────────────────────────────────────
 
-  /// Super admin creates an organizer account (username + temp password) via the
-  /// `create-organizer` Edge Function. Returns null on success, else a message.
-  static Future<String?> createOrganizer({
+  /// Super admin creates a staff account of any role (username + temp password)
+  /// via the `create-staff` Edge Function. Pass [access] to override the role's
+  /// default sections. Returns null on success, else a message.
+  static Future<String?> createStaff({
     required String name,
     required String username,
     required String password,
+    required String role,
+    List<String>? access,
     String? scope,
   }) async {
     try {
-      final res = await _db.functions.invoke('create-organizer', body: {
+      final res = await _db.functions.invoke('create-staff', body: {
         'name': name,
         'username': username,
         'password': password,
+        'role': role,
+        'access': access,
         'scope': scope,
       });
       final data = res.data;
@@ -187,10 +192,10 @@ class AdminService {
     } on FunctionException catch (e) {
       final d = e.details;
       if (d is Map && d['error'] != null) return d['error'].toString();
-      return 'Could not create organizer (status ${e.status}).';
+      return 'Could not create account (status ${e.status}).';
     } catch (e) {
-      debugPrint('[AdminService] createOrganizer: $e');
-      return 'Could not create organizer. Try again.';
+      debugPrint('[AdminService] createStaff: $e');
+      return 'Could not create account. Try again.';
     }
   }
 
