@@ -1552,6 +1552,17 @@ class _CustomDrawBuilderState extends State<_CustomDrawBuilder> {
     return '$first / ${partner.split(' ').first}';
   }
 
+  Future<void> _advance() async {
+    setState(() => _busy = true);
+    final err = await AdminService.advanceStage(widget.tournamentId);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    // advance_stage returns null on success, or a human message (some are
+    // informational like "Champion decided"). Treat null as success.
+    adminToast(context, err ?? 'Next round seeded from the results', ok: err == null);
+    if (err == null) _load();
+  }
+
   Future<void> _addMatch() async {
     if (widget.entries.isEmpty) {
       adminToast(context, 'No registered pairs yet.');
@@ -1752,15 +1763,30 @@ class _CustomDrawBuilderState extends State<_CustomDrawBuilder> {
       byLabel.putIfAbsent(m['bracket'] as String? ?? 'Round 1', () => []).add(m);
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      AdminButton(_busy ? 'Working…' : 'Add a match',
-          full: true,
-          height: 46,
-          icon: Icons.add_rounded,
-          variant: AdminBtn.primary,
-          onPressed: _busy ? null : _addMatch),
+      Row(children: [
+        Expanded(
+          child: AdminButton(_busy ? 'Working…' : 'Add a match',
+              full: true,
+              height: 46,
+              icon: Icons.add_rounded,
+              variant: AdminBtn.primary,
+              onPressed: _busy ? null : _addMatch),
+        ),
+        if (_matches.isNotEmpty) ...[
+          const SizedBox(width: 10),
+          Expanded(
+            child: AdminButton(_busy ? '…' : 'Advance',
+                full: true,
+                height: 46,
+                icon: Icons.playlist_add_check_rounded,
+                variant: AdminBtn.ghost,
+                onPressed: _busy ? null : _advance),
+          ),
+        ],
+      ]),
       const SizedBox(height: 6),
       Text('${widget.entries.length} registered pair${widget.entries.length == 1 ? '' : 's'} · '
-          'add matches into groups or rounds and set winners by hand.',
+          'add matches by hand, or after finishing a round tap Advance to seed the next.',
           style: AdminText.small(AdminColors.inkFaint)),
       const SizedBox(height: 16),
       if (_matches.isEmpty)

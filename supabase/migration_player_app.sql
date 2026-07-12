@@ -3296,6 +3296,31 @@ begin
 end $$;
 grant execute on function public.save_tournament_format(uuid, jsonb) to authenticated;
 
+alter table public.tournament_matches add column if not exists stage int not null default 0;
+
+create or replace function public._ko_round_name(p_size int)
+returns text language sql immutable as $$
+  select case p_size when 2 then 'Final' when 4 then 'Semifinal'
+                     when 8 then 'Quarterfinal' else 'Round of ' || p_size end;
+$$;
+
+create or replace function public._build_ko_round(p_tid uuid, p_stage int, p_round int, p_pairs uuid[])
+returns void language plpgsql as $$
+declare n int := coalesce(array_length(p_pairs, 1), 0); v_size int := 2; v_slots int;
+        i int; e1 uuid; e2 uuid; v_label text;
+begin
+  if n < 2 then return; end if;
+  while v_size < n loop v_size := v_size * 2; end loop;
+  v_slots := v_size / 2;
+  v_label := public._ko_round_name(v_size);
+  for i in 0 .. v_slots - 1 loop
+    e1 := p_pairs[i + 1];
+    e2 := case when (v_size - i) <= n then p_pairs[v_size - i] else null end;
+    insert into public.tournament_matches (tournament_id, bracket, round, slot, entry1, entry2, winner_entry, stage)
+    values (p_tid, v_label, p_round, i, e1, e2, case when e2 is null then e1 else null end, p_stage);
+  end loop;
+end $$;
+
 create or replace function public.generate_from_format(p_tournament_id uuid)
 returns text language plpgsql security definer set search_path = public as $$
 declare
@@ -3332,8 +3357,8 @@ begin
         v_slot := 0;
         for a in 1 .. coalesce(array_length(grp, 1), 0) loop
           for b in a + 1 .. coalesce(array_length(grp, 1), 0) loop
-            insert into public.tournament_matches (tournament_id, bracket, round, slot, entry1, entry2)
-            values (p_tournament_id, v_label, 1, v_slot, grp[a], grp[b]);
+            insert into public.tournament_matches (tournament_id, bracket, round, slot, entry1, entry2, stage)
+            values (p_tournament_id, v_label, 1, v_slot, grp[a], grp[b], 0);
             v_slot := v_slot + 1;
           end loop;
         end loop;
@@ -3346,8 +3371,8 @@ begin
     begin
       for a in 1 .. v_n loop
         for b in a + 1 .. v_n loop
-          insert into public.tournament_matches (tournament_id, bracket, round, slot, entry1, entry2)
-          values (p_tournament_id, 'Round robin', 1, v_slot, v_entries[a], v_entries[b]);
+          insert into public.tournament_matches (tournament_id, bracket, round, slot, entry1, entry2, stage)
+          values (p_tournament_id, 'Round robin', 1, v_slot, v_entries[a], v_entries[b], 0);
           v_slot := v_slot + 1;
         end loop;
       end loop;
@@ -3355,22 +3380,7 @@ begin
     return null;
 
   elsif v_kind in ('knockout', 'doubleElim', 'consolation') then
-    declare v_size int := 2; v_slots int; i int; e1 uuid; e2 uuid;
-    begin
-      while v_size < v_n loop v_size := v_size * 2; end loop;
-      v_slots := v_size / 2;
-      for i in 0 .. v_slots - 1 loop
-        e1 := v_entries[i + 1];
-        e2 := case when (v_size - i) <= v_n then v_entries[v_size - i] else null end;
-        insert into public.tournament_matches (tournament_id, bracket, round, slot, entry1, entry2, winner_entry)
-        values (p_tournament_id, 'wb', 1, i, e1, e2, case when e2 is null then e1 else null end);
-      end loop;
-      for i in 0 .. v_slots - 1 loop
-        select entry1, winner_entry into e1, e2 from public.tournament_matches
-          where tournament_id = p_tournament_id and bracket = 'wb' and round = 1 and slot = i;
-        if e2 is not null then perform public._advance_winner(p_tournament_id, 'wb', 1, i, e2); end if;
-      end loop;
-    end;
+    perform public._build_ko_round(p_tournament_id, 0, 1, v_entries);
     return null;
 
   else
@@ -3378,6 +3388,81 @@ begin
   end if;
 end $$;
 grant execute on function public.generate_from_format(uuid) to authenticated;
+
+create or replace function public.advance_stage(p_tournament_id uuid)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_spec jsonb; v_stages jsonb; v_cur_stage int; v_cur_round int; v_kind text;
+  v_adv int; quals uuid[]; wins uuid[];
+begin
+  if not public.owns_tournament(p_tournament_id) then return 'Not authorised.'; end if;
+  select format_spec into v_spec from public.tournaments where id = p_tournament_id;
+  v_stages := coalesce(v_spec->'stages', '[]'::jsonb);
+  select max(stage) into v_cur_stage from public.tournament_matches where tournament_id = p_tournament_id;
+  if v_cur_stage is null then return 'Generate the first stage first.'; end if;
+  select max(round) into v_cur_round from public.tournament_matches
+    where tournament_id = p_tournament_id and stage = v_cur_stage;
+  if exists (select 1 from public.tournament_matches
+              where tournament_id = p_tournament_id and stage = v_cur_stage
+                and round = v_cur_round and winner_entry is null) then
+    return 'Finish all matches in the current round first.';
+  end if;
+  v_kind := v_stages->v_cur_stage->>'kind';
+
+  if v_kind = 'groups' then
+    v_adv := coalesce((v_stages->v_cur_stage->'cfg'->>'advance')::int, 2);
+    quals := array(
+      select pid from (
+        select bracket, pid, row_number() over (partition by bracket order by wins desc) rn
+          from (
+            select bracket, pid, count(*) filter (where won) wins from (
+              select bracket, entry1 pid, (winner_entry = entry1) won
+                from public.tournament_matches
+               where tournament_id = p_tournament_id and stage = v_cur_stage and entry1 is not null
+              union all
+              select bracket, entry2 pid, (winner_entry = entry2) won
+                from public.tournament_matches
+               where tournament_id = p_tournament_id and stage = v_cur_stage and entry2 is not null
+            ) u group by bracket, pid
+          ) s
+      ) r where rn <= v_adv order by rn, bracket);
+    if v_cur_stage + 1 >= jsonb_array_length(v_stages) then
+      return 'Groups done — add a knockout stage to the format to continue.';
+    end if;
+    perform public._build_ko_round(p_tournament_id, v_cur_stage + 1, 1, quals);
+    return null;
+
+  elsif v_kind in ('roundRobin', 'swiss') then
+    v_adv := coalesce((v_stages->v_cur_stage->'cfg'->>'advance')::int, 4);
+    quals := array(
+      select pid from (
+        select pid, count(*) filter (where won) wins from (
+          select entry1 pid, (winner_entry = entry1) won from public.tournament_matches
+           where tournament_id = p_tournament_id and stage = v_cur_stage and entry1 is not null
+          union all
+          select entry2 pid, (winner_entry = entry2) won from public.tournament_matches
+           where tournament_id = p_tournament_id and stage = v_cur_stage and entry2 is not null
+        ) u group by pid order by wins desc
+      ) s limit v_adv);
+    if v_cur_stage + 1 >= jsonb_array_length(v_stages) then
+      return 'Stage done — add a knockout stage to the format to continue.';
+    end if;
+    perform public._build_ko_round(p_tournament_id, v_cur_stage + 1, 1, quals);
+    return null;
+
+  else
+    select array_agg(winner_entry order by slot) into wins
+      from public.tournament_matches
+     where tournament_id = p_tournament_id and stage = v_cur_stage
+       and round = v_cur_round and winner_entry is not null;
+    if coalesce(array_length(wins, 1), 0) <= 1 then
+      return 'Champion decided — no more rounds.';
+    end if;
+    perform public._build_ko_round(p_tournament_id, v_cur_stage, v_cur_round + 1, wins);
+    return null;
+  end if;
+end $$;
+grant execute on function public.advance_stage(uuid) to authenticated;
 
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

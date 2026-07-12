@@ -477,6 +477,20 @@ class AdminService {
     }
   }
 
+  /// Advance the draw: current round → next round, or a completed group/RR
+  /// stage → the next stage's knockout, seeded by standings.
+  static Future<String?> advanceStage(String tournamentId) async {
+    try {
+      final res = await _db
+          .rpc('advance_stage', params: {'p_tournament_id': tournamentId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// The organizer's reusable format library.
   static Future<List<Map<String, dynamic>>> savedFormats() async {
     try {
