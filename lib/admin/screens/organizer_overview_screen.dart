@@ -113,7 +113,15 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
             const SizedBox(height: 6),
             if (_n('reach') == 0)
               Text('No participants yet — reach unlocks once players enter your events.',
-                  style: AdminText.small(AdminColors.inkFaint)),
+                  style: AdminText.small(AdminColors.inkFaint))
+            else ...[
+              const SizedBox(height: 6),
+              Row(children: [
+                _reachStat('${_n('reach')}', 'participants'),
+                _reachStat('${_n('largest_event')}', 'largest event'),
+                _reachStat('${_n('open_rate')}%', 'avg. open rate'),
+              ]),
+            ],
           ]),
         ),
         const SizedBox(height: 16),
@@ -151,6 +159,13 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
       ]),
     );
   }
+
+  Widget _reachStat(String value, String label) => Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(value, style: AdminText.sans(18, FontWeight.w800, AdminColors.ink, ls: -0.5)),
+          Text(label, style: AdminText.small(AdminColors.inkFaint)),
+        ]),
+      );
 
   Widget _kpiCard(IconData i, Color tone, String label, String value, String foot) =>
       AdminCard(

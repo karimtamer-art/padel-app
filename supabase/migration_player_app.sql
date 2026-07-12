@@ -2742,7 +2742,18 @@ begin
                        and te.status = 'paid'),
     'to_verify',   (select count(*) from tournament_entries te
                      where te.tournament_id in (select id from tournaments where organizer_id = v_uid)
-                       and te.status = 'pending')
+                       and te.status = 'pending'),
+    'largest_event', (select coalesce(max(cnt), 0) from (
+                       select te.tournament_id, count(*) cnt from tournament_entries te
+                        where te.tournament_id in (select id from tournaments where organizer_id = v_uid)
+                          and te.status not in ('withdrawn','cancelled')
+                        group by te.tournament_id) x),
+    'open_rate',   (select case when count(*) = 0 then 0
+                       else round(100.0 * count(*) filter (where n.read) / count(*)) end
+                     from notifications n
+                    where n.type = 'community'
+                      and n.data->>'community_id' in
+                          (select id::text from communities where organizer_id = v_uid))
   );
 end $$;
 grant execute on function public.organizer_overview() to authenticated;
