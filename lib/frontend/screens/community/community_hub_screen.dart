@@ -78,18 +78,49 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
     setState(() {
       _feed = _feed
           .map((x) => x.id == a.id
-              ? Announcement(
-                  id: x.id,
-                  title: x.title,
-                  body: x.body,
-                  pinned: x.pinned,
-                  iGoing: going,
-                  going: x.going + (going ? 1 : -1),
-                  createdAt: x.createdAt)
+              ? x.copyWith(iGoing: going, going: x.going + (going ? 1 : -1))
               : x)
           .toList();
     });
   }
+
+  Future<void> _like(Announcement a) async {
+    final liked = await CommunityService.toggleLike(a.id);
+    if (!mounted) return;
+    setState(() {
+      _feed = _feed
+          .map((x) => x.id == a.id
+              ? x.copyWith(iLiked: liked, likes: x.likes + (liked ? 1 : -1))
+              : x)
+          .toList();
+    });
+  }
+
+  Future<void> _openComments(Announcement a) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _CommentsSheet(
+          announcementId: a.id, canPost: _c?.isMember ?? false),
+    );
+    // Refresh so the comment count reflects any new posts.
+    final c = _c;
+    if (c == null) return;
+    final feed = await CommunityService.feed(c.id);
+    if (mounted) setState(() => _feed = feed);
+  }
+
+  Widget _iconStat(IconData icon, String label, Color color, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 5),
+          Text(label, style: AppText.small(color)),
+        ]),
+      );
 
   void _message() {
     final c = _c;
@@ -384,6 +415,17 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
                       const Spacer(),
                       Text(_ago(a.createdAt), style: AppText.small(AppColors.inkFaint)),
                     ]),
+                    const Divider(height: 18, color: AppColors.lineSoft),
+                    Row(children: [
+                      _iconStat(
+                          a.iLiked ? Icons.star_rounded : Icons.star_border_rounded,
+                          '${a.likes}',
+                          a.iLiked ? AppColors.gold : AppColors.inkSoft,
+                          () => _like(a)),
+                      const SizedBox(width: 18),
+                      _iconStat(Icons.chat_bubble_outline_rounded, '${a.comments}',
+                          AppColors.inkSoft, () => _openComments(a)),
+                    ]),
                   ]),
                 ),
               )))
@@ -467,5 +509,181 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
     if (d.inHours < 24) return '${d.inHours}h';
     if (d.inDays < 7) return '${d.inDays}d';
     return '${(d.inDays / 7).floor()}w';
+  }
+}
+
+// ── Comments on an announcement ─────────────────────────────────────────────
+class _CommentsSheet extends StatefulWidget {
+  final String announcementId;
+  final bool canPost;
+  const _CommentsSheet({required this.announcementId, required this.canPost});
+  @override
+  State<_CommentsSheet> createState() => _CommentsSheetState();
+}
+
+class _CommentsSheetState extends State<_CommentsSheet> {
+  final _input = TextEditingController();
+  List<CommentLite> _comments = [];
+  bool _loading = true;
+  bool _sending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final rows = await CommunityService.comments(widget.announcementId);
+    if (mounted) setState(() { _comments = rows; _loading = false; });
+  }
+
+  Future<void> _send() async {
+    final body = _input.text.trim();
+    if (body.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    final err = await CommunityService.addComment(widget.announcementId, body);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (err != null) {
+      AppToast.show(context, err, kind: ToastKind.error);
+      return;
+    }
+    _input.clear();
+    _load();
+  }
+
+  static String _ago(DateTime? t) {
+    if (t == null) return '';
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return 'now';
+    if (d.inMinutes < 60) return '${d.inMinutes}m';
+    if (d.inHours < 24) return '${d.inHours}h';
+    if (d.inDays < 7) return '${d.inDays}d';
+    return '${(d.inDays / 7).floor()}w';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8),
+        decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                  color: AppColors.line, borderRadius: BorderRadius.circular(2))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+            child: Row(children: [
+              Text('Comments', style: AppText.cardTitle().copyWith(fontSize: 17)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: const Icon(Icons.close_rounded, color: AppColors.inkSoft),
+              ),
+            ]),
+          ),
+          const Divider(height: 1, color: AppColors.lineSoft),
+          Flexible(
+            child: _loading
+                ? const Padding(
+                    padding: EdgeInsets.all(28),
+                    child: Center(child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.primary)))
+                : _comments.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.all(28),
+                        child: Text('No comments yet. Be the first.',
+                            style: AppText.small(), textAlign: TextAlign.center))
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _comments.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 14),
+                        itemBuilder: (_, i) {
+                          final c = _comments[i];
+                          return Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            AppAvatar(_initials(c.name), size: 34),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                Row(children: [
+                                  Text(c.name, style: AppText.bodyStrong().copyWith(fontSize: 13)),
+                                  const SizedBox(width: 6),
+                                  Text(_ago(c.at), style: AppText.small(AppColors.inkFaint)),
+                                ]),
+                                const SizedBox(height: 2),
+                                Text(c.body, style: AppText.body(AppColors.inkSoft)),
+                              ]),
+                            ),
+                          ]);
+                        },
+                      ),
+          ),
+          if (widget.canPost) ...[
+            const Divider(height: 1, color: AppColors.lineSoft),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+              child: Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _send(),
+                    decoration: InputDecoration(
+                      hintText: 'Add a comment…',
+                      filled: true,
+                      fillColor: AppColors.field,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(22),
+                          borderSide: BorderSide.none),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _sending ? null : _send,
+                  child: Container(
+                    width: 44, height: 44,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                        color: AppColors.primary, shape: BoxShape.circle),
+                    child: const Icon(Icons.arrow_upward_rounded,
+                        color: AppColors.primaryInk, size: 20),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  static String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 }

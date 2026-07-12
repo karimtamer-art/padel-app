@@ -174,6 +174,37 @@ class CommunityService {
     }
   }
 
+  /// Toggle like on an announcement; returns the new liked state.
+  static Future<bool> toggleLike(String announcementId) async {
+    try {
+      final res = await _db.rpc('toggle_announcement_like',
+          params: {'p_announcement_id': announcementId});
+      return res == true;
+    } catch (e) {
+      debugPrint('[CommunityService] toggleLike: $e');
+      return false;
+    }
+  }
+
+  /// Comments on an announcement, oldest first.
+  static Future<List<CommentLite>> comments(String announcementId) async {
+    try {
+      final res = await _db.rpc('announcement_comments',
+          params: {'p_announcement_id': announcementId});
+      return (res as List)
+          .map((r) => CommentLite.fromRow(Map<String, dynamic>.from(r as Map)))
+          .toList();
+    } catch (e) {
+      debugPrint('[CommunityService] comments: $e');
+      return [];
+    }
+  }
+
+  /// Post a comment; returns null on success, else an error message.
+  static Future<String?> addComment(String announcementId, String body) =>
+      _rpc('add_announcement_comment',
+          {'p_announcement_id': announcementId, 'p_body': body});
+
   // ── Messaging (member ↔ organizer) ──────────────────────────────
 
   /// The signed-in member's thread with the organizer, oldest first.
@@ -359,8 +390,8 @@ class CommunityEvent {
 class Announcement {
   final String id, title;
   final String? body;
-  final bool pinned, iGoing;
-  final int going;
+  final bool pinned, iGoing, iLiked;
+  final int going, likes, comments;
   final DateTime? createdAt;
   const Announcement({
     required this.id,
@@ -368,7 +399,10 @@ class Announcement {
     this.body,
     this.pinned = false,
     this.iGoing = false,
+    this.iLiked = false,
     this.going = 0,
+    this.likes = 0,
+    this.comments = 0,
     this.createdAt,
   });
 
@@ -378,8 +412,40 @@ class Announcement {
         body: r['body'] as String?,
         pinned: r['pinned'] == true,
         iGoing: r['i_going'] == true,
+        iLiked: r['i_liked'] == true,
         going: (r['going'] as num?)?.toInt() ?? 0,
+        likes: (r['likes'] as num?)?.toInt() ?? 0,
+        comments: (r['comments'] as num?)?.toInt() ?? 0,
         createdAt: DateTime.tryParse(r['created_at']?.toString() ?? ''),
+      );
+
+  Announcement copyWith({bool? iGoing, int? going, bool? iLiked, int? likes, int? comments}) =>
+      Announcement(
+        id: id,
+        title: title,
+        body: body,
+        pinned: pinned,
+        iGoing: iGoing ?? this.iGoing,
+        iLiked: iLiked ?? this.iLiked,
+        going: going ?? this.going,
+        likes: likes ?? this.likes,
+        comments: comments ?? this.comments,
+        createdAt: createdAt,
+      );
+}
+
+class CommentLite {
+  final String id, name, body;
+  final String? avatarUrl;
+  final DateTime? at;
+  const CommentLite({required this.id, required this.name, required this.body, this.avatarUrl, this.at});
+
+  factory CommentLite.fromRow(Map<String, dynamic> r) => CommentLite(
+        id: r['id'] as String,
+        name: (r['name'] as String?) ?? 'Player',
+        body: (r['body'] as String?) ?? '',
+        avatarUrl: r['avatar_url'] as String?,
+        at: DateTime.tryParse(r['created_at']?.toString() ?? ''),
       );
 }
 
