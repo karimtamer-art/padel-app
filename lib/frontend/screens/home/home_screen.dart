@@ -47,6 +47,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _tournaments = [];
   List<Map<String, dynamic>> _featured = [];
   Community? _community;
+  List<MemberLite> _communityMembers = [];
+  int _communityEventsWeek = 0;
   int _unread = 0;
   bool _loading = true;
   RealtimeChannel? _notifChannel;
@@ -171,7 +173,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchCommunity() async {
     final c = await CommunityService.homeCommunity();
-    if (mounted) _community = c;
+    List<MemberLite> members = [];
+    int eventsWeek = 0;
+    if (c != null) {
+      final results = await Future.wait([
+        CommunityService.members(c.id, limit: 5),
+        CommunityService.events(c.organizerId),
+      ]);
+      members = results[0] as List<MemberLite>;
+      final events = results[1] as List<CommunityEvent>;
+      final now = DateTime.now();
+      final from = now.subtract(const Duration(days: 1));
+      final to = now.add(const Duration(days: 7));
+      eventsWeek = events.where((e) {
+        final d = DateTime.tryParse(e.startDate ?? '');
+        return d != null && d.isAfter(from) && d.isBefore(to);
+      }).length;
+    }
+    if (mounted) {
+      _community = c;
+      _communityMembers = members;
+      _communityEventsWeek = eventsWeek;
+    }
   }
 
   Future<void> _openCommunity(BuildContext c) async {
@@ -227,8 +250,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         : (_community!.isMember
                             ? 'Your Community'
                             : 'Discover a Community'),
-                    action: 'Have a code?',
-                    onAction: () => _promptJoinByCode(context)),
+                    action: (_community?.isMember ?? false) ? 'View' : 'Have a code?',
+                    onAction: (_community?.isMember ?? false)
+                        ? () => _openCommunity(context)
+                        : () => _promptJoinByCode(context)),
                 if (_community != null)
                   _communitySection()
                 else
@@ -264,50 +289,133 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _communitySection() {
     final c = _community!;
+    final subtitle = 'Organized by ${c.organizerName}'
+        '${(c.city != null && c.city!.isNotEmpty) ? ' · ${c.city}' : ''}';
     return Padding(
       padding: AppSpacing.screenH,
-      child: AppCard(
+      child: GestureDetector(
         onTap: () => _openCommunity(context),
-        child: Row(children: [
-          Container(
-            width: 46,
-            height: 46,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: AppColors.gold.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.groups_2_rounded, size: 23, color: AppColors.gold),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.hero, Color(0xFF243B2F)],
+            ),
+            borderRadius: BorderRadius.circular(18),
           ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Flexible(
-                    child: Text(c.name,
-                        style: AppText.bodyStrong(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis)),
-                if (c.verified) ...[
-                  const SizedBox(width: 5),
-                  const Icon(Icons.verified_rounded, size: 14, color: AppColors.gold),
-                ],
-              ]),
-              const SizedBox(height: 2),
-              Text(
-                  '${c.organizerName} · ${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
-                  style: AppText.small(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                width: 46,
+                height: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: AppColors.gold,
+                    borderRadius: BorderRadius.circular(13)),
+                child: const Icon(Icons.groups_2_rounded, size: 24, color: Colors.white),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Flexible(
+                        child: Text(c.name,
+                            style: AppText.bodyStrong(AppColors.heroInk),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis)),
+                    if (c.verified) ...[
+                      const SizedBox(width: 5),
+                      const Icon(Icons.verified_rounded, size: 15, color: AppColors.gold),
+                    ],
+                  ]),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: AppText.small(AppColors.heroFaint),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ]),
+              ),
+              const SizedBox(width: 8),
+              if (c.isMember)
+                const Icon(Icons.chevron_right_rounded, color: AppColors.heroFaint)
+              else
+                const AppTag('Join', color: AppColors.gold, solid: true),
             ]),
-          ),
-          const SizedBox(width: 8),
-          if (c.isMember)
-            const Icon(Icons.chevron_right_rounded, color: AppColors.inkFaint)
-          else
-            const AppTag('Join', color: AppColors.primary, solid: true),
-        ]),
+            const SizedBox(height: 14),
+            Row(children: [
+              if (_communityMembers.isNotEmpty) ...[
+                _memberStack(_communityMembers),
+                const SizedBox(width: 10),
+              ],
+              Text('${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
+                  style: AppText.small(AppColors.heroInk)),
+              const Spacer(),
+              if (_communityEventsWeek > 0) _eventsPill(_communityEventsWeek),
+            ]),
+          ]),
+        ),
       ),
     );
+  }
+
+  Widget _memberStack(List<MemberLite> members) {
+    final show = members.take(5).toList();
+    const d = 27.0;
+    const step = 19.0; // overlap
+    return SizedBox(
+      width: d + (show.length - 1) * step,
+      height: d,
+      child: Stack(
+        children: [
+          for (int i = 0; i < show.length; i++)
+            Positioned(
+              left: i * step,
+              child: Container(
+                width: d,
+                height: d,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF35543F),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.hero, width: 2),
+                ),
+                child: Text(_memberInitials(show[i].name),
+                    style: AppText.small(AppColors.heroInk).copyWith(
+                        fontSize: 10, fontWeight: FontWeight.w800)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _eventsPill(int n) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.heroInk.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 6, height: 6,
+              decoration: const BoxDecoration(color: AppColors.gold, shape: BoxShape.circle)),
+          const SizedBox(width: 6),
+          Text('$n event${n == 1 ? '' : 's'} this week',
+              style: AppText.small(AppColors.heroInk)
+                  .copyWith(fontWeight: FontWeight.w700)),
+        ]),
+      );
+
+  static String _memberInitials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      return parts.first.length >= 2
+          ? parts.first.substring(0, 2).toUpperCase()
+          : parts.first[0].toUpperCase();
+    }
+    return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
   // Empty state: no community surfaced — invite the player to enter a code.
