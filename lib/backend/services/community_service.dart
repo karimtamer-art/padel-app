@@ -44,7 +44,7 @@ class CommunityService {
     try {
       final row = await _db
           .from('communities')
-          .select('id, organizer_id, name, handle, city, about, verified')
+          .select('id, organizer_id, name, handle, city, about, verified, approval_required')
           .eq('id', id)
           .maybeSingle();
       if (row == null) return null;
@@ -311,6 +311,33 @@ class CommunityService {
   static Future<String?> reply(String memberId, String body) =>
       _rpc('reply_community_message', {'p_member_id': memberId, 'p_body': body});
 
+  /// Typed inbox: match requests + join requests + message threads.
+  static Future<List<InboxItem>> typedInbox() async {
+    try {
+      final res = await _db.rpc('community_inbox_typed');
+      return (res as List)
+          .map((r) => InboxItem.fromRow(Map<String, dynamic>.from(r as Map)))
+          .toList();
+    } catch (e) {
+      debugPrint('[CommunityService] typedInbox: $e');
+      return [];
+    }
+  }
+
+  static Future<String?> approveJoin(String requestId, bool approve) =>
+      _rpc('approve_join_request', {'p_id': requestId, 'p_approve': approve});
+
+  static Future<String?> resolveMatchRequest(String requestId) =>
+      _rpc('resolve_match_request', {'p_id': requestId});
+
+  static Future<String?> setApproval(bool on) =>
+      _rpc('set_community_approval', {'p_on': on});
+
+  /// Member posts a "looking for a match" request to the organizer.
+  static Future<String?> createMatchRequest(String communityId, String note) =>
+      _rpc('create_match_request',
+          {'p_community_id': communityId, 'p_note': note});
+
   // ── helper ──────────────────────────────────────────────────────
   static Future<String?> _rpc(String fn, Map<String, dynamic> params) async {
     try {
@@ -328,7 +355,7 @@ class CommunityService {
 class Community {
   final String id, organizerId, name, organizerName;
   final String? handle, city, about;
-  final bool verified, isMember;
+  final bool verified, isMember, approvalRequired;
   final int memberCount;
   const Community({
     required this.id,
@@ -341,6 +368,7 @@ class Community {
     this.city,
     this.about,
     this.verified = false,
+    this.approvalRequired = false,
   });
 
   factory Community.fromRow(Map<String, dynamic> r,
@@ -358,6 +386,7 @@ class Community {
         city: r['city'] as String?,
         about: r['about'] as String?,
         verified: r['verified'] == true,
+        approvalRequired: r['approval_required'] == true,
       );
 }
 
@@ -500,6 +529,44 @@ class InboxThread {
         lastRole: r['last_role'] as String?,
         unanswered: r['unanswered'] == true,
         lastAt: DateTime.tryParse(r['last_at']?.toString() ?? ''),
+      );
+
+  String get initials {
+    final parts = memberName.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+}
+
+/// A typed inbox row: 'match' / 'join' / 'message'.
+class InboxItem {
+  final String kind; // match | join | message
+  final String? id; // request id (match/join); null for message threads
+  final String memberId, memberName;
+  final String? avatarUrl, preview;
+  final bool actionable;
+  final DateTime? at;
+  const InboxItem({
+    required this.kind,
+    this.id,
+    required this.memberId,
+    required this.memberName,
+    this.avatarUrl,
+    this.preview,
+    this.actionable = false,
+    this.at,
+  });
+
+  factory InboxItem.fromRow(Map<String, dynamic> r) => InboxItem(
+        kind: (r['kind'] as String?) ?? 'message',
+        id: r['id'] as String?,
+        memberId: r['member_id'] as String,
+        memberName: (r['member_name'] as String?) ?? 'Player',
+        avatarUrl: r['avatar_url'] as String?,
+        preview: r['preview'] as String?,
+        actionable: r['actionable'] == true,
+        at: DateTime.tryParse(r['created_at']?.toString() ?? ''),
       );
 
   String get initials {

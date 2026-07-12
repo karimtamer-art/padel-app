@@ -18,7 +18,7 @@ class AdminCommunityScreen extends StatefulWidget {
 
 class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
   Community? _c;
-  List<InboxThread> _inbox = [];
+  List<InboxItem> _inbox = [];
   List<MemberLite> _members = [];
   Map<String, dynamic> _stats = {};
   bool _loading = true;
@@ -43,14 +43,14 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
       return;
     }
     final results = await Future.wait([
-      CommunityService.inbox(),
+      CommunityService.typedInbox(),
       CommunityService.members(c.id),
       CommunityService.organizerStats(),
     ]);
     if (!mounted) return;
     setState(() {
       _c = c;
-      _inbox = results[0] as List<InboxThread>;
+      _inbox = results[0] as List<InboxItem>;
       _members = results[1] as List<MemberLite>;
       _stats = results[2] as Map<String, dynamic>;
       _loading = false;
@@ -95,6 +95,26 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
               variant: AdminBtn.ghost,
               onPressed: () => _editCommunity(c)),
         ]),
+        const SizedBox(height: 12),
+        AdminCard(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(children: [
+            const Icon(Icons.verified_user_outlined, size: 18, color: AdminColors.inkSoft),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Require approval to join', style: AdminText.strong()),
+                Text('New members arrive as join requests in your inbox',
+                    style: AdminText.small()),
+              ]),
+            ),
+            Switch(
+              value: c.approvalRequired,
+              activeThumbColor: AdminColors.primary,
+              onChanged: _toggleApproval,
+            ),
+          ]),
+        ),
         const SizedBox(height: 18),
         Text('INBOX', style: AdminText.kicker()),
         const SizedBox(height: 8),
@@ -229,35 +249,87 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
         ]),
       );
 
-  Widget _inboxRow(InboxThread t) => AdminCard(
-        onTap: () => _openThread(t),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(children: [
-          AdminAvatar(t.initials, size: 42, color: AdminColors.info),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Expanded(child: Text(t.memberName, style: AdminText.strong())),
-                if (t.unanswered)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                        color: AdminColors.wash(AdminColors.primary, 0.14),
-                        borderRadius: BorderRadius.circular(999)),
-                    child: Text('Reply',
-                        style: AdminText.sans(10.5, FontWeight.w700, AdminColors.primary)),
-                  ),
-              ]),
-              const SizedBox(height: 2),
-              Text('${t.lastRole == 'organizer' ? 'You: ' : ''}${t.lastBody ?? ''}',
-                  style: AdminText.small(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
+  Widget _inboxRow(InboxItem it) {
+    final isMsg = it.kind == 'message';
+    final tag = it.kind == 'join'
+        ? ('Join request', AdminColors.gold)
+        : it.kind == 'match'
+            ? ('Match request', AdminColors.info)
+            : ('Message', AdminColors.inkSoft);
+    return AdminCard(
+      onTap: isMsg ? () => _openMessage(it) : null,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(children: [
+        AdminAvatar(it.initials, size: 42, color: tag.$2),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Expanded(child: Text(it.memberName, style: AdminText.strong())),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                    color: tag.$2.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999)),
+                child: Text(tag.$1,
+                    style: AdminText.sans(10.5, FontWeight.w700, tag.$2)),
+              ),
             ]),
-          ),
-        ]),
-      );
+            const SizedBox(height: 2),
+            Text(it.preview ?? '',
+                style: AdminText.small(), maxLines: 2, overflow: TextOverflow.ellipsis),
+            if (it.actionable) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                AdminButton(it.kind == 'join' ? 'Approve' : 'On it',
+                    icon: Icons.check_rounded,
+                    variant: AdminBtn.primary,
+                    onPressed: () => _act(it, true)),
+                if (it.kind == 'join') ...[
+                  const SizedBox(width: 8),
+                  AdminButton('Decline',
+                      variant: AdminBtn.ghost, onPressed: () => _act(it, false)),
+                ],
+              ]),
+            ],
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _toggleApproval(bool v) async {
+    final err = await CommunityService.setApproval(v);
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err, ok: false);
+    } else {
+      _load();
+    }
+  }
+
+  Future<void> _act(InboxItem it, bool approve) async {
+    if (it.id == null) return;
+    final err = it.kind == 'join'
+        ? await CommunityService.approveJoin(it.id!, approve)
+        : await CommunityService.resolveMatchRequest(it.id!);
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err, ok: false);
+      return;
+    }
+    adminToast(context,
+        it.kind == 'join' ? (approve ? 'Member approved' : 'Declined') : 'Marked handled');
+    _load();
+  }
+
+  Future<void> _openMessage(InboxItem it) async {
+    final thread = InboxThread(
+        memberId: it.memberId, memberName: it.memberName, avatarUrl: it.avatarUrl);
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => _CommunityThreadScreen(communityId: _c!.id, thread: thread)));
+    _load();
+  }
 
   Widget _emptyCard(IconData icon, String text) => AdminCard(
         child: Row(children: [
@@ -323,14 +395,6 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
     }
   }
 
-  Future<void> _openThread(InboxThread t) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-          builder: (_) => _CommunityThreadScreen(communityId: _c!.id, thread: t)),
-    );
-    _load();
-  }
 }
 
 // ── Community create/edit form ─────────────────────────────────────────────

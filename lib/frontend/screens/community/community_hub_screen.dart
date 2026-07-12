@@ -58,18 +58,80 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
     final c = _c;
     if (c == null || _busy) return;
     setState(() => _busy = true);
-    final err = c.isMember
+    final result = c.isMember
         ? await CommunityService.leave(c.id)
         : await CommunityService.join(c.id);
     if (!mounted) return;
     setState(() => _busy = false);
-    if (err != null) {
-      AppToast.show(context, err, kind: ToastKind.error);
+    // Approval-required community: join() files a request instead of joining.
+    if (!c.isMember && result == 'requested') {
+      AppToast.show(context, 'Request sent — the organizer will approve you',
+          kind: ToastKind.info);
+      return;
+    }
+    if (result != null) {
+      AppToast.show(context, result, kind: ToastKind.error);
       return;
     }
     AppToast.show(context, c.isMember ? 'Left ${c.name}' : 'Joined ${c.name}',
         kind: ToastKind.success);
     _load();
+  }
+
+  Future<void> _requestMatch() async {
+    final c = _c;
+    if (c == null) return;
+    if (!c.isMember) {
+      AppToast.show(context, 'Join the community to request a match',
+          kind: ToastKind.info);
+      return;
+    }
+    final noteC = TextEditingController();
+    final send = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: Container(
+          decoration: const BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+          child: Column(mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Request a match', style: AppText.cardTitle().copyWith(fontSize: 17)),
+            const SizedBox(height: 6),
+            Text('Tell ${c.organizerName.split(' ').first} what you\'re looking for — '
+                'level, timing, or a partner.',
+                style: AppText.small()),
+            const SizedBox(height: 14),
+            TextField(
+              controller: noteC,
+              minLines: 2,
+              maxLines: 4,
+              decoration: InputDecoration(
+                hintText: 'e.g. Looking for a Sat-morning game around level 3.5',
+                filled: true,
+                fillColor: AppColors.field,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 16),
+            AppButton('Send request', full: true, height: 50,
+                onPressed: () => Navigator.pop(ctx, true)),
+          ]),
+        ),
+      ),
+    );
+    final note = noteC.text.trim();
+    noteC.dispose();
+    if (send != true || !mounted) return;
+    final err = await CommunityService.createMatchRequest(c.id, note);
+    if (!mounted) return;
+    AppToast.show(context, err ?? 'Match request sent to the organizer',
+        kind: err == null ? ToastKind.success : ToastKind.error);
   }
 
   Future<void> _rsvp(Announcement a) async {
@@ -245,7 +307,9 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
         Row(children: [
           Expanded(
             child: AppButton(
-              c.isMember ? 'Joined' : 'Join community',
+              c.isMember
+                  ? 'Joined'
+                  : (c.approvalRequired ? 'Request to join' : 'Join community'),
               icon: c.isMember ? Icons.check_rounded : Icons.add_rounded,
               variant: c.isMember ? AppBtnVariant.ghost : AppBtnVariant.solid,
               onPressed: _busy ? null : _toggleJoin,
@@ -259,6 +323,14 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
                 onPressed: _message),
           ),
         ]),
+        if (c.isMember) ...[
+          const SizedBox(height: 10),
+          AppButton('Request a match',
+              icon: Icons.sports_tennis_rounded,
+              full: true,
+              variant: AppBtnVariant.outline,
+              onPressed: _requestMatch),
+        ],
       ]),
     );
   }
