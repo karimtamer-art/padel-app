@@ -10,6 +10,7 @@ class AppCard extends StatelessWidget {
   final VoidCallback? onTap;
   final bool active;
   final Color? color;
+  final Color? borderColor;
   const AppCard({
     super.key,
     required this.child,
@@ -17,6 +18,7 @@ class AppCard extends StatelessWidget {
     this.onTap,
     this.active = false,
     this.color,
+    this.borderColor,
   });
 
   @override
@@ -28,7 +30,9 @@ class AppCard extends StatelessWidget {
         color: color ?? AppColors.surface,
         borderRadius: AppRadius.cardR,
         border: Border.all(
-          color: active ? AppColors.primary.withValues(alpha: 0.45) : AppColors.line,
+          color: borderColor ??
+              (active ? AppColors.primary.withValues(alpha: 0.45) : AppColors.line),
+          width: borderColor != null ? 1.5 : 1,
         ),
         boxShadow: kCardShadow,
       ),

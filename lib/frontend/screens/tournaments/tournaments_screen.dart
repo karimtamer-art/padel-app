@@ -146,10 +146,12 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
       _load();
     }
 
+    final isCommunity = t['organizer_id'] != null;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AppCard(
         onTap: open,
+        borderColor: isCommunity ? AppColors.gold : null,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             const Icon(Icons.emoji_events_rounded, size: 18, color: AppColors.gold),
