@@ -2986,7 +2986,7 @@ begin
     values (r.community_id, r.player_id) on conflict do nothing;
     update public.community_join_requests set status = 'approved' where id = p_id;
     insert into public.notifications (user_id, type, title, body, data)
-    values (r.player_id, 'community', 'You\'re in!', 'Your join request was approved.',
+    values (r.player_id, 'community', 'You''re in!', 'Your join request was approved.',
             jsonb_build_object('community_id', r.community_id));
   else
     update public.community_join_requests set status = 'declined' where id = p_id;
