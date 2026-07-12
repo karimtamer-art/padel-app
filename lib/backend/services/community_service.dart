@@ -174,6 +174,17 @@ class CommunityService {
     }
   }
 
+  /// Organizer console KPI + member-tier stats for their community.
+  static Future<Map<String, dynamic>> organizerStats() async {
+    try {
+      final res = await _db.rpc('organizer_community_stats');
+      return res is Map ? Map<String, dynamic>.from(res) : {};
+    } catch (e) {
+      debugPrint('[CommunityService] organizerStats: $e');
+      return {};
+    }
+  }
+
   /// Toggle like on an announcement; returns the new liked state.
   static Future<bool> toggleLike(String announcementId) async {
     try {

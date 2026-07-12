@@ -20,7 +20,10 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
   Community? _c;
   List<InboxThread> _inbox = [];
   List<MemberLite> _members = [];
+  Map<String, dynamic> _stats = {};
   bool _loading = true;
+
+  int _s(String k) => (_stats[k] as num?)?.toInt() ?? 0;
 
   @override
   void initState() {
@@ -42,12 +45,14 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
     final results = await Future.wait([
       CommunityService.inbox(),
       CommunityService.members(c.id),
+      CommunityService.organizerStats(),
     ]);
     if (!mounted) return;
     setState(() {
       _c = c;
       _inbox = results[0] as List<InboxThread>;
       _members = results[1] as List<MemberLite>;
+      _stats = results[2] as Map<String, dynamic>;
       _loading = false;
     });
   }
@@ -63,6 +68,18 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
       color: AdminColors.primary,
       onRefresh: _load,
       child: ListView(padding: const EdgeInsets.all(AdminUI.screen), children: [
+        KpiGrid([
+          StatCard(icon: Icons.groups_outlined, tone: AdminColors.gold,
+              label: 'Members', value: '${c.memberCount}', foot: "in ${c.name}"),
+          StatCard(icon: Icons.forum_outlined, tone: AdminColors.primary,
+              label: 'Inbox', value: '${_inbox.length}',
+              foot: _s('inbox_unread') > 0 ? '${_s('inbox_unread')} unanswered' : 'all answered'),
+          StatCard(icon: Icons.sports_tennis_outlined, tone: AdminColors.info,
+              label: 'Events this week', value: '${_s('events_week')}', foot: 'you\'re running'),
+          StatCard(icon: Icons.check_circle_outline, tone: AdminColors.green,
+              label: 'Matches made', value: '${_s('matches_made')}', foot: 'all-time'),
+        ]),
+        const SizedBox(height: 16),
         _summary(c),
         const SizedBox(height: 14),
         Row(children: [
@@ -88,6 +105,10 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
         const SizedBox(height: 18),
         Text('MEMBERS · ${c.memberCount}', style: AdminText.kicker()),
         const SizedBox(height: 8),
+        if (c.memberCount > 0) ...[
+          _tierBars(c.memberCount),
+          const SizedBox(height: 10),
+        ],
         if (_members.isEmpty)
           _emptyCard(Icons.groups_outlined, 'No members yet.')
         else
@@ -110,6 +131,29 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
                   .toList(),
             ),
           ),
+      ]),
+    );
+  }
+
+  Widget _tierBars(int total) {
+    final rows = <List<Object>>[
+      ['Bronze–Silver', _s('tier_bronze'), const Color(0xFF9E7B4F)],
+      ['Gold', _s('tier_gold'), AdminColors.gold],
+      ['Elite', _s('tier_elite'), AdminColors.primary],
+    ];
+    return AdminCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          Row(children: [
+            Expanded(child: Text(rows[i][0] as String, style: AdminText.small())),
+            Text('${rows[i][1]}',
+                style: AdminText.sans(12.5, FontWeight.w800, AdminColors.ink)),
+          ]),
+          const SizedBox(height: 5),
+          AdminProgress((rows[i][1] as int) / (total == 0 ? 1 : total),
+              color: rows[i][2] as Color),
+        ],
       ]),
     );
   }
