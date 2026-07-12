@@ -37,19 +37,22 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     });
   }
 
-  // Courts to offer as venues: an organizer sees their own + any public court;
-  // a super admin sees all.
+  // Courts to offer as venues. An organizer sees THEIR OWN courts first (fetched
+  // directly so they always appear), then any public court; a super admin sees all.
   Future<void> _loadCourts() async {
+    final orgId = widget.organizerId;
+    if (orgId == null) {
+      final all = await AdminService.fetchCourts();
+      if (mounted) setState(() => _courts = all);
+      return;
+    }
+    final own = await AdminService.fetchCourts(ownerId: orgId);
     final all = await AdminService.fetchCourts();
     if (!mounted) return;
-    final orgId = widget.organizerId;
-    setState(() {
-      _courts = orgId == null
-          ? all
-          : all
-              .where((c) => c['owner_id'] == orgId || c['is_public'] != false)
-              .toList();
-    });
+    final publicOthers = all
+        .where((c) => c['owner_id'] != orgId && c['is_public'] != false)
+        .toList();
+    setState(() => _courts = [...own, ...publicOthers]);
   }
 
   static int _entryCount(Map row) {
@@ -697,12 +700,19 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
   void _bracketSheet(Map<String, dynamic> t) {
     final tid = t['id'] as String;
+    final isCustom = (t['format'] as String?) == 'custom';
+    // Registered (non-withdrawn) pairs for this tournament, for the builder.
+    final entries = _activeEntries(t);
     adminSheet(
       context,
       title: 'Draw — ${t['name'] ?? ''}',
-      sub: 'Tap a pending match to record its winner',
-      heightFactor: 0.88,
-      body: _BracketManager(tournamentId: tid),
+      sub: isCustom
+          ? 'Build groups/rounds by hand'
+          : 'Tap a pending match to record its winner',
+      heightFactor: 0.9,
+      body: isCustom
+          ? _CustomDrawBuilder(tournamentId: tid, entries: entries)
+          : _BracketManager(tournamentId: tid),
     );
   }
 
@@ -718,7 +728,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final feeC = TextEditingController(text: t?['entry_fee']?.toString() ?? '');
     final capC = TextEditingController(text: t?['capacity']?.toString() ?? '');
     final descC = TextEditingController(text: t?['description'] ?? '');
-    final formatNoteC = TextEditingController(text: t?['format_note'] ?? '');
     String format = t?['format'] as String? ?? 'double_elim';
     final rawStatus = t?['status'] as String? ?? 'auto';
     String status = (rawStatus == 'upcoming' || rawStatus == 'open' || rawStatus == 'completed')
@@ -771,9 +780,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'min_elo': eligMode == 'open' ? 0 : (800 + (minLevel * 200)).round(),
             'max_elo': eligMode == 'range' ? (800 + (maxLevel * 200)).round() : null,
             'format': format,
-            'format_note': format == 'custom' && formatNoteC.text.trim().isNotEmpty
-                ? formatNoteC.text.trim()
-                : null,
             'status': status,
           };
           if (!isNew) data['id'] = t['id'];
@@ -949,15 +955,13 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               fmtChip('Custom', 'custom', Icons.tune_rounded),
             ]),
             const SizedBox(height: 8),
-            if (format == 'custom')
-              _field('Describe your format', formatNoteC,
-                  hint: 'e.g. 4 groups of 4, top 2 advance to knockout',
-                  maxLines: 2)
-            else
-              Text(
-                _formatBlurb(format),
-                style: AdminText.small(AdminColors.inkFaint),
-              ),
+            Text(
+              format == 'custom'
+                  ? 'Build it by hand — after creating, open “Manage draw & results” '
+                    'to add matches into groups/rounds and set winners yourself.'
+                  : _formatBlurb(format),
+              style: AdminText.small(AdminColors.inkFaint),
+            ),
             const SizedBox(height: 16),
             // ── Status ────────────────────────────────────────────
             Text('Status', style: AdminText.strong(AdminColors.inkSoft)),
@@ -1200,7 +1204,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                     Text([
                       if ((c['name'] as String?)?.isNotEmpty == true) c['name'],
                       if ((c['city'] as String?)?.isNotEmpty == true) c['city'],
-                      c['is_public'] == false ? 'Community' : 'Public',
+                      c['owner_id'] == widget.organizerId && widget.organizerId != null
+                          ? 'Your court'
+                          : (c['is_public'] == false ? 'Community' : 'Public'),
                     ].where((e) => e != null).join(' · '),
                         style: AdminText.small()),
                   ]),
@@ -1461,6 +1467,320 @@ class _BracketManagerState extends State<_BracketManager> {
                 style: AdminText.small(AdminColors.inkFaint)),
         ]),
       ),
+    );
+  }
+}
+
+// ── Custom draw builder (manual groups/rounds for 'custom' format) ──────────
+class _CustomDrawBuilder extends StatefulWidget {
+  final String tournamentId;
+  final List<Map<String, dynamic>> entries; // registered pairs
+  const _CustomDrawBuilder({required this.tournamentId, required this.entries});
+  @override
+  State<_CustomDrawBuilder> createState() => _CustomDrawBuilderState();
+}
+
+class _CustomDrawBuilderState extends State<_CustomDrawBuilder> {
+  List<Map<String, dynamic>> _matches = [];
+  bool _loading = true;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final rows = await AdminService.fetchBracket(widget.tournamentId);
+    if (!mounted) return;
+    setState(() {
+      _matches = rows;
+      _loading = false;
+    });
+  }
+
+  static String _pairName(Map? e) {
+    if (e == null) return 'TBD';
+    final name = (e['player_name'] as String?)?.trim();
+    final partner = (e['partner_name'] as String?)?.trim();
+    final first = (name == null || name.isEmpty) ? 'Player' : name.split(' ').first;
+    if (partner == null || partner.isEmpty) return first;
+    return '$first / ${partner.split(' ').first}';
+  }
+
+  Future<void> _addMatch() async {
+    if (widget.entries.isEmpty) {
+      adminToast(context, 'No registered pairs yet.');
+      return;
+    }
+    String label = 'Group A';
+    String? p1;
+    String? p2;
+    final labelC = TextEditingController(text: label);
+    const presets = ['Group A', 'Group B', 'Group C', 'Group D',
+                     'Quarterfinal', 'Semifinal', 'Final'];
+
+    final created = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => StatefulBuilder(builder: (ctx, setSheet) {
+        Widget pairDrop(String hint, String? val, void Function(String?) onCh) =>
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: AdminUI.fieldR,
+                border: Border.all(color: AdminColors.line),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: val,
+                  isExpanded: true,
+                  hint: Text(hint, style: AdminText.small()),
+                  dropdownColor: AdminColors.surface,
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('TBD')),
+                    for (final e in widget.entries)
+                      DropdownMenuItem<String?>(
+                        value: e['id'] as String,
+                        child: Text(_pairName(e), style: AdminText.body()),
+                      ),
+                  ],
+                  onChanged: onCh,
+                ),
+              ),
+            );
+
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            decoration: const BoxDecoration(
+                color: AdminColors.surface,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 24),
+            child: Column(mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Add a match', style: AdminText.h2()),
+              const SizedBox(height: 14),
+              Text('Stage / group', style: AdminText.strong(AdminColors.inkSoft)),
+              const SizedBox(height: 7),
+              Wrap(spacing: 7, runSpacing: 7, children: [
+                for (final p in presets)
+                  GestureDetector(
+                    onTap: () => setSheet(() { label = p; labelC.text = p; }),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: label == p ? AdminColors.primary : AdminColors.surfaceAlt,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                            color: label == p ? AdminColors.primary : AdminColors.line),
+                      ),
+                      child: Text(p,
+                          style: AdminText.sans(12, FontWeight.w700,
+                              label == p ? Colors.white : AdminColors.inkSoft)),
+                    ),
+                  ),
+              ]),
+              const SizedBox(height: 10),
+              TextField(
+                controller: labelC,
+                style: AdminText.body(),
+                onChanged: (v) => label = v,
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Or type a label',
+                  filled: true,
+                  fillColor: AdminColors.surfaceAlt,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: AdminUI.fieldR,
+                      borderSide: const BorderSide(color: AdminColors.line)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: AdminUI.fieldR,
+                      borderSide: const BorderSide(color: AdminColors.primary, width: 1.6)),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text('Pair 1', style: AdminText.strong(AdminColors.inkSoft)),
+              const SizedBox(height: 7),
+              pairDrop('Pick a pair', p1, (v) => setSheet(() => p1 = v)),
+              const SizedBox(height: 12),
+              Text('Pair 2', style: AdminText.strong(AdminColors.inkSoft)),
+              const SizedBox(height: 7),
+              pairDrop('Pick a pair', p2, (v) => setSheet(() => p2 = v)),
+              const SizedBox(height: 18),
+              AdminButton('Add match',
+                  full: true,
+                  height: 48,
+                  icon: Icons.add_rounded,
+                  variant: AdminBtn.primary,
+                  onPressed: () => Navigator.pop(ctx, true)),
+            ]),
+          ),
+        );
+      }),
+    );
+    if (created != true) return;
+    setState(() => _busy = true);
+    final err = await AdminService.addCustomMatch(
+        widget.tournamentId, labelC.text.trim(), p1, p2);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    adminToast(context, err ?? 'Match added', ok: err == null);
+    if (err == null) _load();
+  }
+
+  Future<void> _setWinner(Map<String, dynamic> m) async {
+    final e1 = m['e1'] as Map<String, dynamic>?;
+    final e2 = m['e2'] as Map<String, dynamic>?;
+    if (e1 == null || e2 == null) {
+      adminToast(context, 'Assign both pairs first.');
+      return;
+    }
+    final scoreC = TextEditingController(text: (m['score'] as String?) ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: AdminColors.surface,
+        title: Text('Who won?',
+            style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+        content: TextField(
+          controller: scoreC,
+          style: AdminText.body(),
+          decoration: const InputDecoration(
+              isDense: true, hintText: 'Score (optional) e.g. 6-4, 6-2'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, 'clear'),
+              child: Text('Clear', style: AdminText.small(AdminColors.inkFaint))),
+          TextButton(
+              onPressed: () => Navigator.pop(c, e1['id'] as String),
+              child: Text(_pairName(e1))),
+          TextButton(
+              onPressed: () => Navigator.pop(c, e2['id'] as String),
+              child: Text(_pairName(e2))),
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() => _busy = true);
+    final err = await AdminService.setMatchWinner(
+        m['id'] as String, result == 'clear' ? null : result,
+        score: result == 'clear' || scoreC.text.trim().isEmpty
+            ? null
+            : scoreC.text.trim());
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      adminToast(context, err, ok: false);
+    } else {
+      _load();
+    }
+  }
+
+  Future<void> _deleteMatch(Map<String, dynamic> m) async {
+    setState(() => _busy = true);
+    final err = await AdminService.deleteTournamentMatch(m['id'] as String);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      adminToast(context, err, ok: false);
+    } else {
+      _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(30),
+          child: CircularProgressIndicator(strokeWidth: 2.4, color: AdminColors.primary),
+        ),
+      );
+    }
+    final byLabel = <String, List<Map<String, dynamic>>>{};
+    for (final m in _matches) {
+      byLabel.putIfAbsent(m['bracket'] as String? ?? 'Round 1', () => []).add(m);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      AdminButton(_busy ? 'Working…' : 'Add a match',
+          full: true,
+          height: 46,
+          icon: Icons.add_rounded,
+          variant: AdminBtn.primary,
+          onPressed: _busy ? null : _addMatch),
+      const SizedBox(height: 6),
+      Text('${widget.entries.length} registered pair${widget.entries.length == 1 ? '' : 's'} · '
+          'add matches into groups or rounds and set winners by hand.',
+          style: AdminText.small(AdminColors.inkFaint)),
+      const SizedBox(height: 16),
+      if (_matches.isEmpty)
+        Text('No matches yet. Tap “Add a match” to start building your draw.',
+            style: AdminText.small(AdminColors.inkSoft))
+      else
+        for (final label in byLabel.keys) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8, top: 6),
+            child: Text(label.toUpperCase(), style: AdminText.kicker()),
+          ),
+          for (final m in byLabel[label]!) _matchTile(m),
+        ],
+    ]);
+  }
+
+  Widget _matchTile(Map<String, dynamic> m) {
+    final e1 = m['e1'] as Map<String, dynamic>?;
+    final e2 = m['e2'] as Map<String, dynamic>?;
+    final winner = m['winner_entry'] as String?;
+    final done = winner != null;
+    final ready = e1 != null && e2 != null;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: AdminColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: done ? AdminColors.success : AdminColors.line,
+            width: done ? 1.3 : 1),
+      ),
+      child: Row(children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: (ready && !_busy) ? () => _setWinner(m) : null,
+            behavior: HitTestBehavior.opaque,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(_pairName(e1),
+                  style: AdminText.sans(13, FontWeight.w700,
+                      done && winner == e1?['id'] ? AdminColors.success : AdminColors.ink)),
+              const SizedBox(height: 2),
+              Text(_pairName(e2),
+                  style: AdminText.sans(13, FontWeight.w700,
+                      done && winner == e2?['id'] ? AdminColors.success : AdminColors.ink)),
+              if ((m['score'] as String?)?.isNotEmpty == true) ...[
+                const SizedBox(height: 3),
+                Text(m['score'] as String,
+                    style: AdminText.mono(11, FontWeight.w600, AdminColors.inkFaint)),
+              ],
+            ]),
+          ),
+        ),
+        if (ready && !done)
+          Text('Tap to score', style: AdminText.small(AdminColors.primary))
+        else if (done)
+          const Icon(Icons.check_circle_rounded, size: 18, color: AdminColors.success),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: _busy ? null : () => _deleteMatch(m),
+          child: const Icon(Icons.close_rounded, size: 18, color: AdminColors.inkFaint),
+        ),
+      ]),
     );
   }
 }

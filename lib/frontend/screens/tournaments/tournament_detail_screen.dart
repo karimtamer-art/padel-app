@@ -720,6 +720,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   // ── Bracket tab ──────────────────────────────────────────────────────────
 
   Widget _bracketView() {
+    // Custom-format draws use free labels (Group A, Semifinal…) in `bracket`.
+    if ((_t?['format'] as String?) == 'custom') return _customBracketView();
     final side = _bracketSide == 0 ? 'wb' : 'lb';
     final matches = _bracket.where((m) => m['bracket'] == side).toList();
     final rounds = <int, List<Map<String, dynamic>>>{};
@@ -801,6 +803,55 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
                 style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
           ),
         ]),
+      ],
+    );
+  }
+
+  // Custom draw: matches grouped by their free-text label (Group A, Final…).
+  Widget _customBracketView() {
+    final byLabel = <String, List<Map<String, dynamic>>>{};
+    for (final m in _bracket) {
+      byLabel.putIfAbsent(m['bracket'] as String? ?? 'Round 1', () => []).add(m);
+    }
+    final labels = byLabel.keys.toList()..sort();
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 24),
+      children: [
+        Row(children: [
+          Text('Draw', style: AppText.cardTitle().copyWith(fontSize: 17)),
+          const SizedBox(width: 8),
+          const AppTag('CUSTOM FORMAT', color: AppColors.accent),
+        ]),
+        const SizedBox(height: 16),
+        if (_bracket.isEmpty)
+          AppCard(
+            child: Column(children: [
+              Container(
+                width: 52, height: 52,
+                decoration: BoxDecoration(
+                    color: AppColors.field, borderRadius: BorderRadius.circular(14)),
+                child: const Icon(Icons.account_tree_outlined,
+                    size: 24, color: AppColors.inkSoft),
+              ),
+              const SizedBox(height: 12),
+              Text('No draw yet', style: AppText.cardTitle().copyWith(fontSize: 15)),
+              const SizedBox(height: 6),
+              Text('The organiser will post the groups and matches here.',
+                  textAlign: TextAlign.center,
+                  style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
+            ]),
+          )
+        else
+          for (final label in labels) ...[
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 8, top: 4),
+              child: Text(label.toUpperCase(), style: AppText.kicker()),
+            ),
+            for (final m in (byLabel[label]!
+              ..sort((a, b) => (a['slot'] as num).toInt().compareTo((b['slot'] as num).toInt()))))
+              _bracketMatch(m),
+          ],
       ],
     );
   }

@@ -397,6 +397,54 @@ class AdminService {
     }
   }
 
+  // ── Custom draw building (manual matches for 'custom' format) ──────────────
+
+  static Future<String?> addCustomMatch(
+      String tournamentId, String label, String? entry1, String? entry2) async {
+    try {
+      final res = await _db.rpc('add_custom_match', params: {
+        'p_tournament_id': tournamentId,
+        'p_label': label,
+        'p_entry1': entry1,
+        'p_entry2': entry2,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Set (or clear, with null) a match winner without advancing rounds.
+  static Future<String?> setMatchWinner(String matchId, String? winnerEntry,
+      {String? score}) async {
+    try {
+      final res = await _db.rpc('set_match_winner', params: {
+        'p_match_id': matchId,
+        'p_winner': winnerEntry,
+        'p_score': score,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> deleteTournamentMatch(String matchId) async {
+    try {
+      final res = await _db
+          .rpc('delete_tournament_match', params: {'p_match_id': matchId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> fetchBracket(
       String tournamentId) async {
     try {
