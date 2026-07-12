@@ -244,6 +244,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     onFindMatch: () => _openFindMatch(context),
                   ),
                 const SizedBox(height: 24),
+                SectionHeader('Recent Form'),
+                _recentForm(),
+                const SizedBox(height: 24),
                 SectionHeader(
                     _community == null
                         ? 'Community'
@@ -258,9 +261,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   _communitySection()
                 else
                   _communityCodePrompt(),
-                const SizedBox(height: 24),
-                SectionHeader('Recent Form'),
-                _recentForm(),
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Upcoming Matches',
                     action: 'Find a Match',
@@ -296,74 +296,95 @@ class _HomeScreenState extends State<HomeScreen> {
       child: GestureDetector(
         onTap: () => _openCommunity(context),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [AppColors.hero, Color(0xFF243B2F)],
+              begin: Alignment.topRight,
+              end: Alignment.bottomLeft,
+              colors: [AppColors.hero, AppColors.hero2],
             ),
             borderRadius: BorderRadius.circular(18),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Container(
-                width: 46,
-                height: 46,
-                alignment: Alignment.center,
+          child: Stack(children: [
+            // Gold glow, top-right (matches the design's radial overlay).
+            Positioned.fill(
+              child: DecoratedBox(
                 decoration: BoxDecoration(
-                    color: AppColors.gold,
-                    borderRadius: BorderRadius.circular(13)),
-                child: const Icon(Icons.groups_2_rounded, size: 24, color: Colors.white),
+                  gradient: RadialGradient(
+                    center: const Alignment(0.85, -1.0),
+                    radius: 1.1,
+                    colors: [AppColors.gold.withValues(alpha: 0.20), Colors.transparent],
+                    stops: const [0.0, 0.6],
+                  ),
+                ),
               ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    Flexible(
-                        child: Text(c.name,
-                            style: AppText.bodyStrong(AppColors.heroInk),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis)),
-                    if (c.verified) ...[
-                      const SizedBox(width: 5),
-                      const Icon(Icons.verified_rounded, size: 15, color: AppColors.gold),
-                    ],
-                  ]),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: AppText.small(AppColors.heroFaint),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                        color: AppColors.gold,
+                        borderRadius: BorderRadius.circular(13)),
+                    child: const Icon(Icons.groups_2_rounded, size: 22, color: Colors.white),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: [
+                        Flexible(
+                            child: Text(c.name,
+                                style: AppText.body(AppColors.heroInk).copyWith(
+                                    fontSize: 15.5, fontWeight: FontWeight.w800),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis)),
+                        if (c.verified) ...[
+                          const SizedBox(width: 6),
+                          const Icon(Icons.verified_rounded, size: 15, color: AppColors.gold),
+                        ],
+                      ]),
+                      const SizedBox(height: 2),
+                      Text(subtitle,
+                          style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ]),
+                  ),
+                  const SizedBox(width: 8),
+                  if (c.isMember)
+                    const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.heroFaint)
+                  else
+                    const AppTag('Join', color: AppColors.gold, solid: true),
                 ]),
-              ),
-              const SizedBox(width: 8),
-              if (c.isMember)
-                const Icon(Icons.chevron_right_rounded, color: AppColors.heroFaint)
-              else
-                const AppTag('Join', color: AppColors.gold, solid: true),
-            ]),
-            const SizedBox(height: 14),
-            Row(children: [
-              if (_communityMembers.isNotEmpty) ...[
-                _memberStack(_communityMembers),
-                const SizedBox(width: 10),
-              ],
-              Text('${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
-                  style: AppText.small(AppColors.heroInk)),
-              const Spacer(),
-              if (_communityEventsWeek > 0) _eventsPill(_communityEventsWeek),
-            ]),
+                const SizedBox(height: 14),
+                Row(children: [
+                  if (_communityMembers.isNotEmpty) ...[
+                    _memberStack(_communityMembers),
+                    const SizedBox(width: 10),
+                  ],
+                  Text('${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
+                      style: AppText.small(AppColors.heroInk)
+                          .copyWith(fontSize: 12, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  if (_communityEventsWeek > 0) _eventsPill(_communityEventsWeek),
+                ]),
+              ]),
+            ),
           ]),
         ),
       ),
     );
   }
 
+  // Light chips on the dark card (design: field bg, surface border, ink-soft text).
   Widget _memberStack(List<MemberLite> members) {
     final show = members.take(5).toList();
-    const d = 27.0;
-    const step = 19.0; // overlap
+    const d = 26.0;
+    const step = 18.0; // marginLeft -8
     return SizedBox(
       width: d + (show.length - 1) * step,
       height: d,
@@ -377,13 +398,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: d,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF35543F),
+                  color: AppColors.field,
                   shape: BoxShape.circle,
-                  border: Border.all(color: AppColors.hero, width: 2),
+                  border: Border.all(color: AppColors.surface, width: 2),
                 ),
                 child: Text(_memberInitials(show[i].name),
-                    style: AppText.small(AppColors.heroInk).copyWith(
-                        fontSize: 10, fontWeight: FontWeight.w800)),
+                    style: AppText.small(AppColors.inkSoft).copyWith(
+                        fontSize: 9.5, fontWeight: FontWeight.w800)),
               ),
             ),
         ],
@@ -392,18 +413,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _eventsPill(int n) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
-          color: AppColors.heroInk.withValues(alpha: 0.12),
+          color: AppColors.gold.withValues(alpha: 0.20),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Container(width: 6, height: 6,
               decoration: const BoxDecoration(color: AppColors.gold, shape: BoxShape.circle)),
-          const SizedBox(width: 6),
+          const SizedBox(width: 5),
           Text('$n event${n == 1 ? '' : 's'} this week',
-              style: AppText.small(AppColors.heroInk)
-                  .copyWith(fontWeight: FontWeight.w700)),
+              style: AppText.small(AppColors.gold)
+                  .copyWith(fontSize: 11.5, fontWeight: FontWeight.w700)),
         ]),
       );
 
