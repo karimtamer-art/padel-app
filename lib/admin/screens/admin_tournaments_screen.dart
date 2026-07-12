@@ -16,12 +16,14 @@ class AdminTournamentsScreen extends StatefulWidget {
 
 class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
   List<Map<String, dynamic>> _list = [];
+  List<Map<String, dynamic>> _courts = []; // venue picker options
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadCourts();
   }
 
   Future<void> _load() async {
@@ -32,6 +34,21 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     setState(() {
       _list = data;
       _loading = false;
+    });
+  }
+
+  // Courts to offer as venues: an organizer sees their own + any public court;
+  // a super admin sees all.
+  Future<void> _loadCourts() async {
+    final all = await AdminService.fetchCourts();
+    if (!mounted) return;
+    final orgId = widget.organizerId;
+    setState(() {
+      _courts = orgId == null
+          ? all
+          : all
+              .where((c) => c['owner_id'] == orgId || c['is_public'] != false)
+              .toList();
     });
   }
 
@@ -695,12 +712,14 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final venueC = TextEditingController(text: t?['venue_name'] ?? '');
     final startC = TextEditingController(text: t?['start_date'] ?? '');
     final endC = TextEditingController(text: t?['end_date'] ?? '');
+    final startTimeC = TextEditingController(text: t?['start_time'] ?? '');
     final prizeC =
         TextEditingController(text: t?['prize_pool']?.toString() ?? '');
     final feeC = TextEditingController(text: t?['entry_fee']?.toString() ?? '');
     final capC = TextEditingController(text: t?['capacity']?.toString() ?? '');
     final descC = TextEditingController(text: t?['description'] ?? '');
-    const String format = 'double_elim';
+    final formatNoteC = TextEditingController(text: t?['format_note'] ?? '');
+    String format = t?['format'] as String? ?? 'double_elim';
     final rawStatus = t?['status'] as String? ?? 'auto';
     String status = (rawStatus == 'upcoming' || rawStatus == 'open' || rawStatus == 'completed')
         ? 'auto'
@@ -742,6 +761,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'start_date':
                 startC.text.trim().isEmpty ? null : startC.text.trim(),
             'end_date': endC.text.trim().isEmpty ? null : endC.text.trim(),
+            'start_time':
+                startTimeC.text.trim().isEmpty ? null : startTimeC.text.trim(),
             'prize_pool': num.tryParse(prizeC.text),
             'entry_fee': num.tryParse(feeC.text),
             'capacity': int.tryParse(capC.text),
@@ -750,6 +771,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'min_elo': eligMode == 'open' ? 0 : (800 + (minLevel * 200)).round(),
             'max_elo': eligMode == 'range' ? (800 + (maxLevel * 200)).round() : null,
             'format': format,
+            'format_note': format == 'custom' && formatNoteC.text.trim().isNotEmpty
+                ? formatNoteC.text.trim()
+                : null,
             'status': status,
           };
           if (!isNew) data['id'] = t['id'];
@@ -768,6 +792,10 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         _field('Tournament name', nameC, hint: 'e.g. Nile Padel Open'),
         const SizedBox(height: 14),
         _field('Venue', venueC, hint: 'Gezira Sporting Club'),
+        if (_courts.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _courtPicker(venueC),
+        ],
         const SizedBox(height: 14),
         Row(children: [
           Expanded(child: _dateField('Start date', startC)),
@@ -775,12 +803,24 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
           Expanded(child: _dateField('End date', endC)),
         ]),
         const SizedBox(height: 14),
+        _timeField('Start time (optional)', startTimeC),
+        const SizedBox(height: 14),
         _field('Prize pool', prizeC, prefix: 'EGP'),
         const SizedBox(height: 14),
         Row(children: [
           Expanded(child: _field('Entry fee', feeC, prefix: 'EGP')),
           const SizedBox(width: 12),
           Expanded(child: _field('Capacity', capC, suffix: 'pairs')),
+        ]),
+        const SizedBox(height: 6),
+        Row(children: [
+          const Icon(Icons.people_alt_outlined, size: 13, color: AdminColors.inkFaint),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text('Doubles only — players register as a pair (with a partner). '
+                'Capacity is the number of pairs.',
+                style: AdminText.small(AdminColors.inkFaint)),
+          ),
         ]),
         const SizedBox(height: 14),
         _field('About / description', descC,
@@ -874,7 +914,51 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             ]);
           }
 
+          Widget fmtChip(String label, String value, IconData icon) {
+            final on = format == value;
+            return GestureDetector(
+              onTap: () => setSheet(() => format = value),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                  color: on ? AdminColors.primary : AdminColors.surfaceAlt,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: on ? AdminColors.primary : AdminColors.line),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(icon, size: 14, color: on ? Colors.white : AdminColors.inkSoft),
+                  const SizedBox(width: 6),
+                  Text(label,
+                      style: AdminText.sans(12, FontWeight.w800,
+                          on ? Colors.white : AdminColors.inkSoft)),
+                ]),
+              ),
+            );
+          }
+
           return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // ── Format ────────────────────────────────────────────
+            Text('Format', style: AdminText.strong(AdminColors.inkSoft)),
+            const SizedBox(height: 7),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              fmtChip('Knockout', 'knockout', Icons.account_tree_outlined),
+              fmtChip('Double elim', 'double_elim', Icons.swap_calls_rounded),
+              fmtChip('Groups + KO', 'group_knockout', Icons.grid_view_rounded),
+              fmtChip('Round robin', 'round_robin', Icons.repeat_rounded),
+              fmtChip('Custom', 'custom', Icons.tune_rounded),
+            ]),
+            const SizedBox(height: 8),
+            if (format == 'custom')
+              _field('Describe your format', formatNoteC,
+                  hint: 'e.g. 4 groups of 4, top 2 advance to knockout',
+                  maxLines: 2)
+            else
+              Text(
+                _formatBlurb(format),
+                style: AdminText.small(AdminColors.inkFaint),
+              ),
+            const SizedBox(height: 16),
             // ── Status ────────────────────────────────────────────
             Text('Status', style: AdminText.strong(AdminColors.inkSoft)),
             const SizedBox(height: 7),
@@ -1005,6 +1089,142 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         ),
       ),
     );
+  }
+
+  // Tap-to-pick start time (display only), stored as a friendly 'h:mm AP' string.
+  Widget _timeField(String label, TextEditingController c) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: AdminText.strong(AdminColors.inkSoft)),
+      const SizedBox(height: 7),
+      TextField(
+        controller: c,
+        readOnly: true,
+        onTap: () => _pickTime(c),
+        style: AdminText.body(),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Tap to pick a start time',
+          suffixIcon: const Icon(Icons.schedule_rounded,
+              size: 16, color: AdminColors.inkFaint),
+          filled: true,
+          fillColor: AdminColors.surfaceAlt,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide: const BorderSide(color: AdminColors.line)),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide:
+                  const BorderSide(color: AdminColors.primary, width: 1.6)),
+        ),
+      ),
+    ]);
+  }
+
+  Future<void> _pickTime(TextEditingController c) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 18, minute: 0),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.light(primary: AdminColors.primary),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked == null) return;
+    final h = picked.hourOfPeriod == 0 ? 12 : picked.hourOfPeriod;
+    final mm = picked.minute.toString().padLeft(2, '0');
+    final ap = picked.period == DayPeriod.am ? 'AM' : 'PM';
+    c.text = '$h:$mm $ap';
+  }
+
+  // A quick "choose from courts" button that fills the venue field.
+  Widget _courtPicker(TextEditingController venueC) => GestureDetector(
+        onTap: () => _chooseCourt(venueC),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: AdminColors.surfaceAlt,
+            borderRadius: AdminUI.fieldR,
+            border: Border.all(color: AdminColors.line),
+          ),
+          child: Row(children: [
+            const Icon(Icons.place_outlined, size: 15, color: AdminColors.primary),
+            const SizedBox(width: 7),
+            Text('Choose from your courts',
+                style: AdminText.sans(12.5, FontWeight.w700, AdminColors.primary)),
+            const Spacer(),
+            const Icon(Icons.expand_more_rounded, size: 18, color: AdminColors.inkFaint),
+          ]),
+        ),
+      );
+
+  void _chooseCourt(TextEditingController venueC) {
+    adminSheet(
+      context,
+      title: 'Choose a court',
+      sub: 'Sets the tournament venue',
+      heightFactor: 0.6,
+      body: Column(children: [
+        for (final c in _courts)
+          GestureDetector(
+            onTap: () {
+              final venue = (c['venue_name'] as String?)?.trim();
+              final name = (c['name'] as String?)?.trim();
+              venueC.text = [
+                if (venue != null && venue.isNotEmpty) venue,
+                if (name != null && name.isNotEmpty) name,
+              ].join(' · ');
+              Navigator.pop(context);
+            },
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: AdminUI.cardR,
+                border: Border.all(color: AdminColors.line),
+              ),
+              child: Row(children: [
+                const Icon(Icons.sports_tennis_rounded, size: 18, color: AdminColors.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text((c['venue_name'] as String?)?.isNotEmpty == true
+                        ? c['venue_name'] as String
+                        : (c['name'] as String? ?? 'Court'),
+                        style: AdminText.strong()),
+                    Text([
+                      if ((c['name'] as String?)?.isNotEmpty == true) c['name'],
+                      if ((c['city'] as String?)?.isNotEmpty == true) c['city'],
+                      c['is_public'] == false ? 'Community' : 'Public',
+                    ].where((e) => e != null).join(' · '),
+                        style: AdminText.small()),
+                  ]),
+                ),
+              ]),
+            ),
+          ),
+      ]),
+    );
+  }
+
+  String _formatBlurb(String f) {
+    switch (f) {
+      case 'knockout':
+        return 'Single elimination — one loss and you\'re out. Auto-draw builds the bracket.';
+      case 'double_elim':
+        return 'Winners & losers brackets — two losses to be out. Auto-draw supported.';
+      case 'group_knockout':
+        return 'Group stage then knockout — you run the groups; the draw tool builds the knockout bracket.';
+      case 'round_robin':
+        return 'Everyone plays everyone — managed manually (no auto-bracket yet).';
+      default:
+        return '';
+    }
   }
 
   Widget _field(String label, TextEditingController c,

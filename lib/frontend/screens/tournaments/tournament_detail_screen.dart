@@ -236,6 +236,29 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     return '${_months[s.month - 1]} ${s.day} – ${_months[e.month - 1]} ${e.day}';
   }
 
+  String? get _startTime {
+    final t = (_t?['start_time'] as String?)?.trim();
+    return (t == null || t.isEmpty) ? null : t;
+  }
+
+  String get _formatLabel {
+    switch (_t?['format'] as String?) {
+      case 'knockout':
+        return 'Knockout';
+      case 'double_elim':
+        return 'Double elim';
+      case 'group_knockout':
+        return 'Groups + KO';
+      case 'round_robin':
+        return 'Round robin';
+      case 'custom':
+        final note = (_t?['format_note'] as String?)?.trim();
+        return note != null && note.isNotEmpty ? note : 'Custom';
+      default:
+        return 'Doubles';
+    }
+  }
+
   static String _egp(int n) {
     final s = n.toString();
     final buf = StringBuffer();
@@ -429,7 +452,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         const SizedBox(height: 10),
         Row(children: [
           Expanded(child: _infoCard(Icons.calendar_today_rounded, 'WHEN',
-              _dateRange, _start != null ? '${_start!.year}' : '')),
+              _dateRange,
+              _startTime ?? (_start != null ? '${_start!.year}' : ''))),
           const SizedBox(width: 10),
           Expanded(child: _infoCard(Icons.place_outlined, 'WHERE',
               (_t?['venue_name'] as String?) ?? '—', '')),
@@ -437,7 +461,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         const SizedBox(height: 10),
         Row(children: [
           Expanded(child: _infoCard(Icons.groups_outlined, 'FORMAT',
-              'Doubles', 'Best of $bestOf sets')),
+              _formatLabel, 'Doubles · Best of $bestOf')),
           const SizedBox(width: 10),
           Expanded(child: _infoCard(Icons.confirmation_number_outlined, 'SPOTS',
               remaining != null ? '$remaining of $_cap' : '${_entries.length} pairs',

@@ -506,11 +506,13 @@ alter table public.tournaments add column if not exists format text not null def
 alter table public.tournaments alter column status set default 'auto';
 alter table public.tournaments add column if not exists best_of int not null default 3;
 alter table public.tournaments add column if not exists max_elo int;
+alter table public.tournaments add column if not exists start_time text;
+alter table public.tournaments add column if not exists format_note text;
 
 -- widen constraints so the app's values are accepted
 alter table public.tournaments drop constraint if exists tournaments_format_chk;
 alter table public.tournaments add constraint tournaments_format_chk
-  check (format in ('knockout','round_robin','group_knockout','double_elim'));
+  check (format in ('knockout','round_robin','group_knockout','double_elim','custom'));
 
 alter table public.tournaments drop constraint if exists tournaments_status_chk;
 alter table public.tournaments add constraint tournaments_status_chk

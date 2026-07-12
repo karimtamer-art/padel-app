@@ -12,8 +12,8 @@ class TournamentService {
   // always resolve, and when it failed the whole tournament query fell back to
   // a no-entries result (so "am I registered?" / spot counts broke).
   static const _cols =
-      'id, name, venue_name, status, start_date, end_date, capacity, '
-      'entry_fee, prize_pool, description, min_elo, max_elo, format, best_of, '
+      'id, name, venue_name, status, start_date, end_date, start_time, capacity, '
+      'entry_fee, prize_pool, description, min_elo, max_elo, format, format_note, best_of, '
       'tournament_entries(id, player_id, player_name, partner_id, partner_name, status)';
 
   // Fallback for a pre-migration DB: no entries join, no max_elo — but still
