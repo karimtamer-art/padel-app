@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../theme/admin_colors.dart';
 import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
+import 'format_builder_screen.dart';
+import 'package:padel_clay/backend/models/format_model.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 
 class AdminTournamentsScreen extends StatefulWidget {
@@ -374,6 +376,16 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               Navigator.pop(context);
               _bracketSheet(t);
             }),
+        const SizedBox(height: 10),
+        AdminButton('Format builder',
+            full: true,
+            height: 46,
+            variant: AdminBtn.ghost,
+            icon: Icons.auto_awesome_rounded,
+            onPressed: () {
+              Navigator.pop(context);
+              _openFormatBuilder(t);
+            }),
         const SizedBox(height: 14),
         Row(children: [
           _kv('Prize pool', _egp(t['prize_pool'])),
@@ -714,6 +726,37 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
           ? _CustomDrawBuilder(tournamentId: tid, entries: entries)
           : _BracketManager(tournamentId: tid),
     );
+  }
+
+  void _openFormatBuilder(Map<String, dynamic> t) {
+    FormatSpec? initial;
+    final raw = t['format_spec'];
+    if (raw is Map) {
+      try {
+        initial = FormatSpec.fromJson(Map<String, dynamic>.from(raw));
+      } catch (_) {}
+    }
+    final entrants = _activeEntries(t).length;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        backgroundColor: AdminColors.bg,
+        appBar: AppBar(
+          backgroundColor: AdminColors.surface,
+          foregroundColor: AdminColors.ink,
+          elevation: 0,
+          title: Text('Format Builder', style: AdminText.h2()),
+        ),
+        body: SafeArea(
+          child: FormatBuilderScreen(
+            tournamentId: t['id'] as String,
+            initial: initial,
+            entrants: entrants < 2 ? 2 : entrants,
+            courts: _courts.isEmpty ? 3 : _courts.length,
+            onSaved: _load,
+          ),
+        ),
+      ),
+    ));
   }
 
   void _form(Map<String, dynamic>? t) {

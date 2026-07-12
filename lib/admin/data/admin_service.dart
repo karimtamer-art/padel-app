@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../backend/models/format_model.dart';
 
 /// Centralised Supabase access for the admin console.
 /// All methods return raw maps so screens can evolve their models independently.
@@ -442,6 +443,65 @@ class AdminService {
       return e.message;
     } catch (e) {
       return e.toString();
+    }
+  }
+
+  // ── Format Builder ────────────────────────────────────────────
+
+  /// Attach a built format spec to a tournament (marks it a custom format).
+  static Future<String?> saveTournamentFormat(
+      String tournamentId, FormatSpec spec) async {
+    try {
+      final res = await _db.rpc('save_tournament_format', params: {
+        'p_tournament_id': tournamentId,
+        'p_spec': spec.toJson(),
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Build the first stage of the saved format into real matches.
+  static Future<String?> generateFromFormat(String tournamentId) async {
+    try {
+      final res = await _db
+          .rpc('generate_from_format', params: {'p_tournament_id': tournamentId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// The organizer's reusable format library.
+  static Future<List<Map<String, dynamic>>> savedFormats() async {
+    try {
+      final res = await _db
+          .from('saved_formats')
+          .select('id, name, spec, created_at')
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Save a named format to the reusable library.
+  static Future<void> saveNamedFormat(FormatSpec spec) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      await _db.from('saved_formats').insert({
+        'organizer_id': uid,
+        'name': spec.name,
+        'spec': spec.toJson(),
+      });
+    } catch (e) {
+      debugPrint('[AdminService] saveNamedFormat: $e');
     }
   }
 
