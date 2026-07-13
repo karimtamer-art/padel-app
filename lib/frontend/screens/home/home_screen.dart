@@ -357,12 +357,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         Flexible(
                             child: Text(c.name,
                                 style: AppText.body(AppColors.heroInk).copyWith(
-                                    fontSize: 15.5, fontWeight: FontWeight.w800),
+                                    fontSize: 14, fontWeight: FontWeight.w800),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis)),
                         if (c.verified) ...[
-                          const SizedBox(width: 6),
-                          const Icon(Icons.verified_rounded, size: 15, color: AppColors.gold),
+                          const SizedBox(width: 5),
+                          const Icon(Icons.verified_rounded, size: 14, color: AppColors.gold),
                         ],
                       ]),
                       const SizedBox(height: 2),
