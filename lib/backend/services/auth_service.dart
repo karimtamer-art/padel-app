@@ -193,11 +193,40 @@ class AuthService {
       if (res.user?.identities?.isEmpty ?? false) {
         return ('An account with this email already exists. Please sign in instead.', false);
       }
-      return (null, res.session != null);
+      final sessionCreated = res.session != null;
+      // Upload the picked profile photo now that a session exists (storage RLS
+      // needs auth). Best-effort: a failure here never blocks account creation,
+      // and if email confirmation is on (no session yet) we simply skip it.
+      if (sessionCreated && data.avatarBytes != null && res.user != null) {
+        await _uploadAvatar(res.user!.id, data.avatarBytes!, data.avatarExt);
+      }
+      return (null, sessionCreated);
     } on AuthException catch (e) {
       return (e.message, false);
     } catch (e) {
       return (e.toString(), false);
+    }
+  }
+
+  /// Uploads [bytes] to the public `avatars` bucket under `<uid>/avatar.<ext>`
+  /// and writes the public URL to `profiles.avatar_url`. Swallows errors — the
+  /// photo is optional and the user can set one later.
+  static Future<void> _uploadAvatar(String uid, Uint8List bytes, String ext) async {
+    try {
+      final e = ext.isEmpty ? 'jpg' : ext;
+      final path = '$uid/avatar.$e';
+      await _db.storage.from('avatars').uploadBinary(
+            path,
+            bytes,
+            fileOptions: FileOptions(
+              upsert: true,
+              contentType: 'image/${e == 'jpg' ? 'jpeg' : e}',
+            ),
+          );
+      final url = _db.storage.from('avatars').getPublicUrl(path);
+      await _db.from('profiles').update({'avatar_url': url}).eq('id', uid);
+    } catch (_) {
+      // best-effort — never block sign-up on an avatar upload
     }
   }
 }

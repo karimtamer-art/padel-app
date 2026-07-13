@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
@@ -582,9 +583,12 @@ class BackSquare extends StatelessWidget {
 /// ── Profile photo picker (tappable circle) ───────────────────────
 class PhotoPicker extends StatelessWidget {
   final VoidCallback? onTap;
-  const PhotoPicker({super.key, this.onTap});
+  /// When set, shows this image inside the circle instead of the placeholder.
+  final Uint8List? imageBytes;
+  const PhotoPicker({super.key, this.onTap, this.imageBytes});
   @override
   Widget build(BuildContext context) {
+    final hasImage = imageBytes != null;
     return GestureDetector(
       onTap: onTap ?? () {},
       child: SizedBox(
@@ -595,18 +599,21 @@ class PhotoPicker extends StatelessWidget {
             width: 124,
             height: 124,
             alignment: Alignment.center,
+            clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: AppColors.field,
               border: Border.all(
                   color: AppColors.line, width: 2.5, style: BorderStyle.solid),
             ),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.photo_camera_outlined, size: 30, color: AppColors.primary),
-              const SizedBox(height: 7),
-              Text('Add photo',
-                  style: AppText.tag(AppColors.inkSoft).copyWith(fontSize: 11, letterSpacing: 0)),
-            ]),
+            child: hasImage
+                ? Image.memory(imageBytes!, width: 124, height: 124, fit: BoxFit.cover)
+                : Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.photo_camera_outlined, size: 30, color: AppColors.primary),
+                    const SizedBox(height: 7),
+                    Text('Add photo',
+                        style: AppText.tag(AppColors.inkSoft).copyWith(fontSize: 11, letterSpacing: 0)),
+                  ]),
           ),
           Positioned(
             right: 4,
@@ -619,7 +626,8 @@ class PhotoPicker extends StatelessWidget {
                 shape: BoxShape.circle,
                 border: Border.all(color: AppColors.surface, width: 3),
               ),
-              child: const Icon(Icons.add_rounded, size: 16, color: AppColors.primaryInk),
+              child: Icon(hasImage ? Icons.edit_rounded : Icons.add_rounded,
+                  size: 16, color: AppColors.primaryInk),
             ),
           ),
         ]),

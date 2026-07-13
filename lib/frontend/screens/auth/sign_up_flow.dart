@@ -1,5 +1,7 @@
-﻿import 'package:flutter/cupertino.dart';
+﻿import 'dart:typed_data';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -15,6 +17,10 @@ class SignUpData {
   String gender = '';
   String hand = 'right';
   String side = 'both';
+  // Profile photo picked on the last step; uploaded after sign-up when a
+  // session exists. Null when the user skips it (photo is optional).
+  Uint8List? avatarBytes;
+  String avatarExt = 'jpg';
 }
 
 class SignUpFlow extends StatefulWidget {
@@ -340,7 +346,6 @@ class _SignUpFlowState extends State<SignUpFlow> {
           options: const [
             SegOption('male', 'Male'),
             SegOption('female', 'Female'),
-            SegOption('other', 'Other'),
           ],
         ),
       ]);
@@ -371,10 +376,36 @@ class _SignUpFlowState extends State<SignUpFlow> {
         ),
       ]);
 
+  Future<void> _pickPhoto() async {
+    try {
+      final f = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 82,
+      );
+      if (f == null) return;
+      final bytes = await f.readAsBytes();
+      final dot = f.name.lastIndexOf('.');
+      final ext = dot >= 0 ? f.name.substring(dot + 1).toLowerCase() : 'jpg';
+      if (!mounted) return;
+      setState(() {
+        _data.avatarBytes = bytes;
+        _data.avatarExt = ext.isEmpty ? 'jpg' : ext;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open your photos: $e'),
+            backgroundColor: const Color(0xFFB00020)),
+      );
+    }
+  }
+
   // ── Step 3 — Complete Profile ───────────────────────────────────────
   Widget _completeStep() => Column(key: const ValueKey(2), children: [
         const SizedBox(height: 6),
-        const Center(child: PhotoPicker()),
+        Center(child: PhotoPicker(onTap: _pickPhoto, imageBytes: _data.avatarBytes)),
         const SizedBox(height: 14),
         Text('Add a profile photo so opponents recognise you on court.',
             textAlign: TextAlign.center,

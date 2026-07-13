@@ -581,6 +581,17 @@ create policy "product-images admin write" on storage.objects
   using (bucket_id = 'product-images' and public._is_admin())
   with check (bucket_id = 'product-images' and public._is_admin());
 
+-- public Storage bucket for profile avatars — public read (bucket flag); each
+-- user writes only inside their own `<uid>/…` folder (set at sign-up).
+insert into storage.buckets (id, name, public)
+  values ('avatars', 'avatars', true)
+  on conflict (id) do update set public = true;
+drop policy if exists "avatars owner write" on storage.objects;
+create policy "avatars owner write" on storage.objects
+  for all to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
 -- ============================================================
 -- Promotional banners (Store top) + product sales.
 -- A banner owns a set of products on sale; products.banner_id tracks
