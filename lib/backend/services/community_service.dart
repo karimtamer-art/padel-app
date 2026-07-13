@@ -295,19 +295,6 @@ class CommunityService {
       _rpc('post_announcement',
           {'p_title': title, 'p_body': body, 'p_pinned': pinned});
 
-  /// One row per member thread for the organizer inbox, newest first.
-  static Future<List<InboxThread>> inbox() async {
-    try {
-      final res = await _db.rpc('community_inbox');
-      return (res as List)
-          .map((r) => InboxThread.fromRow(Map<String, dynamic>.from(r as Map)))
-          .toList();
-    } catch (e) {
-      debugPrint('[CommunityService] inbox: $e');
-      return [];
-    }
-  }
-
   static Future<String?> reply(String memberId, String body) =>
       _rpc('reply_community_message', {'p_member_id': memberId, 'p_body': body});
 

@@ -40,17 +40,6 @@ class ProfileService {
     return OnboardingProfile.fromJson(row);
   }
 
-  /// Returns true when the user has answered all onboarding questions.
-  Future<bool> isOnboardingComplete(String userId) async {
-    final row = await _sb
-        .from('profiles')
-        .select(_onbCols)
-        .eq('id', userId)
-        .maybeSingle();
-    if (row == null) return false;
-    return OnboardingProfile.fromJson(row).isComplete;
-  }
-
   /// Persists the four onboarding answers. Upsert is safe even if the
   /// signup trigger hasn't created the row yet.
   Future<void> saveOnboarding(String userId, OnboardingProfile profile, {String? name}) async {

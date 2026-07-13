@@ -131,86 +131,14 @@ begin
   return null;
 end $$;
 
--- ============================================================
--- RPC: submit_match_result — a player in the match records the
--- score. Casual: settles immediately. Competitive: status stays
--- pending until a player on the OTHER team confirms.
--- score format: '6-4,3-6,6-2' from team A's perspective.
--- ============================================================
-create or replace function public.submit_match_result(
-  p_match_id uuid, p_score_a text, p_score_b text, p_winner text)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_type text;
-  v_status text;
-  v_sched timestamptz;
-begin
-  if v_uid is null then return 'Not signed in.'; end if;
-  if p_winner not in ('a','b') then return 'Invalid winner.'; end if;
-  if not exists (select 1 from match_players where match_id = p_match_id and player_id = v_uid) then
-    return 'Only players in this match can submit a score.';
-  end if;
-
-  select match_type, status, scheduled_at into v_type, v_status, v_sched
-    from matches where id = p_match_id for update;
-  if v_status = 'completed' then return 'Result already confirmed.'; end if;
-  if v_sched > now() then return 'Score entry opens after the match time.'; end if;
-
-  update matches set
-    score_team_a = p_score_a,
-    score_team_b = p_score_b,
-    winner_team  = p_winner,
-    result_submitted_by = v_uid,
-    result_submitted_at = now(),
-    status = case when v_type = 'ranked' then 'pending_confirm' else 'completed' end
-  where id = p_match_id;
-
-  if v_type <> 'ranked' then
-    perform public._settle_elo(p_match_id, false);
-  end if;
-  return null;
-end $$;
+-- NOTE: submit_match_result / confirm_match_result live in the rating-engine-v2
+-- block further down (v2 settles via _settle_rating). The old v1 definitions that
+-- used to sit here — plus their _settle_elo helper — were dead (superseded by v2)
+-- and removed. Drop the orphaned v1 helper from any DB that still has it:
+drop function if exists public._settle_elo(uuid, boolean);
 
 -- ============================================================
--- RPC: confirm_match_result — opponent confirms (true) or
--- disputes (false). Confirm settles ELO atomically.
--- ============================================================
-create or replace function public.confirm_match_result(p_match_id uuid, p_confirm boolean)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_submitter uuid;
-  v_status text;
-  v_sub_team text;
-  v_my_team text;
-begin
-  if v_uid is null then return 'Not signed in.'; end if;
-  select status, result_submitted_by into v_status, v_submitter
-    from matches where id = p_match_id for update;
-  if v_status <> 'pending_confirm' then return 'Nothing awaiting confirmation.'; end if;
-
-  select team into v_sub_team from match_players where match_id = p_match_id and player_id = v_submitter;
-  select team into v_my_team  from match_players where match_id = p_match_id and player_id = v_uid;
-  if v_my_team is null then return 'Only players in this match can confirm.'; end if;
-  if v_my_team = v_sub_team then return 'A player on the other team must confirm.'; end if;
-
-  if p_confirm then
-    update matches set status = 'completed' where id = p_match_id;
-    perform public._settle_elo(p_match_id, true);
-  else
-    update matches set status = 'disputed', winner_team = null,
-      score_team_a = null, score_team_b = null,
-      result_submitted_by = null, result_submitted_at = null
-    where id = p_match_id;
-  end if;
-  return null;
-end $$;
-
--- ============================================================
--- Rating engine — ONE source of truth (ELO), Level 0–7 derived.
+-- Rating engine — ELO→Level mapping helpers (kept; used by v2), Level 0–7.
 --
 --   elo 800  → level 0.0      Division D (Bronze)   0.0–1.9
 --   elo 1200 → level 2.0      Division C (Silver)   2.0–3.4
@@ -240,160 +168,11 @@ language sql immutable as $$
     else 'bronze' end;
 $$;
 
--- Admin cold-start seeding: set a known player's rating server-side (rule #2),
--- deriving level+tier from the ELO and marking them ranked (placement done).
--- The seed's ranking_history row has match_id NULL so it doesn't count toward
--- games played → first real matches still use K=64 and self-correct a bad seed.
-create or replace function public.admin_set_player_rating(
-  p_player_id uuid, p_elo int)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_old_elo   int;
-  v_old_level numeric;
-  v_elo       int;
-  v_level     numeric;
-begin
-  if not public._is_admin() then return 'Not authorised.'; end if;
-  v_elo := greatest(800, least(2200, p_elo));
-  select coalesce(elo, 1000), coalesce(level, 0)
-    into v_old_elo, v_old_level
-  from public.profiles where id = p_player_id;
-  if not found then return 'Player not found.'; end if;
-  v_level := public.level_from_elo(v_elo);
-  update public.profiles set
-    elo = v_elo,
-    level = v_level,
-    tier = public.tier_from_level(v_level),
-    placement_played = greatest(coalesce(placement_played, 0), 5)
-  where id = p_player_id;
-  insert into public.ranking_history
-    (profile_id, match_id, level_before, level_after, elo_before, elo_after)
-  values (p_player_id, null, v_old_level, v_level, v_old_elo, v_elo);
-  return null;
-end $$;
-grant execute on function public.admin_set_player_rating(uuid, int) to authenticated;
-
-create or replace function public._settle_elo(p_match_id uuid, p_ranked boolean)
-returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  v_winner text;
-  v_avg_a numeric;
-  v_avg_b numeric;
-  r record;
-  v_expected numeric;
-  v_k int;
-  v_games int;
-  v_delta int;
-  v_new int;
-  v_new_level numeric;
-begin
-  select winner_team into v_winner from matches where id = p_match_id;
-  if v_winner is null then return; end if;
-
-  select avg(coalesce(p.elo,1000)) filter (where mp.team='a'),
-         avg(coalesce(p.elo,1000)) filter (where mp.team='b')
-    into v_avg_a, v_avg_b
-    from match_players mp join profiles p on p.id = mp.player_id
-   where mp.match_id = p_match_id;
-  v_avg_a := coalesce(v_avg_a, 1000);
-  v_avg_b := coalesce(v_avg_b, 1000);
-
-  for r in select mp.player_id, mp.team, coalesce(p.elo,1000) as elo,
-                  coalesce(p.level,0) as level, coalesce(p.placement_played,0) as placed
-             from match_players mp join profiles p on p.id = mp.player_id
-            where mp.match_id = p_match_id
-  loop
-    if p_ranked then
-      -- how many ranked matches has this player completed?
-      select count(*) into v_games
-        from ranking_history
-       where profile_id = r.player_id and match_id is not null;
-
-      v_k := case when v_games < 5 then 64
-                  when v_games < 30 then 32
-                  else 24 end;
-
-      v_expected := 1.0 / (1.0 + power(10.0,
-        ((case when r.team='a' then v_avg_b else v_avg_a end)
-        - (case when r.team='a' then v_avg_a else v_avg_b end)) / 400.0));
-      v_delta := round(v_k * ((case when r.team = v_winner then 1 else 0 end) - v_expected));
-      v_new := greatest(800, r.elo + v_delta);
-    else
-      v_delta := 0;
-      v_new := r.elo;
-    end if;
-
-    v_new_level := public.level_from_elo(v_new);
-
-    update match_players set elo_before = r.elo, elo_after = v_new
-      where match_id = p_match_id and player_id = r.player_id;
-
-    if p_ranked then
-      update profiles set
-        elo = v_new,
-        level = v_new_level,
-        placement_played = least(r.placed + 1, 5),
-        tier = public.tier_from_level(v_new_level)
-      where id = r.player_id;
-
-      insert into ranking_history (profile_id, match_id, level_before, level_after, elo_before, elo_after)
-      values (r.player_id, p_match_id, r.level, v_new_level, r.elo, v_new);
-    end if;
-  end loop;
-end $$;
-
--- ============================================================
--- Gentle inactivity decay — run weekly.
---   • Kicks in only after 60 days without a confirmed ranked match
---   • −8 ELO per weekly run (≈ −0.04 level)
---   • Never drops a player below the FLOOR of their current division,
---     and never below 1000 — inactivity loosens your spot inside the
---     division, it doesn't relegate you.
---   • Placement players (under 5 ranked matches) are never decayed.
--- ============================================================
-create or replace function public.apply_rating_decay()
-returns int
-language plpgsql security definer set search_path = public as $$
-declare
-  v_count int := 0;
-  r record;
-  v_floor int;
-  v_new int;
-  v_new_level numeric;
-begin
-  for r in
-    select p.id, coalesce(p.elo,1000) as elo, coalesce(p.level,0) as level
-      from profiles p
-     where coalesce(p.is_admin,false) = false
-       and coalesce(p.placement_played,0) >= 5
-       and coalesce(p.elo,1000) > 1000
-       and not exists (
-         select 1 from ranking_history h
-          where h.profile_id = p.id
-            and h.match_id is not null
-            and h.created_at > now() - interval '60 days')
-  loop
-    -- elo floor of the player's current division band
-    v_floor := case
-      when r.level >= 5.0 then 1800
-      when r.level >= 3.5 then 1500
-      when r.level >= 2.0 then 1200
-      else 800 end;
-    v_new := greatest(1000, greatest(v_floor, r.elo - 8));
-    if v_new < r.elo then
-      v_new_level := public.level_from_elo(v_new);
-      update profiles set elo = v_new, level = v_new_level,
-        tier = public.tier_from_level(v_new_level)
-      where id = r.id;
-      insert into ranking_history (profile_id, match_id, level_before, level_after, elo_before, elo_after)
-      values (r.id, null, r.level, v_new_level, r.elo, v_new);
-      v_count := v_count + 1;
-    end if;
-  end loop;
-  return v_count;
-end $$;
+-- admin_set_player_rating, the settlement helper, and apply_rating_decay live
+-- in the rating-engine-v2 block further down (with their grants). Their old v1
+-- (ELO-based) definitions that used to sit here were dead (superseded by v2) and
+-- removed. The cron below only stores a command string, so it's fine that
+-- apply_rating_decay is defined later.
 
 -- Schedule the decay weekly (Mondays 03:00 UTC) if pg_cron is available.
 -- In Supabase: Dashboard → Database → Extensions → enable "pg_cron" first.
@@ -460,8 +239,8 @@ grant select on public.tournament_matches  to authenticated, anon;
 
 grant execute on function public.join_match(uuid, text) to authenticated;
 grant execute on function public.leave_match(uuid) to authenticated;
-grant execute on function public.submit_match_result(uuid, text, text, text) to authenticated;
-grant execute on function public.confirm_match_result(uuid, boolean) to authenticated;
+-- submit_match_result / confirm_match_result grants moved to the v2 block (their
+-- definitions live there now, so the grants must follow them).
 
 -- ── trade-in / repair requests (created if the admin console hasn't yet) ──
 create table if not exists public.trade_requests (
@@ -2485,6 +2264,11 @@ begin
   end loop;
   return v_count;
 end $$;
+
+-- Grants for the rating-engine-v2 RPCs (their v1 defs + early grants were removed).
+grant execute on function public.submit_match_result(uuid, text, text, text) to authenticated;
+grant execute on function public.confirm_match_result(uuid, boolean) to authenticated;
+grant execute on function public.admin_set_player_rating(uuid, int) to authenticated;
 
 -- Admin rating controls (2026-07-03) — hand-set a 0..7 rating with an explicit
 -- sigma + anchor flag; logs to ranking_history + audit_log. Two console actions:

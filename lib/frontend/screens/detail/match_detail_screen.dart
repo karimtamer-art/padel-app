@@ -70,7 +70,6 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   String get _myTeam => (_me?['team'] as String?) ?? 'a';
   bool get _comp => _match?['match_type'] == 'ranked';
   String get _status => (_match?['status'] as String?) ?? 'open';
-  bool get _isHost => _match?['created_by'] == _uid;
 
   DateTime? get _when {
     final iso = _match?['scheduled_at'] as String?;

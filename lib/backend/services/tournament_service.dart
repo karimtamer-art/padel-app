@@ -220,21 +220,4 @@ class TournamentService {
     if (cap > 0 && entryCount >= cap) return 'full';
     return 'open';
   }
-
-  /// Live leaderboard: top players by ELO (admins excluded).
-  static Future<List<Map<String, dynamic>>> fetchLeaderboard(
-      {int limit = 50}) async {
-    try {
-      final rows = await _db
-          .from('profiles')
-          .select('id, name, elo, tier, level')
-          .eq('is_admin', false)
-          .order('elo', ascending: false)
-          .limit(limit);
-      return List<Map<String, dynamic>>.from(rows as List);
-    } catch (e) {
-      debugPrint('[TournamentService] fetchLeaderboard: $e');
-      return [];
-    }
-  }
 }
