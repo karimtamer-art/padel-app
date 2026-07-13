@@ -1057,7 +1057,7 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
 
   Future<void> _submit() async {
     final sender = _sender.text.trim();
-    if (sender.isEmpty) return;
+    if (sender.isEmpty || _proofBytes == null) return;
     setState(() => _busy = true);
     String? proofPath;
     if (_proofBytes != null) {
@@ -1078,7 +1078,7 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final ready = _sender.text.trim().isNotEmpty && !_busy;
+    final ready = _sender.text.trim().isNotEmpty && _proofBytes != null && !_busy;
     return Container(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       decoration: const BoxDecoration(
@@ -1136,7 +1136,7 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text('TRANSFER SCREENSHOT (OPTIONAL)', style: AppText.kicker()),
+                Text('TRANSFER SCREENSHOT (REQUIRED)', style: AppText.kicker()),
                 const SizedBox(height: 7),
                 _proofTile(),
                 const SizedBox(height: 22),

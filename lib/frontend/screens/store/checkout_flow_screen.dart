@@ -653,7 +653,8 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
   // ── Step 3: InstaPay transfer ─────────────────────────────────
 
   Widget _instapayStep() {
-    final ready = _sender.text.trim().isNotEmpty;
+    // InstaPay orders require both the sending username and a transfer proof.
+    final ready = _sender.text.trim().isNotEmpty && _proofBytes != null;
     return Column(children: [
       _header('INSTAPAY TRANSFER', 'Send payment', onBack: () => setState(() => _step = _Step.pay)),
       Expanded(
@@ -694,7 +695,7 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
               ]),
             ),
             const SizedBox(height: 12),
-            _fieldLabel('Transaction screenshot · optional'),
+            _fieldLabel('Transaction screenshot · required'),
             _proofPicker(),
           ],
         ),
