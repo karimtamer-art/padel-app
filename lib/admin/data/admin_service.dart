@@ -255,6 +255,10 @@ class AdminService {
         params: {'p_id': id, 'p_on': on});
   }
 
+  static Future<void> organizerSetCourtActive(String id, bool on) async {
+    await _db.rpc('organizer_set_court_active', params: {'p_id': id, 'p_on': on});
+  }
+
   // ── Staff provisioning ────────────────────────────────────────
 
   /// Super admin creates a staff account of any role (username + temp password)

@@ -158,36 +158,17 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
             ]),
             const Divider(height: 22, color: AdminColors.lineSoft),
             Row(children: [
-              GestureDetector(
-                onTap: () => _toggleMaintenance(row),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                      color: AdminColors.surfaceAlt,
-                      borderRadius: BorderRadius.circular(9)),
-                  child: Text(
-                    maint ? 'Reactivate' : 'Maintenance',
-                    style: AdminText.sans(12.5, FontWeight.w700, AdminColors.ink),
-                  ),
-                ),
+              Expanded(
+                child: Wrap(spacing: 8, runSpacing: 8, children: [
+                  _pill(maint ? 'Reactivate' : 'Maintenance', () => _toggleMaintenance(row)),
+                  if (_isOrganizer)
+                    _pill(inactive ? 'Activate' : 'Deactivate', () => _toggleActive(row)),
+                  if (!_isOrganizer)
+                    _pill(row['is_public'] != false ? 'Make private' : 'Publish to all',
+                        () => _togglePublic(row)),
+                ]),
               ),
-              if (!_isOrganizer) ...[
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => _togglePublic(row),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                        color: AdminColors.surfaceAlt,
-                        borderRadius: BorderRadius.circular(9)),
-                    child: Text(
-                      row['is_public'] != false ? 'Make private' : 'Publish to all',
-                      style: AdminText.sans(12.5, FontWeight.w700, AdminColors.ink),
-                    ),
-                  ),
-                ),
-              ],
-              const Spacer(),
+              const SizedBox(width: 8),
               _iconBtn(Icons.edit_outlined, () => _edit(row)),
               const SizedBox(width: 8),
               _iconBtn(Icons.delete_outline_rounded, () => _remove(row)),
@@ -196,6 +177,26 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _pill(String label, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+              color: AdminColors.surfaceAlt, borderRadius: BorderRadius.circular(9)),
+          child: Text(label,
+              style: AdminText.sans(12.5, FontWeight.w700, AdminColors.ink)),
+        ),
+      );
+
+  Future<void> _toggleActive(Map<String, dynamic> row) async {
+    final activate = row['is_active'] != true; // currently inactive → activate
+    await AdminService.organizerSetCourtActive(row['id'] as String, activate);
+    await _load();
+    if (mounted) {
+      adminToast(context, activate ? 'Court activated' : 'Court deactivated');
+    }
   }
 
   Widget _visibilityPill(Map row) {

@@ -3213,6 +3213,17 @@ begin
 end $$;
 grant execute on function public.organizer_set_court_maintenance(uuid, boolean) to authenticated;
 
+create or replace function public.organizer_set_court_active(p_id uuid, p_on boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+    raise exception 'Organizers only';
+  end if;
+  update public.courts set is_active = coalesce(p_on, true)
+   where id = p_id and (owner_id = auth.uid() or public._is_admin());
+end $$;
+grant execute on function public.organizer_set_court_active(uuid, boolean) to authenticated;
+
 -- courts RLS only shows active courts to non-admins, so an organizer's direct
 -- select can miss their own (e.g. inactive) courts. Return them via a
 -- SECURITY DEFINER RPC + an owner-read policy.
