@@ -70,4 +70,7 @@ AuthKey_*.p8
 .claude/
 
 # Desktop admin console (local-only tool; not part of the app build)
-desktop_admin/
+desktop_admin/android/key.properties
+android/upload-keystore.jks
+*.jks
+*.keystore
