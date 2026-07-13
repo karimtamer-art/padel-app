@@ -21,14 +21,19 @@ const _presets = {
 };
 
 class FormatBuilderScreen extends StatefulWidget {
-  final String tournamentId;
+  /// When opened for a specific tournament (from its actions) this is fixed.
+  /// When opened as a console section (nav) it's null and the organizer picks
+  /// which of their tournaments to apply the format to.
+  final String? tournamentId;
+  final String? organizerId; // scopes the tournament picker (null = all, admin)
   final FormatSpec? initial;
   final int entrants; // registered pairs
   final int courts; // organizer's courts
   final VoidCallback? onSaved;
   const FormatBuilderScreen({
     super.key,
-    required this.tournamentId,
+    this.tournamentId,
+    this.organizerId,
     this.initial,
     this.entrants = 16,
     this.courts = 3,
@@ -49,7 +54,12 @@ class _FormatBuilderScreenState extends State<FormatBuilderScreen> {
       widget.initial?.entrants ?? (widget.entrants < 2 ? 2 : widget.entrants);
   late int _courts = widget.initial?.courts ?? (widget.courts < 1 ? 1 : widget.courts);
   List<Map<String, dynamic>> _saved = [];
+  // Standalone mode: pick which tournament to apply the format to.
+  late String? _targetId = widget.tournamentId;
+  List<Map<String, dynamic>> _tournaments = [];
   bool _busy = false;
+
+  bool get _standalone => widget.tournamentId == null;
 
   FormatAnalysis get _a => analyzeFormat(_stages, _entrants, _courts);
 
@@ -57,11 +67,17 @@ class _FormatBuilderScreenState extends State<FormatBuilderScreen> {
   void initState() {
     super.initState();
     _loadSaved();
+    if (_standalone) _loadTournaments();
   }
 
   Future<void> _loadSaved() async {
     final rows = await AdminService.savedFormats();
     if (mounted) setState(() => _saved = rows);
+  }
+
+  Future<void> _loadTournaments() async {
+    final rows = await AdminService.fetchTournaments(organizerId: widget.organizerId);
+    if (mounted) setState(() => _tournaments = rows);
   }
 
   FormatSpec get _spec => FormatSpec(
@@ -89,12 +105,21 @@ class _FormatBuilderScreenState extends State<FormatBuilderScreen> {
 
   Future<void> _save() async {
     setState(() => _busy = true);
-    final err = await AdminService.saveTournamentFormat(widget.tournamentId, _spec);
-    // Also keep it in the organizer's reusable library.
+    // Always keep it in the reusable library; attach to a tournament if chosen.
     await AdminService.saveNamedFormat(_spec);
+    String? err;
+    if (_targetId != null) {
+      err = await AdminService.saveTournamentFormat(_targetId!, _spec);
+    }
     if (!mounted) return;
     setState(() => _busy = false);
-    adminToast(context, err ?? 'Format saved', ok: err == null);
+    adminToast(
+        context,
+        err ??
+            (_targetId != null
+                ? 'Format saved & attached'
+                : 'Saved to your library'),
+        ok: err == null);
     if (err == null) {
       widget.onSaved?.call();
       _loadSaved();
@@ -102,14 +127,18 @@ class _FormatBuilderScreenState extends State<FormatBuilderScreen> {
   }
 
   Future<void> _generate() async {
+    if (_targetId == null) {
+      adminToast(context, 'Pick a tournament to generate its draw.', ok: false);
+      return;
+    }
     if (_a.errors > 0) {
       adminToast(context, 'Fix the ${_a.errors} problem(s) first.', ok: false);
       return;
     }
     // Persist the current spec, then build the real matches.
     setState(() => _busy = true);
-    await AdminService.saveTournamentFormat(widget.tournamentId, _spec);
-    final err = await AdminService.generateFromFormat(widget.tournamentId);
+    await AdminService.saveTournamentFormat(_targetId!, _spec);
+    final err = await AdminService.generateFromFormat(_targetId!);
     if (!mounted) return;
     setState(() => _busy = false);
     adminToast(context, err ?? 'Draw generated from format', ok: err == null);
@@ -125,6 +154,10 @@ class _FormatBuilderScreenState extends State<FormatBuilderScreen> {
       final side = _side(a);
       return ListView(padding: const EdgeInsets.all(AdminUI.screen), children: [
         _headerRow(),
+        if (_standalone) ...[
+          const SizedBox(height: 14),
+          _targetPicker(),
+        ],
         const SizedBox(height: 16),
         _presetsRow(),
         const SizedBox(height: 20),
@@ -149,6 +182,44 @@ class _FormatBuilderScreenState extends State<FormatBuilderScreen> {
         ],
       ]);
     });
+  }
+
+  Widget _targetPicker() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: AdminUI.fieldR,
+          border: Border.all(color: AdminColors.line)),
+      child: Row(children: [
+        const Icon(Icons.emoji_events_outlined, size: 17, color: AdminColors.inkFaint),
+        const SizedBox(width: 8),
+        Text('Apply to', style: AdminText.strong(AdminColors.inkSoft)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String?>(
+              value: _targetId,
+              isExpanded: true,
+              hint: Text('Library only — pick a tournament to generate',
+                  style: AdminText.small(), overflow: TextOverflow.ellipsis),
+              dropdownColor: AdminColors.surface,
+              items: [
+                const DropdownMenuItem<String?>(
+                    value: null, child: Text('Library only')),
+                for (final t in _tournaments)
+                  DropdownMenuItem<String?>(
+                    value: t['id'] as String,
+                    child: Text((t['name'] as String?) ?? 'Tournament',
+                        style: AdminText.body(), overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _targetId = v),
+            ),
+          ),
+        ),
+      ]),
+    );
   }
 
   Widget _headerRow() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

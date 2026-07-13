@@ -13,6 +13,7 @@ import 'screens/admin_players_screen.dart';
 import 'screens/admin_matches_screen.dart';
 import 'screens/admin_inventory_screen.dart';
 import 'screens/admin_tournaments_screen.dart';
+import 'screens/format_builder_screen.dart';
 import 'screens/admin_requests_screen.dart';
 import 'screens/admin_courts_screen.dart';
 import 'screens/admin_reports_screen.dart';
@@ -199,6 +200,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     'players':     ['Players',      'Profiles & rankings'],
     'matches':     ['Matches',      'Match history'],
     'tournaments': ['Tournaments',  'Brackets & entries'],
+    'formats':     ['Format Builder', 'Design tournament formats'],
     'courts':      ['Courts',       'Partner clubs'],
     'store':       ['Store & Orders', 'Catalogue & orders'],
     'promotions':  ['Promotions',   'Store banners & sales'],
@@ -220,6 +222,7 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'players':     return const AdminPlayersScreen();
       case 'matches':     return const AdminMatchesScreen();
       case 'tournaments': return AdminTournamentsScreen(organizerId: orgId);
+      case 'formats':     return FormatBuilderScreen(organizerId: orgId);
       case 'courts':      return AdminCourtsScreen(organizerId: orgId);
       case 'store':       return const AdminInventoryScreen();
       case 'promotions':  return const AdminPromotionsScreen();

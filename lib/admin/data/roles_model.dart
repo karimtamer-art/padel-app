@@ -45,6 +45,7 @@ const List<Section> kSections = [
   Section('players', 'Players', Icons.groups_outlined, 'Operations', 'Profiles & rankings'),
   Section('matches', 'Matches', Icons.sports_tennis_rounded, 'Operations', 'Lobbies & disputes'),
   Section('tournaments', 'Tournaments', Icons.emoji_events_outlined, 'Operations', 'Brackets & entries'),
+  Section('formats', 'Format Builder', Icons.auto_awesome_rounded, 'Operations', 'Design tournament formats'),
   Section('courts', 'Courts', Icons.place_outlined, 'Operations', 'Partner clubs'),
   Section('store', 'Store & Orders', Icons.shopping_bag_outlined, 'Commerce', 'Catalogue & orders'),
   Section('promotions', 'Promotions', Icons.local_offer_outlined, 'Commerce', 'Banners & sales'),
@@ -80,7 +81,7 @@ class RoleDef {
 }
 
 const List<String> _allIds = [
-  'dashboard', 'reports', 'players', 'matches', 'tournaments', 'courts',
+  'dashboard', 'reports', 'players', 'matches', 'tournaments', 'formats', 'courts',
   'store', 'promotions', 'payments', 'requests', 'broadcasts', 'team',
 ];
 
@@ -100,7 +101,7 @@ const Map<RoleId, RoleDef> kRoles = {
       'Runs tournaments and reaches the community — no store or platform payments.',
       // Organizers broadcast from their Overview (scoped to their participants),
       // not the all-players Broadcasts section.
-      ['tournaments', 'matches', 'courts']),
+      ['tournaments', 'formats', 'matches', 'courts']),
   RoleId.support: RoleDef(
       RoleId.support,
       'Support · Moderator',
