@@ -29,8 +29,10 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.padelegypt.padel_clay"
+        // Play Console package name. Note: this differs from `namespace` above
+        // (the code/R package) on purpose — changing namespace would move the
+        // Kotlin sources; only applicationId is the published package name.
+        applicationId = "com.padelegypt.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // Firebase 4.x (firebase_core/messaging) requires minSdk 23.
