@@ -184,16 +184,10 @@ class ProfileService {
         }
       }
 
-      // ELO history — elo_after values chronological, last 12 points
-      final eloPoints = completed
-          .where((r) => r['elo_after'] != null)
-          .map((r) => (r['elo_after'] as num).toInt())
-          .toList()
-          .reversed
-          .take(12)
-          .toList()
-          .reversed
-          .toList();
+      // Rating history — built from ranking_history below (the rating-engine-v2
+      // per-match trail). The legacy match_players.elo_after column is no longer
+      // written by the v2 settle, so it can't feed the chart.
+      List<int> eloPoints = [];
 
       // Recent 5 completed matches
       final recent = <RecentMatch>[];
@@ -241,6 +235,25 @@ class ProfileService {
             .gte('created_at', weekAgo);
         for (final row in (week as List)) {
           weeklyDelta += (row['delta'] as num?)?.toDouble() ?? 0;
+        }
+
+        // Rating trail for the chart: rating_before of the first match, then
+        // each rating_after — mapped to ELO-style points (800 + rating*200).
+        final histRows = await _db
+            .from('ranking_history')
+            .select('rating_before, rating_after')
+            .eq('profile_id', userId)
+            .not('match_id', 'is', null)
+            .order('created_at', ascending: true)
+            .limit(20);
+        final hist = histRows as List;
+        if (hist.isNotEmpty) {
+          int toElo(num rt) => (800 + rt.toDouble() * 200).round();
+          eloPoints = [
+            toElo((hist.first['rating_before'] as num?) ?? 2.0),
+            for (final r in hist)
+              if (r['rating_after'] != null) toElo(r['rating_after'] as num),
+          ];
         }
         final lastRows = await _db
             .from('ranking_history')
