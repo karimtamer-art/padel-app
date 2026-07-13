@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../data/admin_service.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
+import '../../backend/services/community_service.dart';
 
 class OrganizerOverviewScreen extends StatefulWidget {
   final VoidCallback? onOpenTournaments;
@@ -21,6 +22,7 @@ class OrganizerOverviewScreen extends StatefulWidget {
 class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
   Map<String, dynamic> _kpi = {};
   List<Map<String, dynamic>> _tournaments = [];
+  List<Announcement> _announcements = [];
   bool _loading = true;
 
   @override
@@ -36,12 +38,47 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
       AdminService.organizerOverview(),
       AdminService.fetchTournaments(organizerId: uid),
     ]);
+    // Recent announcements for the "Reach your community" card.
+    List<Announcement> anns = [];
+    final community = await CommunityService.myCommunity();
+    if (community != null) {
+      anns = (await CommunityService.feed(community.id)).take(3).toList();
+    }
     if (!mounted) return;
     setState(() {
       _kpi = results[0] as Map<String, dynamic>;
       _tournaments = results[1] as List<Map<String, dynamic>>;
+      _announcements = anns;
       _loading = false;
     });
+  }
+
+  /// Pending InstaPay entries across all the organizer's tournaments.
+  List<Map<String, dynamic>> _pendingEntries() {
+    final out = <Map<String, dynamic>>[];
+    for (final t in _tournaments) {
+      final es = t['tournament_entries'];
+      if (es is! List) continue;
+      for (final e in es) {
+        if (e is Map && e['status'] == 'pending') {
+          out.add({...Map<String, dynamic>.from(e), '_tournament': t['name']});
+        }
+      }
+    }
+    return out;
+  }
+
+  Future<void> _verifyEntry(String id, bool ok) async {
+    final err = ok
+        ? await AdminService.verifyTournamentEntry(id)
+        : await AdminService.rejectTournamentEntry(id);
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err, ok: false);
+      return;
+    }
+    adminToast(context, ok ? 'Payment verified' : 'Entry rejected');
+    _load();
   }
 
   int _n(String k) => (_kpi[k] as num?)?.toInt() ?? 0;
@@ -121,10 +158,17 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
                 _reachStat('${_n('largest_event')}', 'largest event'),
                 _reachStat('${_n('open_rate')}%', 'avg. open rate'),
               ]),
+              if (_announcements.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Text('RECENT ANNOUNCEMENTS', style: AdminText.kicker()),
+                const SizedBox(height: 6),
+                for (final a in _announcements) _announcementRow(a),
+              ],
             ],
           ]),
         ),
         const SizedBox(height: 16),
+        _entryPaymentsCard(),
         // your tournaments
         AdminCard(
           padding: EdgeInsets.zero,
@@ -158,6 +202,129 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
         ),
       ]),
     );
+  }
+
+  Widget _announcementRow(Announcement a) => Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(children: [
+          Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: AdminColors.wash(AdminColors.gold, 0.14),
+                borderRadius: BorderRadius.circular(8)),
+            child: Icon(a.pinned ? Icons.push_pin_rounded : Icons.campaign_outlined,
+                size: 15, color: AdminColors.gold),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(a.title,
+                  style: AdminText.strong(), maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text('${a.going} going · ${a.likes} likes · ${_ago(a.createdAt)}',
+                  style: AdminText.small()),
+            ]),
+          ),
+        ]),
+      );
+
+  Widget _entryPaymentsCard() {
+    final pending = _pendingEntries();
+    if (pending.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: AdminCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: AdminColors.wash(AdminColors.info, 0.14),
+                  borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.swap_horiz_rounded, size: 19, color: AdminColors.info),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Entry payments', style: AdminText.cardTitle()),
+                Text('InstaPay transfers for your events', style: AdminText.small()),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+                color: AdminColors.wash(AdminColors.gold, 0.12),
+                borderRadius: AdminUI.fieldR),
+            child: Row(children: [
+              const Icon(Icons.schedule_rounded, size: 17, color: AdminColors.gold),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${pending.length} to verify',
+                      style: AdminText.sans(14, FontWeight.w800, AdminColors.ink)),
+                  Text('Confirm the sender & amount to accept the entry',
+                      style: AdminText.small()),
+                ]),
+              ),
+            ]),
+          ),
+          for (final e in pending) _pendingRow(e),
+        ]),
+      ),
+    );
+  }
+
+  Widget _pendingRow(Map<String, dynamic> e) {
+    final id = e['id'] as String?;
+    final amount = (e['paid_amount'] as num?)?.toInt();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text((e['player_name'] as String?) ?? 'Player', style: AdminText.strong()),
+            Text((e['_tournament'] as String?) ?? '',
+                style: AdminText.mono(11, FontWeight.w600, AdminColors.inkFaint),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        if (amount != null) ...[
+          Text('EGP $amount', style: AdminText.strong()),
+          const SizedBox(width: 8),
+        ],
+        if (id != null) ...[
+          _miniBtn(Icons.check_rounded, AdminColors.green, () => _verifyEntry(id, true)),
+          const SizedBox(width: 6),
+          _miniBtn(Icons.close_rounded, AdminColors.danger, () => _verifyEntry(id, false)),
+        ],
+      ]),
+    );
+  }
+
+  Widget _miniBtn(IconData icon, Color tone, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: AdminColors.wash(tone, 0.14), borderRadius: BorderRadius.circular(8)),
+          child: Icon(icon, size: 17, color: tone),
+        ),
+      );
+
+  static String _ago(DateTime? t) {
+    if (t == null) return '';
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+    if (d.inHours < 24) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
   }
 
   Widget _reachStat(String value, String label) => Expanded(
@@ -194,6 +361,8 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
     final name = (t['name'] as String?) ?? 'Tournament';
     final status = (t['status'] as String?) ?? 'open';
     final entrants = _activeEntries(t).length;
+    final cap = (t['capacity'] as num?)?.toInt() ?? 0;
+    final full = cap > 0 && entrants >= cap;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       decoration: const BoxDecoration(
@@ -210,8 +379,16 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
             const SizedBox(width: 8),
             StatusBadge(status),
           ]),
-          const SizedBox(height: 4),
-          Text('$entrants entrant${entrants == 1 ? '' : 's'}', style: AdminText.small()),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: AdminProgress(cap > 0 ? entrants / cap : (entrants > 0 ? 1 : 0),
+                  color: full ? AdminColors.warn : AdminColors.gold),
+            ),
+            const SizedBox(width: 8),
+            Text(cap > 0 ? '$entrants/$cap' : '$entrants',
+                style: AdminText.mono(11.5, FontWeight.w700, AdminColors.inkSoft)),
+          ]),
         ])),
         const SizedBox(width: 12),
         AdminButton('Message',
