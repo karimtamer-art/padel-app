@@ -1011,6 +1011,19 @@ class AdminService {
     return List<Map<String, dynamic>>.from(res as List);
   }
 
+  /// The organizer's own broadcast history (RLS-scoped to the caller).
+  static Future<List<Map<String, dynamic>>> organizerBroadcastsList() async {
+    try {
+      final res = await _db
+          .from('organizer_broadcasts')
+          .select('id, title, body, recipients, tournament_id, created_at')
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (_) {
+      return [];
+    }
+  }
+
   static Future<void> createBroadcast({
     required String title,
     required String body,

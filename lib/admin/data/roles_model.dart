@@ -99,9 +99,9 @@ const Map<RoleId, RoleDef> kRoles = {
       Icons.emoji_events_outlined,
       AdminColors.gold,
       'Runs tournaments and reaches the community — no store or platform payments.',
-      // Organizers broadcast from their Overview (scoped to their participants),
-      // not the all-players Broadcasts section.
-      ['tournaments', 'formats', 'matches', 'courts']),
+      // Organizers get a Broadcasts section scoped to their OWN broadcasts
+      // (community + event entrants), not the platform-wide feed.
+      ['tournaments', 'formats', 'matches', 'courts', 'broadcasts']),
   RoleId.support: RoleDef(
       RoleId.support,
       'Support · Moderator',

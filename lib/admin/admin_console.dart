@@ -228,7 +228,7 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'promotions':  return const AdminPromotionsScreen();
       case 'payments':    return const AdminPaymentsScreen();
       case 'requests':    return const AdminRequestsScreen();
-      case 'broadcasts':  return const AdminBroadcastsScreen();
+      case 'broadcasts':  return AdminBroadcastsScreen(organizerId: orgId);
       case 'team':        return const AdminTeamScreen();
       default:
         return AdminDashboardScreen(onNavigate: _navTo);

@@ -5,7 +5,10 @@ import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
 
 class AdminBroadcastsScreen extends StatefulWidget {
-  const AdminBroadcastsScreen({super.key});
+  /// When set (organizer console), the screen shows ONLY this organizer's own
+  /// broadcasts and sends to their community, not platform-wide.
+  final String? organizerId;
+  const AdminBroadcastsScreen({super.key, this.organizerId});
   @override
   State<AdminBroadcastsScreen> createState() => _AdminBroadcastsScreenState();
 }
@@ -13,6 +16,8 @@ class AdminBroadcastsScreen extends StatefulWidget {
 class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
   List<Map<String, dynamic>> _broadcasts = [];
   bool _loading = true;
+
+  bool get _isOrganizer => widget.organizerId != null;
 
   @override
   void initState() {
@@ -23,7 +28,9 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final data = await AdminService.fetchBroadcasts();
+      final data = _isOrganizer
+          ? await AdminService.organizerBroadcastsList()
+          : await AdminService.fetchBroadcasts();
       if (mounted) setState(() { _broadcasts = data; _loading = false; });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
@@ -78,7 +85,10 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
 
   Widget _card(Map<String, dynamic> b) {
     final target = b['segment'] as String? ?? 'all';
-    final tc = _targetColor(target);
+    final tc = _isOrganizer ? AdminColors.gold : _targetColor(target);
+    final badge = _isOrganizer
+        ? '${(b['recipients'] as num?)?.toInt() ?? 0} reached'
+        : 'To: ${target[0].toUpperCase()}${target.substring(1)}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: AdminCard(
@@ -91,8 +101,7 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
                 color: AdminColors.wash(tc, 0.14),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: Text('To: ${target[0].toUpperCase()}${target.substring(1)}',
-                  style: AdminText.sans(11, FontWeight.w700, tc)),
+              child: Text(badge, style: AdminText.sans(11, FontWeight.w700, tc)),
             ),
             const Spacer(),
             Text(_fmtDate(b['sent_at'] as String? ?? b['created_at'] as String?),
@@ -111,6 +120,10 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
   }
 
   void _compose() {
+    if (_isOrganizer) {
+      _composeOrganizer();
+      return;
+    }
     final titleC = TextEditingController();
     final bodyC = TextEditingController();
     String segment = 'all';
@@ -179,6 +192,60 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
     );
   }
 
+  void _composeOrganizer() {
+    final titleC = TextEditingController();
+    final bodyC = TextEditingController();
+    adminSheet(
+      context,
+      title: 'Broadcast to your community',
+      sub: 'Push + in-app to your members & event entrants',
+      heightFactor: 0.66,
+      footer: AdminButton(
+        'Send broadcast',
+        full: true,
+        height: 50,
+        icon: Icons.send_rounded,
+        color: AdminColors.gold,
+        onPressed: () async {
+          if (titleC.text.trim().isEmpty) return;
+          Navigator.pop(context);
+          final err = await AdminService.organizerBroadcast(
+              title: titleC.text.trim(), body: bodyC.text.trim());
+          if (!mounted) return;
+          if (err != null) {
+            adminToast(context, err, ok: false);
+            return;
+          }
+          await _load();
+          if (mounted) adminToast(context, 'Broadcast sent to your community');
+        },
+      ),
+      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.all(11),
+          decoration: BoxDecoration(
+              color: AdminColors.wash(AdminColors.gold, 0.12),
+              borderRadius: AdminUI.fieldR),
+          child: Row(children: [
+            const Icon(Icons.groups_outlined, size: 17, color: AdminColors.gold),
+            const SizedBox(width: 9),
+            Expanded(
+                child: Text('Reaches your community members and event entrants',
+                    style: AdminText.small(AdminColors.ink))),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        Text('Title', style: AdminText.strong(AdminColors.inkSoft)),
+        const SizedBox(height: 7),
+        _field(titleC, hint: 'e.g. New tournament this weekend'),
+        const SizedBox(height: 14),
+        Text('Message', style: AdminText.strong(AdminColors.inkSoft)),
+        const SizedBox(height: 7),
+        _field(bodyC, hint: 'What do you want them to know?', maxLines: 4),
+      ]),
+    );
+  }
+
   Widget _field(TextEditingController c, {String? hint, int maxLines = 1}) =>
       TextField(
         controller: c,
@@ -212,7 +279,10 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
           const SizedBox(height: 14),
           Text('No broadcasts yet', style: AdminText.h2()),
           const SizedBox(height: 6),
-          Text('Tap + New to send a message to all players.',
+          Text(
+              _isOrganizer
+                  ? 'Tap + New to message your community.'
+                  : 'Tap + New to send a message to all players.',
               style: AdminText.small()),
         ]),
       );
