@@ -147,6 +147,7 @@ class StatusBadge extends StatelessWidget {
     'postponed': [AdminColors.gold, 'Postponed'],
     'auto': [AdminColors.info, 'Auto'],
     'maintenance': [AdminColors.warn, 'Maintenance'],
+    'hidden': [AdminColors.inkSoft, 'Hidden'],
     'new': [AdminColors.warn, 'New'],
     'quoted': [AdminColors.info, 'Quoted'],
     'in_repair': [AdminColors.primary, 'In repair'],

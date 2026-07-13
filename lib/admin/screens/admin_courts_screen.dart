@@ -38,7 +38,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
 
   static String _status(Map row) {
     if (row['in_maintenance'] == true) return 'maintenance';
-    if (row['is_active'] != true) return 'inactive';
+    if (row['is_active'] != true) return 'hidden';
     return 'active';
   }
 
@@ -97,17 +97,17 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
   Widget _card(Map<String, dynamic> row) {
     final status = _status(row);
     final maint = status == 'maintenance';
-    final inactive = status == 'inactive';
+    final hidden = status == 'hidden';
     final iconTone = maint
         ? AdminColors.warn
-        : inactive
+        : hidden
             ? AdminColors.inkFaint
             : AdminColors.primary;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Opacity(
-        opacity: (maint || inactive) ? 0.82 : 1,
+        opacity: (maint || hidden) ? 0.82 : 1,
         child: AdminCard(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
@@ -161,8 +161,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
               Expanded(
                 child: Wrap(spacing: 8, runSpacing: 8, children: [
                   _pill(maint ? 'Reactivate' : 'Maintenance', () => _toggleMaintenance(row)),
-                  if (_isOrganizer)
-                    _pill(inactive ? 'Activate' : 'Deactivate', () => _toggleActive(row)),
+                  _pill(hidden ? 'Show venue' : 'Hide venue', () => _toggleActive(row)),
                   if (!_isOrganizer)
                     _pill(row['is_public'] != false ? 'Make private' : 'Publish to all',
                         () => _togglePublic(row)),
@@ -191,11 +190,11 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
       );
 
   Future<void> _toggleActive(Map<String, dynamic> row) async {
-    final activate = row['is_active'] != true; // currently inactive → activate
-    await AdminService.organizerSetCourtActive(row['id'] as String, activate);
+    final show = row['is_active'] != true; // currently hidden → show
+    await AdminService.organizerSetCourtActive(row['id'] as String, show);
     await _load();
     if (mounted) {
-      adminToast(context, activate ? 'Court activated' : 'Court deactivated');
+      adminToast(context, show ? 'Court shown as a venue' : 'Court hidden');
     }
   }
 
@@ -326,7 +325,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     final priceCt =
         TextEditingController(text: row?['price_per_hour']?.toString() ?? '');
     final indoor = ValueNotifier<bool>(row?['indoor'] == true);
-    final active = ValueNotifier<bool>(row?['is_active'] != false);
 
     adminSheet(
       context,
@@ -369,7 +367,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
-                  'is_active': active.value,
+                  'is_active': true, // new courts are shown; hide via the card
                   'in_maintenance': false,
                 });
               } catch (e) {
@@ -384,7 +382,8 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
-                  'is_active': active.value,
+                  // is_active is left untouched on edit — the card's Hide/Show
+                  // venue toggle controls it.
                 }).eq('id', row['id'] as String);
               } catch (e) {
                 err = e.toString();
@@ -413,14 +412,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
             _field('Price / hour', priceCt, prefix: 'EGP'),
             const SizedBox(height: 16),
             _check('Indoor court', v, () => indoor.value = !v),
-            if (!_isOrganizer) ...[
-              const SizedBox(height: 12),
-              ValueListenableBuilder<bool>(
-                valueListenable: active,
-                builder: (_, a, __) => _check(
-                    'Active (shown as a match venue)', a, () => active.value = !a),
-              ),
-            ],
           ],
         ),
       ),
