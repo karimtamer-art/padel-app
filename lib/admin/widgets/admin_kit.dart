@@ -203,14 +203,15 @@ class AdminButton extends StatelessWidget {
   final IconData? icon;
   final bool full;
   final double height;
-  const AdminButton(this.label, {super.key, this.onPressed, this.variant = AdminBtn.primary, this.icon, this.full = false, this.height = 40});
+  final Color? color; // overrides the fill (solid variants) / tint (ghost/danger)
+  const AdminButton(this.label, {super.key, this.onPressed, this.variant = AdminBtn.primary, this.icon, this.full = false, this.height = 40, this.color});
   @override
   Widget build(BuildContext context) {
     late Color bg, fg;
     Border? border;
     switch (variant) {
       case AdminBtn.primary:
-        bg = AdminColors.primary; fg = AdminColors.primaryInk; break;
+        bg = color ?? AdminColors.primary; fg = AdminColors.primaryInk; break;
       case AdminBtn.ghost:
         bg = AdminColors.surface; fg = AdminColors.ink; border = Border.all(color: AdminColors.line); break;
       case AdminBtn.soft:
