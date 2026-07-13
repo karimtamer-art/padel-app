@@ -16,6 +16,7 @@ class AuthField extends StatefulWidget {
   final TextEditingController? controller;
   final ValueChanged<String>? onChanged;
   final bool readOnly;
+  final bool locked; // non-editable AND visually greyed with a lock icon
   final VoidCallback? onTap;
   final Widget? trailing;
   const AuthField({
@@ -30,6 +31,7 @@ class AuthField extends StatefulWidget {
     this.controller,
     this.onChanged,
     this.readOnly = false,
+    this.locked = false,
     this.onTap,
     this.trailing,
   });
@@ -50,7 +52,8 @@ class _AuthFieldState extends State<AuthField> {
 
   @override
   Widget build(BuildContext context) {
-    final focused = _node.hasFocus;
+    final locked = widget.locked;
+    final focused = _node.hasFocus && !locked;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
         padding: const EdgeInsets.only(bottom: 7, left: 1),
@@ -62,7 +65,7 @@ class _AuthFieldState extends State<AuthField> {
         height: 50,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          color: AppColors.field,
+          color: locked ? AppColors.field.withValues(alpha: 0.5) : AppColors.field,
           borderRadius: AppRadius.btnR,
           border: Border.all(
               color: focused ? AppColors.primary : AppColors.line, width: 1.5),
@@ -73,7 +76,10 @@ class _AuthFieldState extends State<AuthField> {
         child: Row(children: [
           if (widget.icon != null) ...[
             Icon(widget.icon,
-                size: 18, color: focused ? AppColors.primary : AppColors.inkFaint),
+                size: 18,
+                color: locked
+                    ? AppColors.inkFaint
+                    : (focused ? AppColors.primary : AppColors.inkFaint)),
             const SizedBox(width: 10),
           ],
           Expanded(
@@ -81,13 +87,15 @@ class _AuthFieldState extends State<AuthField> {
               focusNode: _node,
               controller: widget.controller,
               onChanged: widget.onChanged,
-              readOnly: widget.readOnly,
+              readOnly: widget.readOnly || locked,
+              enableInteractiveSelection: !locked,
               onTap: widget.onTap,
               obscureText: widget.obscure && !_show,
               keyboardType: widget.keyboard,
               textCapitalization: widget.capitalization,
               cursorColor: AppColors.primary,
-              style: AppText.bodyStrong().copyWith(fontSize: 15),
+              style: AppText.bodyStrong(locked ? AppColors.inkFaint : AppColors.ink)
+                  .copyWith(fontSize: 15),
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
@@ -96,6 +104,8 @@ class _AuthFieldState extends State<AuthField> {
               ),
             ),
           ),
+          if (locked)
+            const Icon(Icons.lock_outline_rounded, size: 17, color: AppColors.inkFaint),
           if (widget.trailing != null) widget.trailing!,
           if (widget.obscure)
             GestureDetector(
