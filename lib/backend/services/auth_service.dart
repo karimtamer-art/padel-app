@@ -1,5 +1,9 @@
+import 'dart:convert';
+import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/screens/auth/sign_up_flow.dart';
 
@@ -46,8 +50,68 @@ class AuthService {
   /// automatically, so no browser switch and no white-screen stuck state.
   static Future<void> signInWithGoogle() => _oauthFlow(OAuthProvider.google);
 
-  /// Same ASWebAuthenticationSession flow for Apple OAuth.
-  static Future<void> signInWithApple() => _oauthFlow(OAuthProvider.apple);
+  /// Native "Sign in with Apple": get an Apple ID credential (the system sheet
+  /// / Face ID), then exchange its identity token for a Supabase session via
+  /// signInWithIdToken. A raw nonce is sent hashed to Apple and raw to Supabase
+  /// so the token can't be replayed.
+  static Future<void> signInWithApple() async {
+    final rawNonce = _generateNonce();
+    final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
+
+    final AuthorizationCredentialAppleID cred;
+    try {
+      cred = await SignInWithApple.getAppleIDCredential(
+        scopes: const [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: hashedNonce,
+      );
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // User dismissed the Apple sheet — treat as a no-op like Google.
+      if (e.code == AuthorizationErrorCode.canceled) throw const AuthCancelled();
+      rethrow;
+    }
+
+    final idToken = cred.identityToken;
+    if (idToken == null) {
+      throw const AuthException('Apple did not return an identity token.');
+    }
+
+    await _db.auth.signInWithIdToken(
+      provider: OAuthProvider.apple,
+      idToken: idToken,
+      nonce: rawNonce,
+    );
+
+    // Apple only returns the user's name on the FIRST authorization. If we got
+    // one and the profile has no name yet, persist it (best-effort).
+    final name = [cred.givenName, cred.familyName]
+        .where((p) => (p ?? '').trim().isNotEmpty)
+        .join(' ')
+        .trim();
+    if (name.isNotEmpty) {
+      final uid = _db.auth.currentUser?.id;
+      if (uid != null) {
+        try {
+          final row =
+              await _db.from('profiles').select('name').eq('id', uid).maybeSingle();
+          if (((row?['name'] as String?) ?? '').trim().isEmpty) {
+            await _db.from('profiles').update({'name': name}).eq('id', uid);
+          }
+        } catch (_) {/* non-fatal */}
+      }
+    }
+  }
+
+  /// Cryptographically-random nonce for the Apple sign-in exchange.
+  static String _generateNonce([int length = 32]) {
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._';
+    final rng = Random.secure();
+    return List.generate(length, (_) => charset[rng.nextInt(charset.length)])
+        .join();
+  }
 
   static Future<void> _oauthFlow(OAuthProvider provider) async {
     // Generate the OAuth URL with PKCE challenge stored in gotrue's local storage.

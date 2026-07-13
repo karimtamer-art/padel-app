@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_colors.dart';
@@ -158,7 +159,8 @@ class _AuthGateState extends State<AuthGate> {
           key: const ValueKey('auth'),
           onAuthenticated: _resolve,
           onGoogleSignIn: AuthService.signInWithGoogle,
-          onAppleSignIn: AuthService.signInWithApple,
+          // Native Sign in with Apple is iOS-only; hide it elsewhere.
+          onAppleSignIn: Platform.isIOS ? AuthService.signInWithApple : null,
         ),
       _Phase.onboarding => OnboardingFlow(
           key: const ValueKey('onboarding'),

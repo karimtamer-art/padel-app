@@ -85,7 +85,7 @@ class WelcomeScreen extends StatelessWidget {
                     text: TextSpan(
                       style: AppText.stat(33, AppColors.heroInk).copyWith(height: 1.08, letterSpacing: -0.8),
                       children: const [
-                        TextSpan(text: 'Find Matches.\nBuild Your Team.\n'),
+                        TextSpan(text: 'Find Matches.\nChallenge rivals.\n'),
                         TextSpan(text: 'Climb The Rankings.', style: TextStyle(color: AppColors.primary)),
                       ],
                     ),
@@ -101,7 +101,7 @@ class WelcomeScreen extends StatelessWidget {
           const SizedBox(height: 11),
         ],
         if (onApple != null) ...[
-          SocialButton(provider: 'apple', onPressed: () => onApple?.call()),
+          SocialButton(provider: 'apple', onPressed: onApple),
           const SizedBox(height: 11),
         ],
         if (hasSocial) ...[

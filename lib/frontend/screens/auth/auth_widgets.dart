@@ -397,13 +397,44 @@ class OrDivider extends StatelessWidget {
 }
 
 /// ── Social provider button ───────────────────────────────────────
-class SocialButton extends StatelessWidget {
+class SocialButton extends StatefulWidget {
   final String provider; // 'google' | 'apple'
-  final VoidCallback? onPressed;
+  final Future<void> Function()? onPressed;
   const SocialButton({super.key, required this.provider, this.onPressed});
   @override
+  State<SocialButton> createState() => _SocialButtonState();
+}
+
+class _SocialButtonState extends State<SocialButton> {
+  bool _busy = false;
+
+  Future<void> _run() async {
+    if (_busy || widget.onPressed == null) return;
+    setState(() => _busy = true);
+    try {
+      await widget.onPressed!.call();
+    } on AuthCancelled {
+      // User dismissed the sheet — silent.
+    } catch (e) {
+      if (mounted) {
+        final name = widget.provider == 'apple' ? 'Apple' : 'Google';
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: AppColors.ink,
+            content: Text('$name sign-in failed. Please try again.',
+                style: AppText.bodyStrong(AppColors.bg).copyWith(fontSize: 13)),
+          ));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isGoogle = provider == 'google';
+    final isGoogle = widget.provider == 'google';
     return SizedBox(
       height: 50,
       child: Material(
@@ -411,18 +442,27 @@ class SocialButton extends StatelessWidget {
         borderRadius: AppRadius.btnR,
         child: InkWell(
           borderRadius: AppRadius.btnR,
-          onTap: onPressed,
+          onTap: _busy ? null : _run,
           child: Container(
             alignment: Alignment.center,
             decoration: BoxDecoration(
                 borderRadius: AppRadius.btnR,
                 border: Border.all(color: AppColors.line, width: 1.5)),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              isGoogle ? const _GoogleG() : const Icon(Icons.apple, size: 22, color: AppColors.ink),
-              const SizedBox(width: 10),
-              Text('Continue with ${isGoogle ? 'Google' : 'Apple'}',
-                  style: AppText.bodyStrong().copyWith(fontSize: 14.5, fontWeight: FontWeight.w700)),
-            ]),
+            child: _busy
+                ? const SizedBox(
+                    width: 21, height: 21,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.3, color: AppColors.primary),
+                  )
+                : Row(mainAxisSize: MainAxisSize.min, children: [
+                    isGoogle
+                        ? const _GoogleG()
+                        : const Icon(Icons.apple, size: 22, color: AppColors.ink),
+                    const SizedBox(width: 10),
+                    Text('Continue with ${isGoogle ? 'Google' : 'Apple'}',
+                        style: AppText.bodyStrong()
+                            .copyWith(fontSize: 14.5, fontWeight: FontWeight.w700)),
+                  ]),
           ),
         ),
       ),

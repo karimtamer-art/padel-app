@@ -150,8 +150,11 @@ class _SignInScreenState extends State<SignInScreen> {
             const OrDivider('or continue with'),
             const SizedBox(height: 18),
             GoogleSignInButton(onPressed: widget.onGoogle),
-            const SizedBox(height: 11),
-            SocialButton(provider: 'apple', onPressed: () => widget.onApple?.call()),
+            // Apple sign-in is offered on iOS only (native flow).
+            if (widget.onApple != null) ...[
+              const SizedBox(height: 11),
+              SocialButton(provider: 'apple', onPressed: widget.onApple),
+            ],
             const SizedBox(height: 24),
 
             Center(

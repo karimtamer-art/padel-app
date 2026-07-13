@@ -17,6 +17,9 @@ dependencies:
   supabase_flutter: 2.12.4
   url_launcher: ^6.3.0
   flutter_web_auth_2: ^4.0.0
+  # Native "Sign in with Apple" on iOS (idToken -> Supabase signInWithIdToken).
+  sign_in_with_apple: ^6.1.0
+  crypto: ^3.0.3
   image_picker: ^1.1.2
   firebase_core: ^4.11.0
   firebase_messaging: ^16.4.0
