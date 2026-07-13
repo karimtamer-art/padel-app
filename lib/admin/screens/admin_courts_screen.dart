@@ -153,8 +153,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
             const SizedBox(height: 12),
             Wrap(spacing: 6, runSpacing: 6, children: [
               _tag(Icons.payments_outlined, '${_egp(row['price_per_hour'])}/hr'),
-              if ((row['surface'] as String?)?.isNotEmpty == true)
-                _tag(null, row['surface'] as String),
               if ((row['city'] as String?)?.isNotEmpty == true)
                 _tag(Icons.place_outlined, row['city'] as String),
             ]),
@@ -324,7 +322,8 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     final nameCt = TextEditingController(text: row?['name'] ?? '');
     final areaCt = TextEditingController(text: row?['area'] ?? '');
     final cityCt = TextEditingController(text: row?['city'] ?? '');
-    final surfaceCt = TextEditingController(text: row?['surface'] ?? '');
+    // Surface is a constrained enum (courts_surface_chk) — pick, don't type.
+    final surface = ValueNotifier<String?>(row?['surface'] as String?);
     final priceCt =
         TextEditingController(text: row?['price_per_hour']?.toString() ?? '');
     final indoor = ValueNotifier<bool>(row?['indoor'] == true);
@@ -359,7 +358,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 name: nameCt.text.trim(),
                 area: areaCt.text.trim(),
                 city: cityCt.text.trim(),
-                surface: surfaceCt.text.trim(),
+                surface: surface.value,
                 price: num.tryParse(priceCt.text),
                 indoor: v,
               );
@@ -370,7 +369,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
-                  'surface': surfaceCt.text.trim().isEmpty ? null : surfaceCt.text.trim(),
+                  'surface': surface.value,
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
                   'is_active': active.value,
@@ -386,7 +385,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
-                  'surface': surfaceCt.text.trim().isEmpty ? null : surfaceCt.text.trim(),
+                  'surface': surface.value,
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
                   'is_active': active.value,
@@ -414,8 +413,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
             _field('Area', areaCt, hint: 'e.g. Zamalek'),
             const SizedBox(height: 14),
             _field('City', cityCt, hint: 'e.g. Cairo'),
-            const SizedBox(height: 14),
-            _field('Surface', surfaceCt, hint: 'e.g. Artificial grass'),
             const SizedBox(height: 14),
             _field('Price / hour', priceCt, prefix: 'EGP'),
             const SizedBox(height: 16),
