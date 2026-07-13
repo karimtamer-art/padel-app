@@ -7,9 +7,28 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:61629095085:android:6a44a49ded12723988fa24",
+        "mobilesdk_app_id": "1:61629095085:android:fd072d080bc2c20588fa24",
         "android_client_info": {
           "package_name": "com.padelegypt.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBMNeRVrB_yv4SYZ3bvQFNlOCnYmcIjxBo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:61629095085:android:6a44a49ded12723988fa24",
+        "android_client_info": {
+          "package_name": "com.padelegypt.padel_clay"
         }
       },
       "oauth_client": [],
