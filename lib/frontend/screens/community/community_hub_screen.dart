@@ -283,10 +283,9 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
                         style: AppText.cardTitle(AppColors.heroInk),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis)),
-                if (c.verified) ...[
-                  const SizedBox(width: 5),
-                  const Icon(Icons.verified_rounded, size: 15, color: AppColors.gold),
-                ],
+                // Auto-verified for now.
+                const SizedBox(width: 5),
+                const Icon(Icons.verified_rounded, size: 15, color: AppColors.gold),
               ]),
               const SizedBox(height: 2),
               Text(

@@ -260,9 +260,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
                 _recentForm(),
-                // Only render once the first community fetch resolves — avoids
-                // flashing the "Have a code?" empty state before data arrives.
-                if (_communityLoaded) ...[
+                if (!_communityLoaded) ...[
+                  const SizedBox(height: 24),
+                  const SectionHeader('Your Community'),
+                  _communitySkeleton(),
+                ] else ...[
                   const SizedBox(height: 24),
                   SectionHeader(
                       _community == null
@@ -338,47 +340,46 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
                   Container(
-                    width: 44,
-                    height: 44,
+                    width: 52,
+                    height: 52,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                         color: AppColors.gold,
-                        borderRadius: BorderRadius.circular(13)),
-                    child: const Icon(Icons.groups_2_rounded, size: 22, color: Colors.white),
+                        borderRadius: BorderRadius.circular(14)),
+                    child: const Icon(Icons.groups_2_rounded, size: 26, color: Colors.white),
                   ),
-                  const SizedBox(width: 11),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children: [
                         Flexible(
                             child: Text(c.name,
                                 style: AppText.body(AppColors.heroInk).copyWith(
-                                    fontSize: 14, fontWeight: FontWeight.w800),
+                                    fontSize: 17.5, fontWeight: FontWeight.w800, height: 1.1),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis)),
-                        if (c.verified) ...[
-                          const SizedBox(width: 5),
-                          const Icon(Icons.verified_rounded, size: 14, color: AppColors.gold),
-                        ],
+                        // Communities are auto-verified for now.
+                        const SizedBox(width: 6),
+                        const Icon(Icons.verified_rounded, size: 16, color: AppColors.gold),
                       ]),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(subtitle,
-                          style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12),
+                          style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12.5),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis),
                     ]),
                   ),
                   const SizedBox(width: 8),
                   if (c.isMember)
-                    const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.heroFaint)
+                    const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.heroFaint)
                   else
                     const AppTag('Join', color: AppColors.gold, solid: true),
                 ]),
-                const SizedBox(height: 14),
+                const SizedBox(height: 18),
                 Row(children: [
                   if (_communityMembers.isNotEmpty) ...[
                     _memberStack(_communityMembers),
@@ -399,6 +400,35 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // Light chips on the dark card (design: field bg, surface border, ink-soft text).
+  // Placeholder for the community hero while the first fetch resolves.
+  Widget _communitySkeleton() => Padding(
+        padding: AppSpacing.screenH,
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+              color: AppColors.field, borderRadius: BorderRadius.circular(18)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: const [
+            Row(children: [
+              Skeleton(width: 52, height: 52, radius: 14),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Skeleton(width: 170, height: 15, radius: 5),
+                  SizedBox(height: 8),
+                  Skeleton(width: 210, height: 11, radius: 5),
+                ]),
+              ),
+            ]),
+            SizedBox(height: 20),
+            Row(children: [
+              Skeleton(width: 96, height: 26, radius: 999),
+              SizedBox(width: 12),
+              Skeleton(width: 70, height: 12, radius: 5),
+            ]),
+          ]),
+        ),
+      );
+
   Widget _memberStack(List<MemberLite> members) {
     final show = members.take(5).toList();
     const d = 26.0;
