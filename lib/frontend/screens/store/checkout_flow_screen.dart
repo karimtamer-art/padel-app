@@ -665,7 +665,7 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
             const SizedBox(height: 10),
             _copyField('Send to · InstaPay username', _handle, mono: true),
             const SizedBox(height: 10),
-            _copyField('Amount', MockData.egp(widget.total)),
+            _copyField('Amount', MockData.egp(widget.total), copyable: false),
             const SizedBox(height: 12),
             _fieldLabel("Your InstaPay username · who you're sending from"),
             Container(
@@ -719,7 +719,8 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
     ]);
   }
 
-  Widget _copyField(String label, String value, {bool mono = false}) {
+  Widget _copyField(String label, String value,
+      {bool mono = false, bool copyable = true}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
       decoration: BoxDecoration(
@@ -740,26 +741,28 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
                     fontFeatures: mono ? const [FontFeature.tabularFigures()] : null)),
           ]),
         ),
-        const SizedBox(width: 10),
-        GestureDetector(
-          onTap: () {
-            Clipboard.setData(ClipboardData(text: value));
-            _toast('Copied');
-          },
-          child: Container(
-            height: 34,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(9)),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.copy_rounded, size: 15, color: AppColors.primary),
-              const SizedBox(width: 6),
-              Text('Copy', style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 12)),
-            ]),
+        if (copyable) ...[
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: value));
+              _toast('Copied');
+            },
+            child: Container(
+              height: 34,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(9)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.copy_rounded, size: 15, color: AppColors.primary),
+                const SizedBox(width: 6),
+                Text('Copy', style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 12)),
+              ]),
+            ),
           ),
-        ),
+        ],
       ]),
     );
   }

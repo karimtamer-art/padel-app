@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
@@ -1068,10 +1069,11 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
 
   void _copy(String v) {
     Clipboard.setData(ClipboardData(text: v));
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-          behavior: SnackBarBehavior.floating, content: Text('Copied $v')));
+    if (!mounted) return;
+    // A ScaffoldMessenger snackbar renders *behind* this modal sheet, so the
+    // copy looked like it did nothing. AppToast draws on the root overlay,
+    // above the sheet, so the confirmation is actually visible.
+    AppToast.show(context, 'Copied $v');
   }
 
   @override
@@ -1110,7 +1112,7 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                 _copyRow('Send to · InstaPay', _handle.isEmpty ? '…' : _handle,
                     mono: true),
                 const SizedBox(height: 10),
-                _copyRow('Amount', _egp(widget.amount)),
+                _copyRow('Amount', _egp(widget.amount), copyable: false),
                 const SizedBox(height: 18),
                 Text('YOUR INSTAPAY USERNAME', style: AppText.kicker()),
                 const SizedBox(height: 7),
@@ -1155,9 +1157,10 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
     );
   }
 
-  Widget _copyRow(String label, String value, {bool mono = false}) {
+  Widget _copyRow(String label, String value,
+      {bool mono = false, bool copyable = true}) {
     return GestureDetector(
-      onTap: value == '…' ? null : () => _copy(value),
+      onTap: (!copyable || value == '…') ? null : () => _copy(value),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
@@ -1174,7 +1177,8 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                       : AppText.bodyStrong().copyWith(fontSize: 15)),
             ]),
           ),
-          const Icon(Icons.copy_rounded, size: 16, color: AppColors.inkSoft),
+          if (copyable)
+            const Icon(Icons.copy_rounded, size: 16, color: AppColors.inkSoft),
         ]),
       ),
     );
