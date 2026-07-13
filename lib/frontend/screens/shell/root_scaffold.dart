@@ -109,7 +109,8 @@ class _RootScaffoldState extends State<RootScaffold> {
         index: _slotToPage[_tab] ?? 0,
         children: [
           HomeScreen(
-            key: ValueKey('home-$_homeRefresh'),
+            key: const ValueKey('home'),
+            refreshTick: _homeRefresh,
             onSeeStore: () => setState(() => _tab = 3),
             onSeeTournaments: () => setState(() => _tab = 1),
             onAddToCart: _addToCart,

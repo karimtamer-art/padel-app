@@ -27,6 +27,9 @@ class HomeScreen extends StatefulWidget {
   final PlayerProfile profile;
   final String displayName;
   final String initials;
+  /// Bumped by the shell to ask Home to refetch WITHOUT recreating its State
+  /// (so the unread badge / community card don't flash back to empty).
+  final int refreshTick;
 
   const HomeScreen({
     super.key,
@@ -36,6 +39,7 @@ class HomeScreen extends StatefulWidget {
     this.profile = PlayerProfile.fresh,
     this.displayName = '',
     this.initials = 'P',
+    this.refreshTick = 0,
   });
 
   @override
@@ -47,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _tournaments = [];
   List<Map<String, dynamic>> _featured = [];
   Community? _community;
+  bool _communityLoaded = false;
   List<MemberLite> _communityMembers = [];
   int _communityEventsWeek = 0;
   int _unread = 0;
@@ -60,6 +65,14 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadData();
     _subscribeNotifications();
+  }
+
+  @override
+  void didUpdateWidget(HomeScreen old) {
+    super.didUpdateWidget(old);
+    // Shell asked for a refresh (tab re-focus / return from a screen). Refetch
+    // in place — State is preserved, so nothing flashes back to empty.
+    if (widget.refreshTick != old.refreshTick) _loadData(silent: true);
   }
 
   @override
@@ -88,8 +101,8 @@ class _HomeScreenState extends State<HomeScreen> {
         .subscribe();
   }
 
-  Future<void> _loadData() async {
-    setState(() => _loading = true);
+  Future<void> _loadData({bool silent = false}) async {
+    if (!silent && mounted) setState(() => _loading = true);
     await Future.wait([
       _fetchMatches(),
       _fetchTournaments(),
@@ -194,6 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _community = c;
       _communityMembers = members;
       _communityEventsWeek = eventsWeek;
+      _communityLoaded = true;
     }
   }
 
@@ -246,21 +260,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
                 _recentForm(),
-                const SizedBox(height: 24),
-                SectionHeader(
-                    _community == null
-                        ? 'Community'
-                        : (_community!.isMember
-                            ? 'Your Community'
-                            : 'Discover a Community'),
-                    action: (_community?.isMember ?? false) ? 'View' : 'Have a code?',
-                    onAction: (_community?.isMember ?? false)
-                        ? () => _openCommunity(context)
-                        : () => _promptJoinByCode(context)),
-                if (_community != null)
-                  _communitySection()
-                else
-                  _communityCodePrompt(),
+                // Only render once the first community fetch resolves — avoids
+                // flashing the "Have a code?" empty state before data arrives.
+                if (_communityLoaded) ...[
+                  const SizedBox(height: 24),
+                  SectionHeader(
+                      _community == null
+                          ? 'Community'
+                          : (_community!.isMember
+                              ? 'Your Community'
+                              : 'Discover a Community'),
+                      action: (_community?.isMember ?? false) ? 'View' : 'Have a code?',
+                      onAction: (_community?.isMember ?? false)
+                          ? () => _openCommunity(context)
+                          : () => _promptJoinByCode(context)),
+                  if (_community != null)
+                    _communitySection()
+                  else
+                    _communityCodePrompt(),
+                ],
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Upcoming Matches',
                     action: 'Find a Match',
