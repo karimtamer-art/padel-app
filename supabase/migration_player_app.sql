@@ -2865,6 +2865,7 @@ create or replace function public.community_inbox_typed()
 returns table (kind text, id uuid, member_id uuid, member_name text, avatar_url text,
                preview text, created_at timestamptz, actionable boolean)
 language plpgsql stable security definer set search_path = public as $$
+#variable_conflict use_column
 declare v_cid uuid;
 begin
   if public.current_admin_role() <> 'organizer' and not public._is_admin() then return; end if;
