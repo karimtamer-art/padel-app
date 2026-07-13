@@ -209,7 +209,6 @@ class AdminService {
     required String name,
     required String area,
     String? city,
-    String? surface,
     num? price,
     required bool indoor,
   }) async {
@@ -220,7 +219,6 @@ class AdminService {
         'p_name': name,
         'p_area': area,
         'p_city': city,
-        'p_surface': surface,
         'p_price': price,
         'p_indoor': indoor,
       });

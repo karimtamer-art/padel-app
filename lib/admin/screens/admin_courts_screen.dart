@@ -322,9 +322,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     final nameCt = TextEditingController(text: row?['name'] ?? '');
     final areaCt = TextEditingController(text: row?['area'] ?? '');
     final cityCt = TextEditingController(text: row?['city'] ?? '');
-    // Courts.surface is NOT NULL + an enum check (courts_surface_chk). Padel
-    // courts are all artificial turf, so we drop the field and default it.
-    final surface = (row?['surface'] as String?) ?? 'artificial_grass';
     final priceCt =
         TextEditingController(text: row?['price_per_hour']?.toString() ?? '');
     final indoor = ValueNotifier<bool>(row?['indoor'] == true);
@@ -359,7 +356,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 name: nameCt.text.trim(),
                 area: areaCt.text.trim(),
                 city: cityCt.text.trim(),
-                surface: surface,
                 price: num.tryParse(priceCt.text),
                 indoor: v,
               );
@@ -370,7 +366,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
-                  'surface': surface,
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
                   'is_active': active.value,
@@ -386,7 +381,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
-                  'surface': surface,
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
                   'is_active': active.value,
