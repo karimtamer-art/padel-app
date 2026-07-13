@@ -81,6 +81,21 @@ class ProfileService {
     }
   }
 
+  /// Permanently deletes the signed-in user's account and data via the
+  /// `delete_account_self` RPC (SECURITY DEFINER — removes the auth user and
+  /// everything that cascades from the profile). Returns null on success, else
+  /// an error message. The caller should sign out afterwards.
+  static Future<String?> deleteAccount() async {
+    try {
+      await _db.rpc('delete_account_self');
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   static Future<String?> updateProfile(String uid, Map<String, dynamic> fields) async {
     try {
       await _db.from('profiles').update(fields).eq('id', uid);

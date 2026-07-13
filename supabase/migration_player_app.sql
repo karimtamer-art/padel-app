@@ -3487,5 +3487,73 @@ update public.profiles
    set placement_played = least(coalesce(competitive_matches, 0), 5)
  where coalesce(placement_played, 0) < least(coalesce(competitive_matches, 0), 5);
 
+-- ============================================================
+-- Self-service account deletion (Google Play requirement).
+-- A signed-in user permanently deletes their own account + data. Runs as the
+-- definer so it can remove the auth.users row (which cascades profiles and
+-- everything that cascades from profiles). Because the live schema has several
+-- NOT NULL foreign keys straight to auth.users (matches.created_by,
+-- match_players.player_id, orders.player_id, tournament_entries.player_id),
+-- those are cleared first, in dependency order, or the auth delete is blocked.
+-- Tournaments / courts the user owns are ON DELETE SET NULL (kept, de-identified).
+-- ============================================================
+create or replace function public.delete_account_self()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'Not signed in.';
+  end if;
+
+  -- 1. Matches the user created: drop the ranking-history link, then delete the
+  --    matches (their match_players rows cascade on matches.id). Clears the
+  --    NOT NULL matches.created_by -> auth.users blocker.
+  begin
+    update public.ranking_history set match_id = null
+     where match_id in (select id from public.matches where created_by = uid);
+  exception when undefined_table or undefined_column then null; end;
+  begin
+    delete from public.matches where created_by = uid;
+  exception when undefined_table or undefined_column then null; end;
+
+  -- 2. The user's own participation rows (reference auth.users, no cascade).
+  begin delete from public.match_players where player_id = uid;
+  exception when undefined_table or undefined_column then null; end;
+
+  -- 3. Tournament entries — first detach any bracket slots that point at them.
+  begin
+    update public.tournament_matches m set
+      entry1 = case when m.entry1 in (select id from public.tournament_entries
+                 where player_id = uid or partner_id = uid) then null else m.entry1 end,
+      entry2 = case when m.entry2 in (select id from public.tournament_entries
+                 where player_id = uid or partner_id = uid) then null else m.entry2 end,
+      winner_entry = case when m.winner_entry in (select id from public.tournament_entries
+                 where player_id = uid or partner_id = uid) then null else m.winner_entry end
+     where m.entry1 in (select id from public.tournament_entries where player_id = uid or partner_id = uid)
+        or m.entry2 in (select id from public.tournament_entries where player_id = uid or partner_id = uid)
+        or m.winner_entry in (select id from public.tournament_entries where player_id = uid or partner_id = uid);
+  exception when undefined_table or undefined_column then null; end;
+  begin delete from public.tournament_entries where player_id = uid or partner_id = uid;
+  exception when undefined_table or undefined_column then null; end;
+
+  -- 4. Store orders (kept outside the profiles cascade); order_items cascade.
+  begin delete from public.orders where player_id = uid;
+  exception when undefined_table or undefined_column then null; end;
+
+  -- 5. Remove the auth user; profiles + all profile-cascade data go with it.
+  begin
+    delete from auth.users where id = uid;
+  exception when foreign_key_violation then
+    raise exception 'Account still has linked records that block deletion: %', sqlerrm;
+  end;
+end
+$$;
+grant execute on function public.delete_account_self() to authenticated;
+
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';

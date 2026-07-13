@@ -2,6 +2,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
+import 'package:padel_clay/backend/services/profile_service.dart';
 import 'settings_common.dart';
 
 class PrivacyAccountScreen extends StatefulWidget {
@@ -78,7 +79,8 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         title: Text('Delete account?', style: AppText.cardTitle()),
         content: Text(
-          'This permanently removes your profile, matches, and ranking. This cannot be undone.',
+          'This permanently removes your profile, matches, and ranking right now. '
+          'This cannot be undone.',
           style: AppText.body(AppColors.inkSoft).copyWith(height: 1.45),
         ),
         actions: [
@@ -89,14 +91,36 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  behavior: SnackBarBehavior.floating,
-                  content: Text('Deletion request noted — email help@padel.eg to confirm and we\'ll remove your account within 48 hours.')));
+              _deleteAccount();
             },
             child: Text('Delete', style: AppText.bodyStrong(AppColors.danger)),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _deleteAccount() async {
+    // Blocking spinner while the RPC removes the account.
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    final err = await ProfileService.deleteAccount();
+    if (!mounted) return;
+    Navigator.of(context).pop(); // dismiss the spinner
+    if (err != null) {
+      _snack('Could not delete your account: $err');
+      return;
+    }
+    // Account is gone — sign out (invalidates the now-orphaned session) and
+    // unwind to the auth gate, which routes to sign-in on sign-out.
+    await Supabase.instance.client.auth.signOut();
+    if (!mounted) return;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text('Your account has been deleted.')));
   }
 }
