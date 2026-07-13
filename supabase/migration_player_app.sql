@@ -2354,6 +2354,9 @@ begin
     update profiles set
       rating = v_after, level = v_after, tier = public.tier_from_level(v_after),
       sigma = v_sig_after, competitive_matches = r.cm + 1,
+      -- keep the placement counter (0..5) in step so the "X/5 placement" UI and
+      -- the ranked/unranked gate reflect settled competitive matches.
+      placement_played = least(coalesce(placement_played, 0) + 1, 5),
       last_competitive_match_at = now()
     where id = r.player_id;
     insert into ranking_history
@@ -3619,6 +3622,12 @@ begin
   end if;
 end $$;
 grant execute on function public.advance_stage(uuid) to authenticated;
+
+-- Keep the placement counter in step with settled competitive matches (fixes
+-- players stuck at 0/5 before _settle_rating incremented placement_played).
+update public.profiles
+   set placement_played = least(coalesce(competitive_matches, 0), 5)
+ where coalesce(placement_played, 0) < least(coalesce(competitive_matches, 0), 5);
 
 -- Reload PostgREST schema cache so new FK constraints are visible immediately.
 notify pgrst, 'reload schema';
