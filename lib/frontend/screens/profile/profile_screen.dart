@@ -27,6 +27,11 @@ class ProfileScreen extends StatefulWidget {
   final String initials;
   final String memberSince;
 
+  /// Bumped by the shell when the "You" tab is re-selected so the screen —
+  /// kept alive in the IndexedStack — refetches live ranking/stats instead of
+  /// showing the login-time snapshot until the next sign-in.
+  final int refreshTick;
+
   const ProfileScreen({
     super.key,
     this.profile = PlayerProfile.fresh,
@@ -36,6 +41,7 @@ class ProfileScreen extends StatefulWidget {
     this.displayName = '',
     this.initials = 'P',
     this.memberSince = '',
+    this.refreshTick = 0,
   });
 
   @override
@@ -49,6 +55,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _profile = widget.profile;
+    // Start from the login snapshot, then pull live so a rating/placement
+    // change made since sign-in shows without a full re-login.
+    _refresh();
+  }
+
+  @override
+  void didUpdateWidget(ProfileScreen old) {
+    super.didUpdateWidget(old);
+    if (widget.refreshTick != old.refreshTick) _refresh();
   }
 
   Future<void> _refresh() async {

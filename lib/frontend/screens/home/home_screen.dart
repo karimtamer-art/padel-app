@@ -1146,7 +1146,7 @@ class _PlacementWelcome extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const AppTag('Welcome to Padel', color: AppColors.primary, solid: true),
+                const AppTag('Welcome to Padel Rivals', color: AppColors.primary, solid: true),
                 Row(children: [
                   const Icon(Icons.emoji_events_outlined,
                       size: 13, color: AppColors.heroFaint),

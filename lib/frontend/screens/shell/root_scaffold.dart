@@ -39,6 +39,7 @@ class RootScaffold extends StatefulWidget {
 class _RootScaffoldState extends State<RootScaffold> {
   int _tab = 0;
   int _homeRefresh = 0; // bumping this rebuilds HomeScreen (refetches data)
+  int _profileRefresh = 0; // same idea for the kept-alive ProfileScreen
   final List<CartLine> _cart = [];
 
   int get _cartCount => _cart.fold(0, (n, l) => n + l.qty);
@@ -122,6 +123,7 @@ class _RootScaffoldState extends State<RootScaffold> {
           StoreScreen(cart: _cartCount, onAdd: _addToCart, onOpenCart: _openCart),
           ProfileScreen(
             profile: widget.profile,
+            refreshTick: _profileRefresh,
             onFindMatch: _openCreate,
             onSignOut: widget.onSignOut,
             onReorder: _reorder,
@@ -138,6 +140,7 @@ class _RootScaffoldState extends State<RootScaffold> {
           // so an action on another tab — e.g. withdrawing — wouldn't show
           // otherwise).
           if (i == 0 && _tab != 0) _homeRefresh++;
+          if (i == 4 && _tab != 4) _profileRefresh++;
           _tab = i;
         }),
         onCreate: _openCreate,
