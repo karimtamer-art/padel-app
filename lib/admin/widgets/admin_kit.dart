@@ -259,7 +259,7 @@ class AdminSection extends StatelessWidget {
             if (sub != null) ...[const SizedBox(height: 2), Text(sub!, style: AdminText.small())],
           ]),
         ),
-        if (action != null) action!,
+        if (action != null) ...[const SizedBox(width: 12), action!],
       ]),
     );
   }

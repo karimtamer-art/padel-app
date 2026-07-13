@@ -142,6 +142,15 @@ class AdminService {
   /// community a court belongs to.
   static Future<List<Map<String, dynamic>>> fetchCourts({String? ownerId}) async {
     List<Map<String, dynamic>> courts;
+    // Organizer view: their own courts (incl. inactive/community ones) via a
+    // SECURITY DEFINER RPC, since courts RLS hides non-active courts from
+    // non-admins. Owner is always the caller, so the RPC needs no argument.
+    if (ownerId != null) {
+      try {
+        final res = await _db.rpc('organizer_courts');
+        return List<Map<String, dynamic>>.from(res as List);
+      } catch (_) {/* fall through to the direct select below */}
+    }
     try {
       var q = _db.from('courts').select('*');
       if (ownerId != null) q = q.eq('owner_id', ownerId);

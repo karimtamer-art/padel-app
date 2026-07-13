@@ -68,7 +68,7 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
           AdminSection(
             _isOrganizer ? 'Your Courts' : 'Courts',
             sub: _isOrganizer
-                ? 'Your own courts — private to your community until an admin publishes them'
+                ? 'Private to your community until published'
                 : '$total court${total != 1 ? 's' : ''}',
             action: AdminButton('Add', icon: Icons.add_rounded, height: 34, onPressed: _add),
           ),

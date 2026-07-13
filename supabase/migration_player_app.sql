@@ -3213,6 +3213,22 @@ begin
 end $$;
 grant execute on function public.organizer_set_court_maintenance(uuid, boolean) to authenticated;
 
+-- courts RLS only shows active courts to non-admins, so an organizer's direct
+-- select can miss their own (e.g. inactive) courts. Return them via a
+-- SECURITY DEFINER RPC + an owner-read policy.
+create or replace function public.organizer_courts()
+returns setof public.courts
+language sql stable security definer set search_path = public as $$
+  select * from public.courts
+   where owner_id = auth.uid()
+   order by created_at desc;
+$$;
+grant execute on function public.organizer_courts() to authenticated;
+do $$ begin
+  create policy "courts: owner read own" on public.courts
+    for select using (owner_id = auth.uid());
+exception when duplicate_object then null; end $$;
+
 -- ── Format Builder + live draw generator (2026-07-12) ──────────────────────
 alter table public.tournaments add column if not exists format_spec jsonb;
 
