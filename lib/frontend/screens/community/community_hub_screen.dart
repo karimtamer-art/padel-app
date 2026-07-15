@@ -78,6 +78,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
           communityId: c.id,
           channelId: ch['id'] as String,
           channelName: ch['name'] as String? ?? 'channel',
+          kind: ch['kind'] as String? ?? 'community',
+          state: ch['state'] as String? ?? 'active',
           canPost: c.isMember,
         ),
       ),
@@ -677,68 +679,105 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
 
   // ── Chat tab: channel list ──────────────────────────────────────
   Widget _channelsTab() {
+    final community =
+        _channels.where((c) => (c['kind'] ?? 'community') == 'community').toList();
+    final events =
+        _channels.where((c) => (c['kind'] ?? 'community') != 'community').toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _pad(Text(
           'Talk to the community. Events get their own channel automatically — it closes when the event ends.',
           style: AppText.small(AppColors.inkSoft).copyWith(height: 1.4))),
       const SizedBox(height: 12),
-      _pad(Text('COMMUNITY CHANNELS',
-          style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10, letterSpacing: 1.2))),
+      _pad(_groupLabel('Community channels')),
       const SizedBox(height: 8),
-      if (_channels.isEmpty)
+      if (community.isEmpty)
         _empty(Icons.forum_outlined, 'No channels yet.')
       else
-        ..._channels.map((ch) => _pad(Padding(
+        ...community.map((ch) => _pad(Padding(
               padding: const EdgeInsets.only(bottom: 9),
               child: _channelRow(ch),
             ))),
+      if (events.isNotEmpty) ...[
+        const SizedBox(height: 6),
+        _pad(_groupLabel('Event channels')),
+        const SizedBox(height: 8),
+        ...events.map((ch) => _pad(Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: _channelRow(ch),
+            ))),
+      ],
     ]);
   }
 
+  Widget _groupLabel(String s) => Text(s.toUpperCase(),
+      style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10, letterSpacing: 1.2));
+
   Widget _channelRow(Map<String, dynamic> ch) {
     final name = ch['name'] as String? ?? 'channel';
+    final kind = ch['kind'] as String? ?? 'community';
+    final isEvent = kind != 'community';
+    final state = ch['state'] as String? ?? 'active';
+    final archived = state == 'archived';
     final custom = ch['is_custom'] == true;
+    final going = (ch['going'] as num?)?.toInt() ?? 0;
     final preview = (ch['preview'] as String?)?.trim();
-    return AppCard(
-      onTap: () => _openChannel(ch),
-      padding: const EdgeInsets.all(11),
-      child: Row(children: [
-        Container(
-          width: 34,
-          height: 34,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-              color: AppColors.field, borderRadius: BorderRadius.circular(10)),
-          child: Text('#',
-              style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 17)),
-        ),
-        const SizedBox(width: 11),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Flexible(
-                  child: Text(name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppText.bodyStrong().copyWith(fontSize: 14))),
-              if (custom) ...[
-                const SizedBox(width: 6),
-                const AppTag('New', color: AppColors.primary),
-              ],
+
+    final iconColor = kind == 'match' ? AppColors.primary : AppColors.gold;
+    final leading = isEvent
+        ? Icon(kind == 'match' ? Icons.schedule_rounded : Icons.emoji_events_rounded,
+            size: 17, color: iconColor)
+        : Text('#', style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 17));
+    final leadingBg = isEvent ? iconColor.withValues(alpha: 0.14) : AppColors.field;
+
+    final sub = (preview != null && preview.isNotEmpty)
+        ? preview
+        : (isEvent && going > 0 ? '$going going' : 'No messages yet');
+
+    return Opacity(
+      opacity: archived ? 0.6 : 1,
+      child: AppCard(
+        onTap: () => _openChannel(ch),
+        padding: const EdgeInsets.all(11),
+        child: Row(children: [
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: leadingBg, borderRadius: BorderRadius.circular(10)),
+            child: leading,
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Flexible(
+                    child: Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.bodyStrong().copyWith(fontSize: 14))),
+                if (isEvent && state == 'active') ...[
+                  const SizedBox(width: 6),
+                  const AppTag('Live', color: AppColors.success),
+                ] else if (isEvent && archived) ...[
+                  const SizedBox(width: 6),
+                  const AppTag('Archived', color: AppColors.inkFaint),
+                ] else if (custom) ...[
+                  const SizedBox(width: 6),
+                  const AppTag('New', color: AppColors.primary),
+                ],
+              ]),
+              const SizedBox(height: 2),
+              Text(sub,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
             ]),
-            const SizedBox(height: 2),
-            Text(
-                (preview != null && preview.isNotEmpty)
-                    ? preview
-                    : 'No messages yet',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
-          ]),
-        ),
-        const SizedBox(width: 6),
-        const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
-      ]),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
+        ]),
+      ),
     );
   }
 
@@ -956,14 +995,21 @@ class _CommentsSheetState extends State<_CommentsSheet> {
 // ── A single community channel's chat ────────────────────────────────────────
 class CommunityChannelScreen extends StatefulWidget {
   final String communityId, channelId, channelName;
+  final String kind; // community | tournament | match
+  final String state; // active | grace | archived
   final bool canPost;
   const CommunityChannelScreen({
     super.key,
     required this.communityId,
     required this.channelId,
     required this.channelName,
+    this.kind = 'community',
+    this.state = 'active',
     required this.canPost,
   });
+
+  bool get isEvent => kind != 'community';
+  bool get archived => state == 'archived';
 
   @override
   State<CommunityChannelScreen> createState() => _CommunityChannelScreenState();
@@ -1041,23 +1087,56 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
               IconButton(
                   icon: const Icon(Icons.arrow_back_rounded, color: AppColors.ink),
                   onPressed: () => Navigator.pop(context)),
-              Container(
-                width: 32,
-                height: 32,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                    color: AppColors.field, borderRadius: BorderRadius.circular(9)),
-                child: Text('#',
-                    style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 16)),
-              ),
+              Builder(builder: (_) {
+                final iconColor =
+                    widget.kind == 'match' ? AppColors.primary : AppColors.gold;
+                return Container(
+                  width: 32,
+                  height: 32,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: widget.isEvent
+                          ? iconColor.withValues(alpha: 0.14)
+                          : AppColors.field,
+                      borderRadius: BorderRadius.circular(9)),
+                  child: widget.isEvent
+                      ? Icon(
+                          widget.kind == 'match'
+                              ? Icons.schedule_rounded
+                              : Icons.emoji_events_rounded,
+                          size: 16,
+                          color: iconColor)
+                      : Text('#',
+                          style: AppText.bodyStrong(AppColors.inkSoft)
+                              .copyWith(fontSize: 16)),
+                );
+              }),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(widget.channelName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppText.cardTitle().copyWith(fontSize: 16)),
-                  Text('Community channel',
+                  Row(children: [
+                    Flexible(
+                      child: Text(widget.channelName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppText.cardTitle().copyWith(fontSize: 16)),
+                    ),
+                    if (widget.isEvent && widget.state == 'active') ...[
+                      const SizedBox(width: 6),
+                      const AppTag('Live', color: AppColors.success),
+                    ] else if (widget.archived) ...[
+                      const SizedBox(width: 6),
+                      const AppTag('Archived', color: AppColors.inkFaint),
+                    ],
+                  ]),
+                  Text(
+                      !widget.isEvent
+                          ? 'Community channel'
+                          : widget.state == 'active'
+                              ? 'Event channel · live'
+                              : widget.state == 'grace'
+                                  ? 'Closing soon'
+                                  : 'Archived',
                       style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
                 ]),
               ),
@@ -1068,20 +1147,23 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
         Expanded(
           child: _loading
               ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-              : _msgs.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(28),
-                        child: Text('No messages yet. Say hello!',
-                            style: AppText.small(), textAlign: TextAlign.center),
-                      ),
-                    )
-                  : ListView.builder(
-                      controller: _scroll,
-                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-                      itemCount: _msgs.length,
-                      itemBuilder: (_, i) => _bubble(_msgs[i]),
-                    ),
+              : ListView(
+                  controller: _scroll,
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+                  children: [
+                    if (_eventBanner() != null) ...[_eventBanner()!, const SizedBox(height: 12)],
+                    if (_msgs.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24),
+                        child: Center(
+                          child: Text('No messages yet. Say hello!',
+                              style: AppText.small(), textAlign: TextAlign.center),
+                        ),
+                      )
+                    else
+                      ..._msgs.map(_bubble),
+                  ],
+                ),
         ),
         // Composer.
         _composer(),
@@ -1123,8 +1205,58 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
     );
   }
 
+  Widget? _eventBanner() {
+    if (!widget.isEvent) return null;
+    final (Color bg, Color color, IconData icon, String text) = switch (widget.state) {
+      'grace' => (
+          AppColors.gold.withValues(alpha: 0.14),
+          AppColors.gold,
+          Icons.schedule_rounded,
+          'This event has ended. The channel closes in 24h — share your photos & say thanks!'
+        ),
+      'archived' => (
+          AppColors.field,
+          AppColors.inkSoft,
+          Icons.lock_outline_rounded,
+          'This channel is archived. Read-only history — removed after 30 days.'
+        ),
+      _ => (
+          AppColors.primary.withValues(alpha: 0.10),
+          AppColors.gold,
+          Icons.confirmation_number_outlined,
+          'Channel opened for this event. Any community member can post here.'
+        ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, size: 15, color: color),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(text,
+              style: AppText.small(color).copyWith(fontSize: 11.5, height: 1.35, fontWeight: FontWeight.w600)),
+        ),
+      ]),
+    );
+  }
+
   Widget _composer() {
     final bottom = MediaQuery.of(context).padding.bottom;
+    if (widget.archived) {
+      return Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+            color: AppColors.surface,
+            border: Border(top: BorderSide(color: AppColors.lineSoft))),
+        padding: EdgeInsets.fromLTRB(16, 14, 16, 14 + bottom),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.lock_outline_rounded, size: 15, color: AppColors.inkFaint),
+          const SizedBox(width: 8),
+          Text('Posting is closed', style: AppText.small(AppColors.inkFaint)),
+        ]),
+      );
+    }
     if (!widget.canPost) {
       return Container(
         width: double.infinity,
