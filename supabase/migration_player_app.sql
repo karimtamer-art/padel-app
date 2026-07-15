@@ -311,6 +311,31 @@ begin
   return null;
 end $$;
 grant execute on function public.admin_delete_match(uuid) to authenticated;
+
+-- Admin match list (creator name + player count), gated + definer so it's
+-- immune to the locked-down matches RLS / embed resolution.
+create or replace function public.admin_list_matches(p_limit int default 100)
+returns table(
+  id           uuid,
+  status       text,
+  match_type   text,
+  scheduled_at timestamptz,
+  created_by   uuid,
+  creator_name text,
+  players      int
+)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public._is_admin() then return; end if;
+  return query
+    select m.id, m.status, m.match_type, m.scheduled_at, m.created_by,
+           (select p.name from public.profiles p where p.id = m.created_by),
+           (select count(*)::int from public.match_players mp where mp.match_id = m.id)
+      from public.matches m
+     order by m.scheduled_at desc nulls last
+     limit p_limit;
+end $$;
+grant execute on function public.admin_list_matches(int) to authenticated;
 -- submit_match_result / confirm_match_result grants moved to the v2 block (their
 -- definitions live there now, so the grants must follow them).
 

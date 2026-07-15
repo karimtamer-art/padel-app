@@ -110,14 +110,14 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
   }
 
   static bool _isFaulty(Map<String, dynamic> m) =>
-      ((m['match_players'] as List?)?.length ?? 0) == 0;
+      ((m['players'] as num?)?.toInt() ?? 0) == 0;
 
   Widget _card(Map<String, dynamic> m) {
     final status = m['status'] as String?;
     final format = m['match_type'] as String? ?? 'casual';
     final scheduled = _fmtDate(m['scheduled_at'] as String?);
-    final creator = (m['profiles'] as Map?)?['name'] as String?;
-    final players = (m['match_players'] as List?)?.length ?? 0;
+    final creator = m['creator_name'] as String?;
+    final players = (m['players'] as num?)?.toInt() ?? 0;
     final faulty = players == 0;
     final statusColor = _statusColor(status);
 

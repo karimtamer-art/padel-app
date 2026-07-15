@@ -315,11 +315,7 @@ class AdminService {
 
   static Future<List<Map<String, dynamic>>> fetchMatches(
       {int limit = 100}) async {
-    final res = await _db
-        .from('matches')
-        .select('*, profiles!matches_created_by_fkey(name), match_players(player_id)')
-        .order('scheduled_at', ascending: false)
-        .limit(limit);
+    final res = await _db.rpc('admin_list_matches', params: {'p_limit': limit});
     return List<Map<String, dynamic>>.from(res as List);
   }
 
