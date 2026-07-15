@@ -1,8 +1,10 @@
--- 2026-07-15 · Fix: mm_candidates "column reference city is ambiguous" (42702)
+-- 2026-07-15 · Fix: mm_candidates/mm_result_hero return-type mismatch (42804)
 --
--- The RETURNS TABLE has an output column named `city`, which shadowed the
--- unqualified `city` in the initial `select ... from profiles`. Qualify it with
--- the table alias. Re-creates the function; safe to run standalone.
+-- "Returned type double precision does not match expected type numeric".
+-- On the live DB profiles.level (and possibly ranking_history.delta/rating_after)
+-- are double precision, so coalesce(rating, level, 2.0) promotes to double
+-- precision and no longer matches the numeric RETURNS TABLE columns. Cast the
+-- rating/level outputs to ::numeric. Re-creates both functions; safe standalone.
 
 create or replace function public.mm_candidates(p_limit int default null)
 returns table(
@@ -41,7 +43,8 @@ begin
   select m.id, m.scheduled_at, m.match_type,
          c.name, c.venue_name, coalesce(c.city, cp.city),
          m.created_by, cp.name,
-         coalesce(cp.rating, cp.level, 2.0)::numeric, coalesce(cp.level, cp.rating, 2.0)::numeric,
+         coalesce(cp.rating, cp.level, 2.0)::numeric,
+         coalesce(cp.level, cp.rating, 2.0)::numeric,
          (select count(*)::int from public.match_players mp where mp.match_id = m.id),
          coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)::numeric,
          greatest(0, round((1 - abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) / 3.5) * 100))::int
@@ -67,6 +70,53 @@ begin
    order by abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) asc,
             m.scheduled_at asc
    limit p_limit;
+end $$;
+
+create or replace function public.mm_result_hero()
+returns table(
+  match_id      uuid,
+  won           boolean,
+  my_team       text,
+  score_team_a  text,
+  score_team_b  text,
+  rating_delta  numeric,
+  rating_after  numeric,
+  match_type    text
+)
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_mid uuid;
+begin
+  if v_uid is null then return; end if;
+
+  select mp.match_id into v_mid
+    from public.match_players mp
+    join public.matches m on m.id = mp.match_id
+   where mp.player_id = v_uid
+     and m.status = 'completed'
+     and m.winner_team is not null
+     and coalesce(mp.result_ack, false) = false
+   order by m.scheduled_at desc nulls last
+   limit 1;
+  if v_mid is null then return; end if;
+
+  return query
+  select m.id,
+         (mp.team = m.winner_team),
+         mp.team,
+         m.score_team_a,
+         m.score_team_b,
+         (select rh.delta::numeric from public.ranking_history rh
+            where rh.profile_id = v_uid and rh.match_id = m.id
+            order by rh.created_at desc limit 1),
+         (select rh.rating_after::numeric from public.ranking_history rh
+            where rh.profile_id = v_uid and rh.match_id = m.id
+            order by rh.created_at desc limit 1),
+         m.match_type
+    from public.matches m
+    join public.match_players mp on mp.match_id = m.id and mp.player_id = v_uid
+   where m.id = v_mid;
 end $$;
 
 notify pgrst, 'reload schema';

@@ -149,6 +149,7 @@ class Ranking {
   final LastRankedMatch? lastMatch;
   final double reliability; // 0..100 — rating confidence (1 - sigma)
   final bool provisional; // still finding their level (high sigma / few matches)
+  final int competitiveMatches; // completed ranked matches (drives "confirm" count)
 
   const Ranking.placement(this.placement)
       : placed = false,
@@ -158,7 +159,8 @@ class Ranking {
         weeklyDelta = 0,
         lastMatch = null,
         reliability = 0,
-        provisional = true;
+        provisional = true,
+        competitiveMatches = 0;
 
   const Ranking.placed({
     required this.level,
@@ -168,11 +170,18 @@ class Ranking {
     this.lastMatch,
     this.reliability = 100,
     this.provisional = false,
+    this.competitiveMatches = 0,
   })  : placed = true,
         placement = RankingScale.placementTotal;
 
   int get remaining =>
       (RankingScale.placementTotal - placement).clamp(0, RankingScale.placementTotal);
+
+  /// Ranked matches still needed to shed provisional status (threshold 10).
+  int get matchesToConfirm {
+    final n = 10 - competitiveMatches;
+    return n < 0 ? 0 : n;
+  }
 }
 
 /// Everything the Profile screen needs for a single account. Switch the whole

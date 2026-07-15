@@ -131,7 +131,7 @@ class ProfileService {
         profileRow = await _db
             .from('profiles')
             .select('elo, tier, level, placement_played, '
-                'reliability, is_provisional, placement_revealed')
+                'reliability, is_provisional, placement_revealed, competitive_matches')
             .eq('id', userId)
             .single();
       } catch (_) {
@@ -291,6 +291,8 @@ class ProfileService {
         }
       } catch (_) {/* pre-migration: no breakdown available */}
 
+      final compMatches =
+          (profileRow['competitive_matches'] as num?)?.toInt() ?? 0;
       final ranking = placementPlayed < RankingScale.placementTotal
           ? Ranking.placement(placementPlayed)
           : Ranking.placed(
@@ -299,6 +301,7 @@ class ProfileService {
               provisional: provisional,
               weeklyDelta: weeklyDelta,
               lastMatch: lastMatch,
+              competitiveMatches: compMatches,
             );
 
       return PlayerProfile(

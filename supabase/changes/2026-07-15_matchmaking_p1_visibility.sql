@@ -74,7 +74,7 @@ begin
 
   -- Qualify with the table alias: the RETURNS TABLE column `city` shadows an
   -- unqualified `city` here (42702 ambiguous reference otherwise).
-  select coalesce(p.rating, p.level, 2.0), p.city, (coalesce(p.placement_played, 0) < 5)
+  select coalesce(p.rating, p.level, 2.0)::numeric, p.city, (coalesce(p.placement_played, 0) < 5)
     into v_rating, v_city, v_placement
     from public.profiles p where p.id = v_uid;
 
@@ -85,9 +85,9 @@ begin
   select m.id, m.scheduled_at, m.match_type,
          c.name, c.venue_name, coalesce(c.city, cp.city),
          m.created_by, cp.name,
-         coalesce(cp.rating, cp.level, 2.0), coalesce(cp.level, cp.rating, 2.0),
+         coalesce(cp.rating, cp.level, 2.0)::numeric, coalesce(cp.level, cp.rating, 2.0)::numeric,
          (select count(*)::int from public.match_players mp where mp.match_id = m.id),
-         coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0),
+         coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)::numeric,
          greatest(0, round((1 - abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) / 3.5) * 100))::int
     from public.matches m
     join public.profiles cp on cp.id = m.created_by

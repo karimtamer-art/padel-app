@@ -59,10 +59,10 @@ begin
          mp.team,
          m.score_team_a,
          m.score_team_b,
-         (select rh.delta from public.ranking_history rh
+         (select rh.delta::numeric from public.ranking_history rh
             where rh.profile_id = v_uid and rh.match_id = m.id
             order by rh.created_at desc limit 1),
-         (select rh.rating_after from public.ranking_history rh
+         (select rh.rating_after::numeric from public.ranking_history rh
             where rh.profile_id = v_uid and rh.match_id = m.id
             order by rh.created_at desc limit 1),
          m.match_type

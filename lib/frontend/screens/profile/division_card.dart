@@ -83,12 +83,20 @@ class DivisionCard extends StatelessWidget {
   Widget _placed(BuildContext context) {
     final lv = ranking.level;
     final d = RankingScale.divisionFor(lv);
-    final tier = RankingScale.tierFor(lv);
-    final next = RankingScale.nextDivision(lv);
-    final divPct = (RankingScale.progressInDivision(lv) * 100).round();
+    final leagueWord = d.league.split(' ').first; // "Beginner League" → "Beginner"
+    final atTop = lv >= RankingScale.maxLevel;
+    final nextLvl = RankingScale.nextLevelMilestone(lv);
+    final pct = RankingScale.levelMilestoneProgress(lv);
+    final toGo = nextLvl - lv;
+    final wk = ranking.weeklyDelta;
+    final trend = wk > 0.001
+        ? 'improving fast'
+        : (wk < -0.001 ? 'finding your level' : 'holding steady');
+    final trendColor = wk < -0.001 ? _danger : _success;
+    final rel = ranking.reliability.clamp(0, 100).toDouble();
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // header — big level + league + hex badge
+      // Header: big level + trend + NEXT ring.
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -99,74 +107,44 @@ class DivisionCard extends StatelessWidget {
                 _provisionalPill(),
               ],
             ]),
-            const SizedBox(height: 5),
-            Text(RankingScale.fmtQuarter(lv),
-                style: AppText.stat(46, _gold).copyWith(letterSpacing: -2.5, height: 0.9)),
             const SizedBox(height: 6),
-            Text(d.league, style: AppText.bodyStrong(_gold).copyWith(fontSize: 14.5)),
-            const SizedBox(height: 11),
-            _reliabilityRow(),
+            Text(lv.toStringAsFixed(2),
+                style: AppText.stat(52, _gold).copyWith(letterSpacing: -2.5, height: 0.9)),
+            const SizedBox(height: 8),
+            Text.rich(TextSpan(children: [
+              TextSpan(text: leagueWord, style: AppText.bodyStrong(_cream).copyWith(fontSize: 15)),
+              TextSpan(
+                  text: '  ·  $trend',
+                  style: AppText.body(trendColor).copyWith(fontSize: 13.5, fontWeight: FontWeight.w600)),
+            ])),
           ]),
         ),
         const SizedBox(width: 12),
-        _hexBadge(d.key),
+        _nextRing(atTop ? 1.0 : pct, atTop ? 'MAX' : RankingScale.fmtLevel(nextLvl)),
       ]),
-      _hr(),
-      // current tier + segments
+      const SizedBox(height: 16),
+      _reliabilityBlock(rel),
+      const SizedBox(height: 16),
+      // Progress to next 0.5 milestone.
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('CURRENT TIER', style: _kick),
-        RichText(
-          text: TextSpan(
-              style: AppText.small(_faint).copyWith(fontSize: 12, fontWeight: FontWeight.w700),
-              children: next == null
-                  ? const [TextSpan(text: 'Top division', style: TextStyle(color: _gold, fontWeight: FontWeight.w800))]
-                  : [
-                      TextSpan(text: '$divPct% ', style: const TextStyle(color: _gold, fontWeight: FontWeight.w800)),
-                      TextSpan(text: 'to ${next.name}'),
-                    ]),
-        ),
+        Text(atTop ? 'TOP LEVEL REACHED' : 'PROGRESS TO LEVEL ${RankingScale.fmtLevel(nextLvl)}',
+            style: _kick),
+        if (!atTop)
+          Text.rich(TextSpan(children: [
+            TextSpan(text: '${(pct * 100).round()}% ', style: AppText.bodyStrong(_gold).copyWith(fontSize: 12.5)),
+            TextSpan(
+                text: '· +${toGo.toStringAsFixed(2)} to go',
+                style: AppText.small(_faint).copyWith(fontSize: 12, fontWeight: FontWeight.w600)),
+          ])),
       ]),
-      const SizedBox(height: 12),
-      _tierSegments(tier),
-      _hr(),
-      // progress / movement
-      _progressBlock(lv, d),
-      _hr(),
-      // this week
-      Text('THIS WEEK', style: _kick),
-      const SizedBox(height: 9),
-      _weekStrip(),
+      const SizedBox(height: 10),
+      _bar(atTop ? 1 : pct),
       if (ranking.lastMatch != null) ...[
-        const SizedBox(height: 14),
-        Text('WHY YOUR LEVEL MOVED', style: _kick),
-        const SizedBox(height: 9),
-        _lastMatch(ranking.lastMatch!),
+        const SizedBox(height: 16),
+        _lastMatchCard(ranking.lastMatch!, wk),
       ],
     ]);
   }
-
-  Widget _hexBadge(String key) => Column(children: [
-        Container(
-          width: 62,
-          height: 62,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [_gold.withValues(alpha: 0.22), const Color(0xFFB07E22).withValues(alpha: 0.05)]),
-            border: Border.all(color: _gold.withValues(alpha: 0.5), width: 1.5),
-            boxShadow: [BoxShadow(color: _gold.withValues(alpha: 0.35), blurRadius: 18, offset: const Offset(0, 8))],
-          ),
-          child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
-            Text(key, style: AppText.stat(31, _gold)),
-            const Positioned(top: 4, right: 5, child: Icon(Icons.star_rounded, size: 12, color: _gold)),
-          ]),
-        ),
-        const SizedBox(height: 6),
-        Text('LEVEL', style: AppText.tag(_gold).copyWith(fontSize: 9, letterSpacing: 1.3)),
-      ]);
 
   Widget _provisionalPill() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -178,152 +156,77 @@ class DivisionCard extends StatelessWidget {
             style: AppText.tag(_gold).copyWith(fontSize: 8.5, letterSpacing: 1.2)),
       );
 
-  /// Reliability ring — rating confidence (1 − sigma), 0–100%.
-  Widget _reliabilityRow() {
-    final pct = ranking.reliability.clamp(0, 100).toDouble();
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      SizedBox(
-        width: 34,
-        height: 34,
+  /// "NEXT / level" ring — arc = progress to the next 0.5 milestone.
+  Widget _nextRing(double value, String label) => SizedBox(
+        width: 66,
+        height: 66,
         child: Stack(alignment: Alignment.center, children: [
           SizedBox(
-            width: 34,
-            height: 34,
+            width: 66,
+            height: 66,
             child: CircularProgressIndicator(
-              value: (pct / 100).clamp(0, 1).toDouble(),
+              value: value.clamp(0, 1).toDouble(),
+              strokeWidth: 5,
+              backgroundColor: _cream.withValues(alpha: 0.12),
+              valueColor: const AlwaysStoppedAnimation<Color>(_gold),
+            ),
+          ),
+          Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('NEXT', style: AppText.tag(_faint).copyWith(fontSize: 7.5, letterSpacing: 1.2)),
+            Text(label, style: AppText.stat(15, _cream).copyWith(height: 1.05)),
+          ]),
+        ]),
+      );
+
+  /// Reliability ring + "Rating reliability · N%" and the confirm nudge.
+  Widget _reliabilityBlock(double rel) {
+    final confirm = ranking.matchesToConfirm;
+    final sub = ranking.provisional
+        ? (confirm > 0
+            ? 'Play $confirm more ${confirm == 1 ? 'match' : 'matches'} to confirm your level.'
+            : 'Keep playing to sharpen your rating.')
+        : 'Your level is confirmed.';
+    return Row(children: [
+      SizedBox(
+        width: 38,
+        height: 38,
+        child: Stack(alignment: Alignment.center, children: [
+          SizedBox(
+            width: 38,
+            height: 38,
+            child: CircularProgressIndicator(
+              value: (rel / 100).clamp(0, 1).toDouble(),
               strokeWidth: 3.5,
               backgroundColor: _cream.withValues(alpha: 0.12),
               valueColor: const AlwaysStoppedAnimation<Color>(_gold),
             ),
           ),
-          Text('${pct.round()}',
-              style: AppText.stat(11, _cream).copyWith(height: 1)),
+          Text('${rel.round()}', style: AppText.stat(11, _cream).copyWith(height: 1)),
         ]),
       ),
-      const SizedBox(width: 9),
-      Text('rating confidence',
-          style: AppText.small(_faint)
-              .copyWith(fontSize: 12, fontWeight: FontWeight.w700)),
-    ]);
-  }
-
-  Widget _tierSegments(String tier) {
-    const tiers = ['Low', 'Mid', 'High'];
-    final idx = tiers.indexOf(tier);
-    Widget seg(String label, int i) {
-      final now = i == idx, done = i < idx;
-      return Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          alignment: Alignment.center,
-          decoration: now
-              ? BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  gradient: _goldGrad,
-                  boxShadow: [BoxShadow(color: _gold.withValues(alpha: 0.4), blurRadius: 14, offset: const Offset(0, 5))])
-              : BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: done ? _gold.withValues(alpha: 0.07) : _cream.withValues(alpha: 0.05),
-                  border: Border.all(color: done ? _gold.withValues(alpha: 0.25) : _cream.withValues(alpha: 0.13))),
-          child: Text(label.toUpperCase(),
-              style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 10.5,
-                  letterSpacing: 0.5,
-                  color: now ? _ink : (done ? _gold.withValues(alpha: 0.85) : _faint))),
-        ),
-      );
-    }
-
-    return Row(children: [
-      seg('Low', 0),
-      const SizedBox(width: 7),
-      seg('Mid', 1),
-      const SizedBox(width: 7),
-      seg('High', 2),
-    ]);
-  }
-
-  Widget _progressBlock(double lv, Division d) {
-    if (ranking.movement == RankMovement.promoted) {
-      return _banner(
-          icon: Icons.trending_up_rounded,
-          tint: _success,
-          title: 'Promoted!',
-          sub: 'Up from ${ranking.movedFrom} · welcome to ${d.name}');
-    }
-    if (ranking.movement == RankMovement.dropped) {
-      return _banner(
-          icon: Icons.trending_down_rounded,
-          tint: _danger,
-          title: 'Relegated',
-          sub: 'Dropped to ${d.name} · win to climb back');
-    }
-    final atTop = lv >= RankingScale.maxLevel;
-    final nextLvl = RankingScale.nextLevelMilestone(lv);
-    final pct = RankingScale.levelMilestoneProgress(lv);
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(atTop ? 'NEXT LEVEL' : 'NEXT LEVEL · ${RankingScale.fmtLevel(nextLvl)}', style: _kick),
-        Text(atTop ? 'Max level reached' : '${(pct * 100).round()}% to Level ${RankingScale.fmtLevel(nextLvl)}',
-            style: AppText.small(_faint).copyWith(fontSize: 12, fontWeight: FontWeight.w700)),
-      ]),
-      const SizedBox(height: 11),
-      _bar(atTop ? 1 : pct),
-    ]);
-  }
-
-  Widget _banner({required IconData icon, required Color tint, required String title, required String sub}) =>
-      Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-            color: tint.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: tint.withValues(alpha: 0.3))),
-        child: Row(children: [
-          Container(
-            width: 36,
-            height: 36,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: tint, width: 1.5)),
-            child: Icon(icon, size: 18, color: tint),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: AppText.bodyStrong(tint == _success ? _gold : const Color(0xFFF0C7BD)).copyWith(fontSize: 14)),
-              const SizedBox(height: 2),
-              Text(sub, style: AppText.small(_faint).copyWith(fontSize: 11.5, height: 1.3)),
-            ]),
-          ),
+      const SizedBox(width: 11),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Rating reliability · ${rel.round()}%',
+              style: AppText.bodyStrong(_cream).copyWith(fontSize: 13.5)),
+          const SizedBox(height: 2),
+          Text(sub, style: AppText.small(_faint).copyWith(fontSize: 12, height: 1.35)),
         ]),
-      );
-
-  Widget _weekStrip() {
-    final d = ranking.weeklyDelta;
-    final down = d < 0;
-    final tint = down ? _danger : _success;
-    final ic = d > 0
-        ? Icons.trending_up_rounded
-        : (down ? Icons.trending_down_rounded : Icons.trending_flat_rounded);
-    final label = d > 0 ? 'Level increase' : (down ? 'Level decrease' : 'No change this week');
-    return Row(children: [
-      Icon(ic, size: 19, color: tint),
-      const SizedBox(width: 9),
-      Text(RankingScale.fmtSigned(d), style: AppText.stat(23, tint).copyWith(letterSpacing: -0.5)),
-      const SizedBox(width: 8),
-      Flexible(child: Text(label, style: AppText.small(_faint).copyWith(fontSize: 12.5, fontWeight: FontWeight.w600))),
+      ),
     ]);
   }
 
-  Widget _lastMatch(LastRankedMatch m) {
-    final pos = m.delta >= 0;
+  /// Inset last-ranked-match card with the week's level movement.
+  Widget _lastMatchCard(LastRankedMatch m, double wk) {
+    final verb = m.won ? 'Beat' : 'Lost to';
+    final pos = wk >= 0;
+    final score = m.hasScore ? ' · ${m.gamesFor}–${m.gamesAgainst}' : '';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
       decoration: BoxDecoration(
-          color: _cream.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _cream.withValues(alpha: 0.13))),
+          color: _ink.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _cream.withValues(alpha: 0.10))),
       child: Row(children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -331,28 +234,26 @@ class DivisionCard extends StatelessWidget {
               color: (m.won ? _success : _danger).withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(6)),
           child: Text(m.won ? 'WIN' : 'LOSS',
-              style: AppText.tag(m.won ? const Color(0xFFBFE9CD) : const Color(0xFFF0C7BD)).copyWith(fontSize: 10)),
+              style: AppText.tag(m.won ? const Color(0xFFBFE9CD) : const Color(0xFFF0C7BD))
+                  .copyWith(fontSize: 10)),
         ),
-        const SizedBox(width: 9),
+        const SizedBox(width: 11),
         Expanded(
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('vs Level ${RankingScale.fmtLevel(m.vsLevel)}',
-                    style: AppText.body(_cream)
-                        .copyWith(fontSize: 11.5, fontWeight: FontWeight.w600)),
-                if (m.hasScore) ...[
-                  const SizedBox(height: 2),
-                  Text('${m.won ? 'won' : 'lost'} ${m.gamesFor}–${m.gamesAgainst} games',
-                      style: AppText.small(_faint).copyWith(fontSize: 10.5)),
-                ],
-              ]),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text('$verb Level ${RankingScale.fmtLevel(m.vsLevel)}$score',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.bodyStrong(_cream).copyWith(fontSize: 13.5)),
+            const SizedBox(height: 2),
+            Text('Your last ranked match this week',
+                style: AppText.small(_faint).copyWith(fontSize: 11.5)),
+          ]),
         ),
+        const SizedBox(width: 8),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(RankingScale.fmtSigned(m.delta),
-              style: AppText.bodyStrong(pos ? _success : _danger).copyWith(fontSize: 16, fontWeight: FontWeight.w800)),
-          Text('LEVEL', style: AppText.tag(_faint).copyWith(fontSize: 9, letterSpacing: 0.5)),
+          Text(RankingScale.fmtSigned(wk),
+              style: AppText.stat(19, pos ? _success : _danger).copyWith(letterSpacing: -0.5)),
+          Text('THIS WEEK', style: AppText.tag(_faint).copyWith(fontSize: 8.5, letterSpacing: 0.8)),
         ]),
       ]),
     );
