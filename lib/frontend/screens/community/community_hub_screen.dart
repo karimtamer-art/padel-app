@@ -348,14 +348,32 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
     ].join(' · ');
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.fromLTRB(18, top + 10, 18, 20),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [AppColors.hero, AppColors.hero2]),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: Stack(children: [
+        // Warm gold splash across the top of the green.
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(-0.4, -1.15),
+                radius: 1.15,
+                colors: [
+                  AppColors.gold.withValues(alpha: 0.30),
+                  Colors.transparent,
+                ],
+                stops: const [0.0, 0.6],
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(18, top + 10, 18, 20),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // Back button.
         Row(children: [
           _glassBtn(Icons.arrow_back_rounded, () => Navigator.pop(context)),
@@ -428,6 +446,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
             ),
           ),
         ]),
+      ]),
+        ),
       ]),
     );
   }
