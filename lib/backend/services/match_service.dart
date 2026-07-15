@@ -80,6 +80,50 @@ class MatchService {
     }
   }
 
+  // ── Background search ticket ────────────────────────────────────────────────
+
+  /// Persist that the player is searching (a ticket) so matchmaking keeps
+  /// running server-side while the app is closed and pushes when a match
+  /// appears. Best-effort.
+  static Future<void> startSearch() async {
+    try {
+      await _db.rpc('mm_start_search');
+    } catch (e) {
+      debugPrint('[MatchService] startSearch: $e');
+    }
+  }
+
+  /// Stop searching (drop the ticket). Best-effort.
+  static Future<void> cancelSearch() async {
+    try {
+      await _db.rpc('mm_cancel_search');
+    } catch (e) {
+      debugPrint('[MatchService] cancelSearch: $e');
+    }
+  }
+
+  /// Whether the player has a fresh active search ticket — used on launch to
+  /// resume the radar hero after a background push. TTL mirrors
+  /// `mm_ticket_ttl_hours` (default 6h).
+  static Future<bool> isSearching() async {
+    final uid = _uid;
+    if (uid == null) return false;
+    try {
+      final row = await _db
+          .from('matchmaking_tickets')
+          .select('created_at')
+          .eq('player_id', uid)
+          .maybeSingle();
+      if (row == null) return false;
+      final ts = DateTime.tryParse(row['created_at'] as String? ?? '');
+      if (ts == null) return true;
+      return DateTime.now().difference(ts) < const Duration(hours: 6);
+    } catch (e) {
+      debugPrint('[MatchService] isSearching: $e');
+      return false;
+    }
+  }
+
   /// One match with court + players, or null.
   static Future<Map<String, dynamic>?> fetchMatch(String id) async {
     try {

@@ -16,7 +16,7 @@ import 'package:padel_clay/backend/services/store_service.dart';
 import 'package:padel_clay/backend/services/community_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
-import '../matches/find_match_screen.dart';
+import 'matchmaking_hero.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import '../profile/notifications_screen.dart';
@@ -65,6 +65,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // Local latch so the one-time placement reveal disappears the instant it's
   // dismissed (the persisted flag catches the next launch).
   bool _revealDismissed = false;
+  // The player tapped "Find a Match" → the hero morphs into the searching radar.
+  bool _searching = false;
   RealtimeChannel? _notifChannel;
 
   static SupabaseClient get _db => Supabase.instance.client;
@@ -74,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadData();
     _subscribeNotifications();
+    _restoreSearching();
   }
 
   @override
@@ -167,14 +170,38 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) _tournaments = visible;
   }
 
-  Future<void> _openFindMatch(BuildContext c) async {
+  // Matchmaking is now the home hero itself (MatchmakingHero), not a screen.
+  // The search is ticket-backed so it survives the app closing (background push
+  // brings the player back to the resumed radar).
+  void _startSearch() {
+    setState(() => _searching = true);
+    MatchService.startSearch();
+  }
+
+  void _stopSearch() {
+    setState(() => _searching = false);
+    MatchService.cancelSearch();
+  }
+
+  Future<void> _onMatchAccepted(String matchId) async {
+    setState(() => _searching = false);
+    MatchService.cancelSearch();
+    await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => MatchDetailScreen(matchId: matchId)));
+    _loadData(silent: true);
+  }
+
+  /// On launch, resume the radar if a fresh search ticket exists (e.g. the
+  /// player tapped a "Match found" push). Runs once.
+  Future<void> _restoreSearching() async {
+    if (await MatchService.isSearching()) {
+      if (mounted) setState(() => _searching = true);
+    }
+  }
+
+  String get _searchLevelLabel {
     final r = widget.profile.ranking;
-    final label = r.placed
-        ? 'Div ${RankingScale.divisionFor(r.level).key}'
-        : 'Placement';
-    await Navigator.of(c).push(
-        MaterialPageRoute(builder: (_) => FindMatchScreen(levelLabel: label)));
-    _loadData();
+    return r.placed ? 'Div ${RankingScale.divisionFor(r.level).key}' : 'Placement';
   }
 
   /// Dismiss the one-time placement reveal: hide it now, persist that it's been
@@ -324,11 +351,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   profile: widget.profile,
                 ),
                 // The top hero slot is never empty for a placed player: it
-                // cycles reveal → next-match → book-next as their state changes.
-                if (!widget.profile.ranking.placed)
+                // cycles searching → reveal → result → live → next-match →
+                // book-next as their state changes.
+                if (_searching)
+                  MatchmakingHero(
+                    initials: widget.initials.isNotEmpty ? widget.initials : 'P',
+                    levelLabel: _searchLevelLabel,
+                    onAccepted: _onMatchAccepted,
+                    onCancel: _stopSearch,
+                  )
+                else if (!widget.profile.ranking.placed)
                   _PlacementWelcome(
                     ranking: widget.profile.ranking,
-                    onFindMatch: () => _openFindMatch(context),
+                    onFindMatch: _startSearch,
                   )
                 // Just placed and hasn't seen the celebration → one-time reveal.
                 else if (!widget.profile.placementRevealed && !_revealDismissed)
@@ -360,7 +395,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _BookNextHero(
                     ranking: widget.profile.ranking,
                     bandCount: _bandCount,
-                    onFindMatch: () => _openFindMatch(context),
+                    onFindMatch: _startSearch,
                   ),
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
@@ -389,7 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Upcoming Matches',
                     action: 'View All',
-                    onAction: () => _openFindMatch(context)),
+                    onAction: _startSearch),
                 _upcomingMatches(context),
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Tournaments',
@@ -820,7 +855,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ]),
             ),
             const SizedBox(width: 8),
-            AppButton('Find', onPressed: () => _openFindMatch(context)),
+            AppButton('Find', onPressed: _startSearch),
           ]),
         ),
       );

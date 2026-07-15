@@ -72,9 +72,11 @@ declare
 begin
   if v_uid is null then return; end if;
 
-  select coalesce(rating, level, 2.0), city, (coalesce(placement_played, 0) < 5)
+  -- Qualify with the table alias: the RETURNS TABLE column `city` shadows an
+  -- unqualified `city` here (42702 ambiguous reference otherwise).
+  select coalesce(p.rating, p.level, 2.0), p.city, (coalesce(p.placement_played, 0) < 5)
     into v_rating, v_city, v_placement
-    from public.profiles where id = v_uid;
+    from public.profiles p where p.id = v_uid;
 
   v_window := coalesce(
     (select value::numeric from public.app_settings where key = 'mm_time_window_hours'), 12);
