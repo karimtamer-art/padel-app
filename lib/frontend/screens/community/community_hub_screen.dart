@@ -24,10 +24,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   List<CommunityEvent> _events = [];
   List<Announcement> _feed = [];
   List<MemberLite> _members = [];
-  List<Map<String, dynamic>> _chat = [];
-  final _chatCtrl = TextEditingController();
-  final _chatScroll = ScrollController();
-  bool _loading = true, _busy = false, _sendingChat = false;
+  List<Map<String, dynamic>> _channels = [];
+  bool _loading = true, _busy = false;
   int _tab = 0;
 
   // Tab order: Events(0) · Chat(1) · Feed(2) · Members(3).
@@ -37,13 +35,6 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   void initState() {
     super.initState();
     _load();
-  }
-
-  @override
-  void dispose() {
-    _chatCtrl.dispose();
-    _chatScroll.dispose();
-    super.dispose();
   }
 
   Future<void> _load() async {
@@ -57,7 +48,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       CommunityService.events(c.organizerId),
       CommunityService.feed(c.id),
       CommunityService.members(c.id),
-      CommunityService.chat(c.id),
+      CommunityService.channelList(c.id),
     ]);
     if (!mounted) return;
     setState(() {
@@ -65,37 +56,34 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       _events = results[0] as List<CommunityEvent>;
       _feed = results[1] as List<Announcement>;
       _members = results[2] as List<MemberLite>;
-      _chat = results[3] as List<Map<String, dynamic>>;
+      _channels = results[3] as List<Map<String, dynamic>>;
       _loading = false;
     });
   }
 
-  Future<void> _sendChat() async {
+  Future<void> _refreshChannels() async {
     final c = _c;
-    final body = _chatCtrl.text.trim();
-    if (c == null || body.isEmpty || _sendingChat) return;
-    if (!c.isMember) {
-      AppToast.show(context, 'Join the community to chat', kind: ToastKind.info);
-      return;
-    }
-    setState(() => _sendingChat = true);
-    final err = await CommunityService.sendChat(c.id, body);
-    if (!mounted) return;
-    setState(() => _sendingChat = false);
-    if (err != null) {
-      AppToast.show(context, err, kind: ToastKind.error);
-      return;
-    }
-    _chatCtrl.clear();
-    final chat = await CommunityService.chat(c.id);
-    if (!mounted) return;
-    setState(() => _chat = chat);
-    // Jump to the newest message.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_chatScroll.hasClients) {
-        _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
-      }
-    });
+    if (c == null) return;
+    final ch = await CommunityService.channelList(c.id);
+    if (mounted) setState(() => _channels = ch);
+  }
+
+  Future<void> _openChannel(Map<String, dynamic> ch) async {
+    final c = _c;
+    if (c == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CommunityChannelScreen(
+          communityId: c.id,
+          channelId: ch['id'] as String,
+          channelName: ch['name'] as String? ?? 'channel',
+          canPost: c.isMember,
+        ),
+      ),
+    );
+    // Preview may have changed.
+    _refreshChannels();
   }
 
   Future<void> _toggleJoin() async {
@@ -258,16 +246,14 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
                   _hero(_c!),
                   _tabs(),
                   Expanded(
-                    child: _tab == _chatTabIndex
-                        ? _chatView()
-                        : RefreshIndicator(
-                            color: AppColors.primary,
-                            onRefresh: _load,
-                            child: ListView(
-                              padding: const EdgeInsets.only(bottom: 24),
-                              children: [_tabBody()],
-                            ),
-                          ),
+                    child: RefreshIndicator(
+                      color: AppColors.primary,
+                      onRefresh: _load,
+                      child: ListView(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        children: [_tabBody()],
+                      ),
+                    ),
                   ),
                 ]),
     );
@@ -463,7 +449,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
         child: GestureDetector(
           onTap: () {
             setState(() => _tab = i);
-            if (i == _chatTabIndex) _refreshChat();
+            if (i == _chatTabIndex) _refreshChannels();
           },
           child: Container(
             margin: const EdgeInsets.all(3),
@@ -498,12 +484,14 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
 
   Widget _tabBody() {
     switch (_tab) {
+      case 1:
+        return _channelsTab();
       case 2:
         return _feedTab();
       case 3:
         return _membersTab();
       default:
-        return _eventsTab(); // Chat (1) is handled separately in build().
+        return _eventsTab();
     }
   }
 
@@ -687,137 +675,69 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
     ]);
   }
 
-  // ── Chat tab ────────────────────────────────────────────────────
-  Future<void> _refreshChat() async {
-    final c = _c;
-    if (c == null) return;
-    final chat = await CommunityService.chat(c.id);
-    if (!mounted) return;
-    setState(() => _chat = chat);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_chatScroll.hasClients) {
-        _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
-      }
-    });
-  }
-
-  Widget _chatView() {
-    final c = _c!;
-    return Column(children: [
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 6, AppSpacing.screen, 8),
-        child: Text(
-            'Talk to the community. Events get their own channel automatically — it closes when the event ends.',
-            style: AppText.small(AppColors.inkSoft).copyWith(height: 1.4)),
-      ),
-      Expanded(
-        child: _chat.isEmpty
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.forum_outlined, size: 38, color: AppColors.inkFaint),
-                    const SizedBox(height: 10),
-                    Text('No messages yet. Say hello!',
-                        style: AppText.small(), textAlign: TextAlign.center),
-                  ]),
-                ),
-              )
-            : ListView.builder(
-                controller: _chatScroll,
-                padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 6, AppSpacing.screen, 12),
-                itemCount: _chat.length,
-                itemBuilder: (_, i) => _chatBubble(_chat[i]),
-              ),
-      ),
-      _chatComposer(c),
+  // ── Chat tab: channel list ──────────────────────────────────────
+  Widget _channelsTab() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _pad(Text(
+          'Talk to the community. Events get their own channel automatically — it closes when the event ends.',
+          style: AppText.small(AppColors.inkSoft).copyWith(height: 1.4))),
+      const SizedBox(height: 12),
+      _pad(Text('COMMUNITY CHANNELS',
+          style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10, letterSpacing: 1.2))),
+      const SizedBox(height: 8),
+      if (_channels.isEmpty)
+        _empty(Icons.forum_outlined, 'No channels yet.')
+      else
+        ..._channels.map((ch) => _pad(Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: _channelRow(ch),
+            ))),
     ]);
   }
 
-  Widget _chatBubble(Map<String, dynamic> m) {
-    final fromMe = m['fromMe'] == true;
-    final name = (m['senderName'] as String? ?? 'Player').split(' ').first;
-    final body = m['body'] as String? ?? '';
-    return Align(
-      alignment: fromMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-        decoration: BoxDecoration(
-          color: fromMe ? AppColors.primary : AppColors.field,
-          borderRadius: BorderRadius.circular(14),
+  Widget _channelRow(Map<String, dynamic> ch) {
+    final name = ch['name'] as String? ?? 'channel';
+    final custom = ch['is_custom'] == true;
+    final preview = (ch['preview'] as String?)?.trim();
+    return AppCard(
+      onTap: () => _openChannel(ch),
+      padding: const EdgeInsets.all(11),
+      child: Row(children: [
+        Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: AppColors.field, borderRadius: BorderRadius.circular(10)),
+          child: Text('#',
+              style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 17)),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          if (!fromMe) ...[
-            Text(name,
-                style: AppText.small(AppColors.inkSoft)
-                    .copyWith(fontSize: 11, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 2),
-          ],
-          Text(body,
-              style: AppText.body(fromMe ? AppColors.primaryInk : AppColors.ink)
-                  .copyWith(fontSize: 14, height: 1.35)),
-        ]),
-      ),
-    );
-  }
-
-  Widget _chatComposer(Community c) {
-    final bottom = MediaQuery.of(context).padding.bottom;
-    if (!c.isMember) {
-      return Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-            color: AppColors.surface,
-            border: Border(top: BorderSide(color: AppColors.lineSoft))),
-        padding: EdgeInsets.fromLTRB(16, 14, 16, 14 + bottom),
-        child: Text('Join the community to chat',
-            textAlign: TextAlign.center, style: AppText.small()),
-      );
-    }
-    return Container(
-      decoration: const BoxDecoration(
-          color: AppColors.surface,
-          border: Border(top: BorderSide(color: AppColors.lineSoft))),
-      padding: EdgeInsets.fromLTRB(14, 10, 14, 14 + bottom),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        const SizedBox(width: 11),
         Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-                color: AppColors.field,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: AppColors.line)),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _chatCtrl,
-              minLines: 1,
-              maxLines: 4,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _sendChat(),
-              style: AppText.body(AppColors.ink).copyWith(fontSize: 14),
-              decoration: InputDecoration(
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                hintText: 'Message the community…',
-                hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 14),
-              ),
-            ),
-          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Flexible(
+                  child: Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.bodyStrong().copyWith(fontSize: 14))),
+              if (custom) ...[
+                const SizedBox(width: 6),
+                const AppTag('New', color: AppColors.primary),
+              ],
+            ]),
+            const SizedBox(height: 2),
+            Text(
+                (preview != null && preview.isNotEmpty)
+                    ? preview
+                    : 'No messages yet',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
+          ]),
         ),
-        const SizedBox(width: 9),
-        GestureDetector(
-          onTap: _sendingChat ? null : _sendChat,
-          child: Container(
-            width: 44,
-            height: 44,
-            alignment: Alignment.center,
-            decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
-            child: const Icon(Icons.arrow_upward_rounded, color: AppColors.primaryInk, size: 20),
-          ),
-        ),
+        const SizedBox(width: 6),
+        const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
       ]),
     );
   }
@@ -1030,5 +950,234 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+}
+
+// ── A single community channel's chat ────────────────────────────────────────
+class CommunityChannelScreen extends StatefulWidget {
+  final String communityId, channelId, channelName;
+  final bool canPost;
+  const CommunityChannelScreen({
+    super.key,
+    required this.communityId,
+    required this.channelId,
+    required this.channelName,
+    required this.canPost,
+  });
+
+  @override
+  State<CommunityChannelScreen> createState() => _CommunityChannelScreenState();
+}
+
+class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
+  List<Map<String, dynamic>> _msgs = [];
+  bool _loading = true, _sending = false;
+  final _ctrl = TextEditingController();
+  final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final m = await CommunityService.channelMessages(widget.channelId);
+    if (!mounted) return;
+    setState(() {
+      _msgs = m;
+      _loading = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  Future<void> _send() async {
+    final body = _ctrl.text.trim();
+    if (body.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    final err = await CommunityService.sendChannelMessage(
+        widget.communityId, widget.channelId, body);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (err != null) {
+      AppToast.show(context, err, kind: ToastKind.error);
+      return;
+    }
+    _ctrl.clear();
+    await _load();
+  }
+
+  static String _time(dynamic iso) {
+    final dt = DateTime.tryParse(iso as String? ?? '')?.toLocal();
+    if (dt == null) return '';
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$h:$m ${dt.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      body: Column(children: [
+        // Header.
+        Container(
+          padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 4),
+          decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(bottom: BorderSide(color: AppColors.lineSoft))),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 16, 12),
+            child: Row(children: [
+              IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded, color: AppColors.ink),
+                  onPressed: () => Navigator.pop(context)),
+              Container(
+                width: 32,
+                height: 32,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: AppColors.field, borderRadius: BorderRadius.circular(9)),
+                child: Text('#',
+                    style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 16)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(widget.channelName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.cardTitle().copyWith(fontSize: 16)),
+                  Text('Community channel',
+                      style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+        // Thread.
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+              : _msgs.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(28),
+                        child: Text('No messages yet. Say hello!',
+                            style: AppText.small(), textAlign: TextAlign.center),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scroll,
+                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+                      itemCount: _msgs.length,
+                      itemBuilder: (_, i) => _bubble(_msgs[i]),
+                    ),
+        ),
+        // Composer.
+        _composer(),
+      ]),
+    );
+  }
+
+  Widget _bubble(Map<String, dynamic> m) {
+    final me = m['fromMe'] == true;
+    final name = (m['senderName'] as String? ?? 'Player').split(' ').first;
+    final body = m['body'] as String? ?? '';
+    final time = _time(m['created_at']);
+    return Align(
+      alignment: me ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+        child: Column(
+            crossAxisAlignment: me ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 2, right: 2, bottom: 3),
+                child: Text(me ? time : '$name · $time',
+                    style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10.5, letterSpacing: 0)),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+                decoration: BoxDecoration(
+                  color: me ? AppColors.primary : AppColors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: me ? null : Border.all(color: AppColors.lineSoft),
+                ),
+                child: Text(body,
+                    style: AppText.body(me ? AppColors.primaryInk : AppColors.ink)
+                        .copyWith(fontSize: 14, height: 1.35)),
+              ),
+            ]),
+      ),
+    );
+  }
+
+  Widget _composer() {
+    final bottom = MediaQuery.of(context).padding.bottom;
+    if (!widget.canPost) {
+      return Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+            color: AppColors.surface,
+            border: Border(top: BorderSide(color: AppColors.lineSoft))),
+        padding: EdgeInsets.fromLTRB(16, 14, 16, 14 + bottom),
+        child: Text('Join the community to post here',
+            textAlign: TextAlign.center, style: AppText.small()),
+      );
+    }
+    return Container(
+      decoration: const BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: AppColors.lineSoft))),
+      padding: EdgeInsets.fromLTRB(14, 10, 14, 14 + bottom),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+                color: AppColors.field,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: AppColors.line)),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _ctrl,
+              minLines: 1,
+              maxLines: 4,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _send(),
+              style: AppText.body(AppColors.ink).copyWith(fontSize: 14),
+              decoration: InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                hintText: 'Message #${widget.channelName}…',
+                hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 14),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 9),
+        GestureDetector(
+          onTap: _sending ? null : _send,
+          child: Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+            child: const Icon(Icons.arrow_upward_rounded, color: AppColors.primaryInk, size: 20),
+          ),
+        ),
+      ]),
+    );
   }
 }

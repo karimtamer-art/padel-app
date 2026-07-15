@@ -254,17 +254,30 @@ class CommunityService {
       _rpc('send_community_message',
           {'p_community_id': communityId, 'p_body': body});
 
-  // ── Community group chat (hub "Chat" tab) ───────────────────────
+  // ── Community channels (hub "Chat" tab) ─────────────────────────
 
-  /// All messages in the community-wide chat, oldest first. Each row:
+  /// The community's channels with a last-message preview. Each row:
+  /// { id, name, post, is_custom, preview, last_at }.
+  static Future<List<Map<String, dynamic>>> channelList(String communityId) async {
+    try {
+      final res = await _db
+          .rpc('community_channel_list', params: {'p_community_id': communityId});
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[CommunityService] channelList: $e');
+      return [];
+    }
+  }
+
+  /// Messages in one channel, oldest first. Each row:
   /// { id, body, created_at, sender_id, fromMe, senderName }.
-  static Future<List<Map<String, dynamic>>> chat(String communityId) async {
+  static Future<List<Map<String, dynamic>>> channelMessages(String channelId) async {
     final uid = _uid;
     try {
       final res = await _db
           .from('community_chat')
           .select('id, body, created_at, sender_id, profiles(name)')
-          .eq('community_id', communityId)
+          .eq('channel_id', channelId)
           .order('created_at')
           .limit(200);
       return (res as List).map((r) {
@@ -279,18 +292,20 @@ class CommunityService {
         };
       }).toList();
     } catch (e) {
-      debugPrint('[CommunityService] chat: $e');
+      debugPrint('[CommunityService] channelMessages: $e');
       return [];
     }
   }
 
-  /// Post to the community chat. Returns null on success, else an error.
-  static Future<String?> sendChat(String communityId, String body) async {
+  /// Post to a channel. Returns null on success, else an error.
+  static Future<String?> sendChannelMessage(
+      String communityId, String channelId, String body) async {
     final uid = _uid;
     if (uid == null) return 'Not signed in.';
     try {
       await _db.from('community_chat').insert({
         'community_id': communityId,
+        'channel_id': channelId,
         'sender_id': uid,
         'body': body,
       });
