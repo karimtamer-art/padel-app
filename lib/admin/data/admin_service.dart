@@ -319,11 +319,11 @@ class AdminService {
     return List<Map<String, dynamic>>.from(res as List);
   }
 
-  /// Admin-only: remove a match (faulty/orphaned) and its players. Returns null
-  /// on success, else an error message.
-  static Future<String?> deleteMatch(String id) async {
+  /// Admin-only: soft-remove a match — marks it 'cancelled' (hidden from players,
+  /// kept in the DB). Returns null on success, else an error message.
+  static Future<String?> removeMatch(String id) async {
     try {
-      final res = await _db.rpc('admin_delete_match', params: {'p_match_id': id});
+      final res = await _db.rpc('admin_cancel_match', params: {'p_match_id': id});
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;

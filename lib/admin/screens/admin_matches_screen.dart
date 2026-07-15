@@ -185,27 +185,30 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
               ]),
             ]),
           ),
-          const SizedBox(width: 6),
-          IconButton(
-            icon: const Icon(Icons.delete_outline_rounded, color: AdminColors.danger),
-            tooltip: 'Delete match',
-            onPressed: () => _delete(m),
-          ),
+          if (status != 'cancelled') ...[
+            const SizedBox(width: 6),
+            IconButton(
+              icon: const Icon(Icons.delete_outline_rounded, color: AdminColors.danger),
+              tooltip: 'Remove match',
+              onPressed: () => _remove(m),
+            ),
+          ],
         ]),
       ),
     );
   }
 
-  Future<void> _delete(Map<String, dynamic> m) async {
+  Future<void> _remove(Map<String, dynamic> m) async {
     final id = m['id'] as String?;
     if (id == null) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AdminColors.surface,
-        title: Text('Delete match?', style: AdminText.h2()),
+        title: Text('Remove match?', style: AdminText.h2()),
         content: Text(
-            'This permanently removes the match and its players. This can’t be undone.',
+            'This hides it from players and marks it cancelled. The record is kept '
+            'in the database — nothing is permanently deleted.',
             style: AdminText.small()),
         actions: [
           TextButton(
@@ -213,19 +216,20 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
               child: Text('Cancel', style: AdminText.strong())),
           TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: Text('Delete',
+              child: Text('Remove',
                   style: AdminText.sans(13.5, FontWeight.w800, AdminColors.danger))),
         ],
       ),
     );
     if (ok != true) return;
-    final err = await AdminService.deleteMatch(id);
+    final err = await AdminService.removeMatch(id);
     if (!mounted) return;
     if (err != null) {
       adminToast(context, err);
       return;
     }
-    setState(() => _matches.removeWhere((x) => x['id'] == id));
+    // Keep it in the list, now shown as cancelled.
+    setState(() => m['status'] = 'cancelled');
   }
 
   Widget _emptyState(String title, String sub) => Padding(

@@ -298,19 +298,21 @@ begin
 end $$;
 grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
 
--- Admin: delete a match (e.g. a faulty/orphaned one) from the console. Clears
--- the FKs that would block it, then removes players + the match.
-create or replace function public.admin_delete_match(p_match_id uuid)
+-- Admin: soft-remove a match (e.g. a faulty/orphaned one) from the console.
+-- Marks it 'cancelled' so it disappears from every player-facing query (which
+-- only surface active statuses) while KEEPING the match, its players, and its
+-- history in the DB — recoverable and still visible to admins. No hard delete.
+drop function if exists public.admin_delete_match(uuid);
+create or replace function public.admin_cancel_match(p_match_id uuid)
 returns text
 language plpgsql security definer set search_path = public as $$
 begin
   if not public._is_admin() then return 'Admins only.'; end if;
-  update public.ranking_history set match_id = null where match_id = p_match_id;
-  delete from public.match_players where match_id = p_match_id;
-  delete from public.matches where id = p_match_id;
+  update public.matches set status = 'cancelled' where id = p_match_id;
+  if not found then return 'Match not found.'; end if;
   return null;
 end $$;
-grant execute on function public.admin_delete_match(uuid) to authenticated;
+grant execute on function public.admin_cancel_match(uuid) to authenticated;
 
 -- Admin match list (creator name + player count), gated + definer so it's
 -- immune to the locked-down matches RLS / embed resolution.
