@@ -80,7 +80,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
           channelName: ch['name'] as String? ?? 'channel',
           kind: ch['kind'] as String? ?? 'community',
           state: ch['state'] as String? ?? 'active',
-          canPost: c.isMember,
+          post: ch['post'] as String? ?? 'all',
+          canPost: ch['can_post'] == true,
         ),
       ),
     );
@@ -997,7 +998,8 @@ class CommunityChannelScreen extends StatefulWidget {
   final String communityId, channelId, channelName;
   final String kind; // community | tournament | match
   final String state; // active | grace | archived
-  final bool canPost;
+  final String post; // all | registered | org
+  final bool canPost; // server-computed for this viewer
   const CommunityChannelScreen({
     super.key,
     required this.communityId,
@@ -1005,6 +1007,7 @@ class CommunityChannelScreen extends StatefulWidget {
     required this.channelName,
     this.kind = 'community',
     this.state = 'active',
+    this.post = 'all',
     required this.canPost,
   });
 
@@ -1205,6 +1208,12 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
     );
   }
 
+  static String _permText(String post) => switch (post) {
+        'registered' => 'Registered players and the organizer can post.',
+        'org' => 'Only the organizer can post here.',
+        _ => 'Any community member can post here.',
+      };
+
   Widget? _eventBanner() {
     if (!widget.isEvent) return null;
     final (Color bg, Color color, IconData icon, String text) = switch (widget.state) {
@@ -1224,7 +1233,7 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
           AppColors.primary.withValues(alpha: 0.10),
           AppColors.gold,
           Icons.confirmation_number_outlined,
-          'Channel opened for this event. Any community member can post here.'
+          'Channel opened for this event. ${_permText(widget.post)}'
         ),
     };
     return Container(
@@ -1243,7 +1252,14 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
 
   Widget _composer() {
     final bottom = MediaQuery.of(context).padding.bottom;
-    if (widget.archived) {
+    if (!widget.canPost) {
+      final reason = widget.archived
+          ? 'Posting is closed'
+          : widget.post == 'org'
+              ? 'Only the organizer can post here'
+              : widget.post == 'registered'
+                  ? 'Only registered players can post here'
+                  : 'Join the community to post here';
       return Container(
         width: double.infinity,
         decoration: const BoxDecoration(
@@ -1251,21 +1267,10 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
             border: Border(top: BorderSide(color: AppColors.lineSoft))),
         padding: EdgeInsets.fromLTRB(16, 14, 16, 14 + bottom),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Icon(Icons.lock_outline_rounded, size: 15, color: AppColors.inkFaint),
+          const Icon(Icons.lock_outline_rounded, size: 14, color: AppColors.inkFaint),
           const SizedBox(width: 8),
-          Text('Posting is closed', style: AppText.small(AppColors.inkFaint)),
+          Text(reason, style: AppText.small(AppColors.inkFaint)),
         ]),
-      );
-    }
-    if (!widget.canPost) {
-      return Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-            color: AppColors.surface,
-            border: Border(top: BorderSide(color: AppColors.lineSoft))),
-        padding: EdgeInsets.fromLTRB(16, 14, 16, 14 + bottom),
-        child: Text('Join the community to post here',
-            textAlign: TextAlign.center, style: AppText.small()),
       );
     }
     return Container(

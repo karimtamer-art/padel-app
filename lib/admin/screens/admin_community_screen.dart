@@ -20,6 +20,8 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
   Community? _c;
   List<InboxItem> _inbox = [];
   List<MemberLite> _members = [];
+  List<Map<String, dynamic>> _channels = [];
+  String _eventPost = 'registered';
   Map<String, dynamic> _stats = {};
   bool _loading = true;
 
@@ -46,15 +48,178 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
       CommunityService.typedInbox(),
       CommunityService.members(c.id),
       CommunityService.organizerStats(),
+      CommunityService.channelList(c.id),
+      CommunityService.channelSettings(),
     ]);
     if (!mounted) return;
+    final settings = results[4] as Map<String, dynamic>;
     setState(() {
       _c = c;
       _inbox = results[0] as List<InboxItem>;
       _members = results[1] as List<MemberLite>;
       _stats = results[2] as Map<String, dynamic>;
+      _channels = results[3] as List<Map<String, dynamic>>;
+      _eventPost = (settings['channel_event_post'] as String?) ?? 'registered';
       _loading = false;
     });
+  }
+
+  // ── Channels management ─────────────────────────────────────────
+  static String _postLabel(String p) => switch (p) {
+        'org' => 'Organizer only',
+        'registered' => 'Players only',
+        _ => 'All members',
+      };
+
+  Future<void> _createChannel() async {
+    final nameC = TextEditingController();
+    String post = 'all';
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
+        return _SheetShell(
+          title: 'New channel',
+          busy: false,
+          cta: 'Create channel',
+          onSave: () => Navigator.pop(ctx, true),
+          children: [
+            TextField(
+              controller: nameC,
+              autofocus: true,
+              decoration: const InputDecoration(
+                  hintText: 'channel-name', prefixText: '# '),
+            ),
+            const SizedBox(height: 14),
+            Text('WHO CAN POST', style: AdminText.kicker()),
+            const SizedBox(height: 8),
+            Row(children: [
+              for (final p in const ['all', 'registered', 'org'])
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setSheet(() => post = p),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: post == p ? AdminColors.primary : AdminColors.surface3,
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Text(_postLabel(p),
+                          textAlign: TextAlign.center,
+                          style: AdminText.sans(11, FontWeight.w700,
+                              post == p ? Colors.white : AdminColors.inkSoft)),
+                    ),
+                  ),
+                ),
+            ]),
+          ],
+        );
+      }),
+    );
+    if (ok != true) return;
+    final err = await CommunityService.createChannel(nameC.text, post);
+    nameC.dispose();
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err);
+      return;
+    }
+    _load();
+  }
+
+  Future<void> _channelActions(Map<String, dynamic> ch) async {
+    final id = ch['id'] as String;
+    final isCustom = ch['is_custom'] == true;
+    final isEvent = (ch['kind'] as String? ?? 'community') != 'community';
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: AdminColors.surface, borderRadius: BorderRadius.circular(18)),
+        child: SafeArea(
+          top: false,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('#${ch['name']}',
+                    style: AdminText.sans(15, FontWeight.w800, AdminColors.ink)),
+              ),
+            ),
+            for (final p in const ['all', 'registered', 'org'])
+              ListTile(
+                leading: Icon(
+                    (ch['post'] as String?) == p
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: AdminColors.primary),
+                title: Text('Post: ${_postLabel(p)}', style: AdminText.strong()),
+                onTap: () => Navigator.pop(ctx, 'post:$p'),
+              ),
+            if (isCustom && !isEvent)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: AdminColors.danger),
+                title: Text('Delete channel', style: AdminText.strong()),
+                onTap: () => Navigator.pop(ctx, 'delete'),
+              ),
+            const SizedBox(height: 8),
+          ]),
+        ),
+      ),
+    );
+    if (action == null) return;
+    String? err;
+    if (action == 'delete') {
+      err = await CommunityService.deleteChannel(id);
+    } else if (action.startsWith('post:')) {
+      err = await CommunityService.setChannelPost(id, action.substring(5));
+    }
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err);
+      return;
+    }
+    _load();
+  }
+
+  Future<void> _setEventPost(String p) async {
+    setState(() => _eventPost = p);
+    final err = await CommunityService.setChannelSettings(p, false);
+    if (!mounted) return;
+    if (err != null) adminToast(context, err);
+  }
+
+  Widget _channelManageRow(Map<String, dynamic> ch) {
+    final name = ch['name'] as String? ?? 'channel';
+    final isEvent = (ch['kind'] as String? ?? 'community') != 'community';
+    final post = ch['post'] as String? ?? 'all';
+    final state = ch['state'] as String? ?? 'active';
+    return AdminCard(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      onTap: () => _channelActions(ch),
+      child: Row(children: [
+        Icon(isEvent ? Icons.emoji_events_outlined : Icons.tag_rounded,
+            size: 18, color: isEvent ? AdminColors.gold : AdminColors.inkSoft),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name,
+                maxLines: 1, overflow: TextOverflow.ellipsis, style: AdminText.strong()),
+            Text(
+                _postLabel(post) +
+                    (isEvent && state != 'active' ? ' · $state' : ''),
+                style: AdminText.small()),
+          ]),
+        ),
+        const Icon(Icons.chevron_right_rounded, size: 20, color: AdminColors.inkFaint),
+      ]),
+    );
   }
 
   @override
@@ -115,6 +280,54 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
             ),
           ]),
         ),
+        const SizedBox(height: 18),
+        Row(children: [
+          Expanded(child: Text('CHANNELS', style: AdminText.kicker())),
+          GestureDetector(
+            onTap: _createChannel,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.add_rounded, size: 16, color: AdminColors.primary),
+              const SizedBox(width: 3),
+              Text('New',
+                  style: AdminText.sans(12.5, FontWeight.w800, AdminColors.primary)),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        AdminCard(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Event channels · who can post', style: AdminText.strong()),
+            Text('Applied to new tournament channels', style: AdminText.small()),
+            const SizedBox(height: 10),
+            Row(children: [
+              for (final p in const ['all', 'registered', 'org']) ...[
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _setEventPost(p),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: _eventPost == p ? AdminColors.primary : AdminColors.surface3,
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Text(_postLabel(p),
+                          textAlign: TextAlign.center,
+                          style: AdminText.sans(11, FontWeight.w700,
+                              _eventPost == p ? Colors.white : AdminColors.inkSoft)),
+                    ),
+                  ),
+                ),
+              ],
+            ]),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        if (_channels.isEmpty)
+          _emptyCard(Icons.tag_rounded, 'No channels yet.')
+        else
+          for (final ch in _channels) ...[_channelManageRow(ch), const SizedBox(height: 8)],
         const SizedBox(height: 18),
         Text('INBOX', style: AdminText.kicker()),
         const SizedBox(height: 8),

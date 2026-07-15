@@ -317,6 +317,38 @@ class CommunityService {
     }
   }
 
+  // ── Organizer channel management ────────────────────────────────
+
+  static Future<String?> createChannel(String name, String post) =>
+      _rpc('create_community_channel', {'p_name': name, 'p_post': post});
+
+  static Future<String?> setChannelPost(String channelId, String post) =>
+      _rpc('set_channel_post', {'p_channel_id': channelId, 'p_post': post});
+
+  static Future<String?> deleteChannel(String channelId) =>
+      _rpc('delete_community_channel', {'p_channel_id': channelId});
+
+  static Future<String?> setChannelSettings(String eventPost, bool casualAuto) =>
+      _rpc('set_channel_settings',
+          {'p_event_post': eventPost, 'p_casual_auto': casualAuto});
+
+  /// The organizer's channel settings { channel_event_post, channel_casual_auto }.
+  static Future<Map<String, dynamic>> channelSettings() async {
+    final uid = _uid;
+    if (uid == null) return {'channel_event_post': 'registered', 'channel_casual_auto': false};
+    try {
+      final row = await _db
+          .from('communities')
+          .select('channel_event_post, channel_casual_auto')
+          .eq('organizer_id', uid)
+          .maybeSingle();
+      return Map<String, dynamic>.from(row ?? const {});
+    } catch (e) {
+      debugPrint('[CommunityService] channelSettings: $e');
+      return {'channel_event_post': 'registered', 'channel_casual_auto': false};
+    }
+  }
+
   // ── Organizer console ───────────────────────────────────────────
 
   /// The signed-in organizer's own community, or null if not created yet.
