@@ -360,13 +360,13 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
           child: DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: const Alignment(-0.4, -1.15),
-                radius: 1.15,
+                center: const Alignment(-1.05, -0.85),
+                radius: 1.7,
                 colors: [
-                  AppColors.gold.withValues(alpha: 0.30),
+                  AppColors.gold.withValues(alpha: 0.36),
                   Colors.transparent,
                 ],
-                stops: const [0.0, 0.6],
+                stops: const [0.0, 0.72],
               ),
             ),
           ),
