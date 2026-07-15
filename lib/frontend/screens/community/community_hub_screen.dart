@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../../backend/services/community_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -273,16 +272,6 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
         ]),
       );
 
-  void _share(Community c) {
-    final handle = c.handle;
-    if (handle == null) {
-      AppToast.show(context, 'No share handle yet');
-      return;
-    }
-    Clipboard.setData(ClipboardData(text: '@$handle'));
-    AppToast.show(context, 'Copied @$handle');
-  }
-
   Widget _glassBtn(IconData icon, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
         child: Container(
@@ -367,11 +356,9 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
             colors: [AppColors.hero, AppColors.hero2]),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Glass close + share.
+        // Back button.
         Row(children: [
-          _glassBtn(Icons.close_rounded, () => Navigator.pop(context)),
-          const Spacer(),
-          _glassBtn(Icons.ios_share_rounded, () => _share(c)),
+          _glassBtn(Icons.arrow_back_rounded, () => Navigator.pop(context)),
         ]),
         const SizedBox(height: 16),
         Row(children: [
