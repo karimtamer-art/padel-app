@@ -20,6 +20,9 @@ class AuthField extends StatefulWidget {
   final bool locked; // non-editable AND visually greyed with a lock icon
   final VoidCallback? onTap;
   final Widget? trailing;
+  final TextInputAction? textInputAction; // e.g. .next to jump to the next field
+  final ValueChanged<String>? onSubmitted;
+  final bool autocorrect; // keyboard suggestions/autocorrect (off for email)
   const AuthField({
     super.key,
     required this.label,
@@ -35,6 +38,9 @@ class AuthField extends StatefulWidget {
     this.locked = false,
     this.onTap,
     this.trailing,
+    this.textInputAction,
+    this.onSubmitted,
+    this.autocorrect = true,
   });
 
   @override
@@ -61,60 +67,92 @@ class _AuthFieldState extends State<AuthField> {
         child: Text(widget.label,
             style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 12.5)),
       ),
-      AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        height: 50,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: locked ? AppColors.field.withValues(alpha: 0.5) : AppColors.field,
-          borderRadius: AppRadius.btnR,
-          border: Border.all(
-              color: focused ? AppColors.primary : AppColors.line, width: 1.5),
-          boxShadow: focused
-              ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.16), blurRadius: 0, spreadRadius: 3)]
-              : null,
-        ),
-        child: Row(children: [
-          if (widget.icon != null) ...[
-            Icon(widget.icon,
-                size: 18,
-                color: locked
-                    ? AppColors.inkFaint
-                    : (focused ? AppColors.primary : AppColors.inkFaint)),
-            const SizedBox(width: 10),
-          ],
-          Expanded(
-            child: TextField(
-              focusNode: _node,
-              controller: widget.controller,
-              onChanged: widget.onChanged,
-              readOnly: widget.readOnly || locked,
-              enableInteractiveSelection: !locked,
-              onTap: widget.onTap,
-              obscureText: widget.obscure && !_show,
-              keyboardType: widget.keyboard,
-              textCapitalization: widget.capitalization,
-              cursorColor: AppColors.primary,
-              style: AppText.bodyStrong(locked ? AppColors.inkFaint : AppColors.ink)
-                  .copyWith(fontSize: 15),
-              decoration: InputDecoration(
-                isCollapsed: true,
-                border: InputBorder.none,
-                hintText: widget.hint,
-                hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 15),
+      // Tapping anywhere in the field (icon, padding, empty space) focuses it —
+      // isCollapsed shrinks the TextField's own hit area to the text line, which
+      // is what made tapping feel finicky. Opaque so the whole 50px is a target.
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: (widget.readOnly || locked) ? widget.onTap : _node.requestFocus,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          height: 50,
+          padding: const EdgeInsets.only(left: 14),
+          decoration: BoxDecoration(
+            color: locked ? AppColors.field.withValues(alpha: 0.5) : AppColors.field,
+            borderRadius: AppRadius.btnR,
+            border: Border.all(
+                color: focused ? AppColors.primary : AppColors.line, width: 1.5),
+            boxShadow: focused
+                ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.16), blurRadius: 0, spreadRadius: 3)]
+                : null,
+          ),
+          child: Row(children: [
+            if (widget.icon != null) ...[
+              Icon(widget.icon,
+                  size: 18,
+                  color: locked
+                      ? AppColors.inkFaint
+                      : (focused ? AppColors.primary : AppColors.inkFaint)),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: TextField(
+                focusNode: _node,
+                controller: widget.controller,
+                onChanged: widget.onChanged,
+                onSubmitted: widget.onSubmitted,
+                textInputAction: widget.textInputAction,
+                // Email should not be autocorrected; password never shows
+                // suggestions. Everything else keeps keyboard suggestions on.
+                autocorrect:
+                    widget.keyboard == TextInputType.emailAddress ? false : widget.autocorrect,
+                enableSuggestions: !widget.obscure &&
+                    widget.keyboard != TextInputType.emailAddress &&
+                    widget.autocorrect,
+                readOnly: widget.readOnly || locked,
+                enableInteractiveSelection: !locked,
+                onTap: widget.onTap,
+                obscureText: widget.obscure && !_show,
+                keyboardType: widget.keyboard,
+                textCapitalization: widget.capitalization,
+                cursorColor: AppColors.primary,
+                style: AppText.bodyStrong(locked ? AppColors.inkFaint : AppColors.ink)
+                    .copyWith(fontSize: 15),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  hintText: widget.hint,
+                  hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 15),
+                ),
               ),
             ),
-          ),
-          if (locked)
-            const Icon(Icons.lock_outline_rounded, size: 17, color: AppColors.inkFaint),
-          if (widget.trailing != null) widget.trailing!,
-          if (widget.obscure)
-            GestureDetector(
-              onTap: () => setState(() => _show = !_show),
-              child: Icon(_show ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                  size: 19, color: AppColors.inkFaint),
-            ),
-        ]),
+            if (locked)
+              const Padding(
+                padding: EdgeInsets.only(right: 14),
+                child: Icon(Icons.lock_outline_rounded, size: 17, color: AppColors.inkFaint),
+              ),
+            if (widget.trailing != null)
+              Padding(padding: const EdgeInsets.only(right: 8), child: widget.trailing!),
+            if (widget.obscure)
+              // Big (44×50) tap target that toggles WITHOUT unfocusing, so it
+              // works while the keyboard is open and near-misses don't hit the
+              // global tap-to-dismiss and close the keyboard instead.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _show = !_show),
+                child: Container(
+                  width: 44,
+                  height: 50,
+                  alignment: Alignment.center,
+                  color: Colors.transparent,
+                  child: Icon(_show ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                      size: 20, color: AppColors.inkFaint),
+                ),
+              )
+            else
+              const SizedBox(width: 14),
+          ]),
+        ),
       ),
       if (widget.helper != null)
         Padding(
@@ -152,45 +190,49 @@ class _PhoneFieldState extends State<PhoneField> {
         child: Text('Phone Number',
             style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 12.5)),
       ),
-      AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        height: 50,
-        decoration: BoxDecoration(
-          color: AppColors.field,
-          borderRadius: AppRadius.btnR,
-          border: Border.all(color: focused ? AppColors.primary : AppColors.line, width: 1.5),
-        ),
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(14, 0, 12, 0),
-            margin: const EdgeInsets.symmetric(vertical: 13),
-            decoration: const BoxDecoration(
-                border: Border(right: BorderSide(color: AppColors.line))),
-            child: Row(children: [
-              const Text('🇪🇬', style: TextStyle(fontSize: 17)),
-              const SizedBox(width: 6),
-              Text('+20', style: AppText.bodyStrong().copyWith(fontSize: 15)),
-            ]),
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _node.requestFocus,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          height: 50,
+          decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: AppRadius.btnR,
+            border: Border.all(color: focused ? AppColors.primary : AppColors.line, width: 1.5),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: TextField(
-              focusNode: _node,
-              controller: widget.controller,
-              keyboardType: TextInputType.phone,
-              onChanged: widget.onChanged,
-              cursorColor: AppColors.primary,
-              style: AppText.bodyStrong().copyWith(fontSize: 15, letterSpacing: 0.3),
-              decoration: InputDecoration(
-                isCollapsed: true,
-                border: InputBorder.none,
-                hintText: '100 123 4567',
-                hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 15),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 0, 12, 0),
+              margin: const EdgeInsets.symmetric(vertical: 13),
+              decoration: const BoxDecoration(
+                  border: Border(right: BorderSide(color: AppColors.line))),
+              child: Row(children: [
+                const Text('🇪🇬', style: TextStyle(fontSize: 17)),
+                const SizedBox(width: 6),
+                Text('+20', style: AppText.bodyStrong().copyWith(fontSize: 15)),
+              ]),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                focusNode: _node,
+                controller: widget.controller,
+                keyboardType: TextInputType.phone,
+                onChanged: widget.onChanged,
+                cursorColor: AppColors.primary,
+                style: AppText.bodyStrong().copyWith(fontSize: 15, letterSpacing: 0.3),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  hintText: '100 123 4567',
+                  hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 15),
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 14),
-        ]),
+            const SizedBox(width: 14),
+          ]),
+        ),
       ),
     ]);
   }
@@ -223,39 +265,43 @@ class _BioFieldState extends State<BioField> {
         child: Text('Short Bio (optional)',
             style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 12.5)),
       ),
-      AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-        decoration: BoxDecoration(
-          color: AppColors.field,
-          borderRadius: AppRadius.btnR,
-          border: Border.all(color: focused ? AppColors.primary : AppColors.line, width: 1.5),
-        ),
-        child: Column(children: [
-          TextField(
-            focusNode: _node,
-            maxLines: 3,
-            maxLength: widget.max,
-            cursorColor: AppColors.primary,
-            onChanged: (v) {
-              setState(() => _len = v.length);
-              widget.onChanged?.call(v);
-            },
-            style: AppText.body().copyWith(fontSize: 15, height: 1.5),
-            decoration: InputDecoration(
-              isCollapsed: true,
-              border: InputBorder.none,
-              counterText: '',
-              hintText: 'Competitive padel player looking for evening matches.',
-              hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 15, height: 1.5),
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _node.requestFocus,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+          decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: AppRadius.btnR,
+            border: Border.all(color: focused ? AppColors.primary : AppColors.line, width: 1.5),
+          ),
+          child: Column(children: [
+            TextField(
+              focusNode: _node,
+              maxLines: 3,
+              maxLength: widget.max,
+              cursorColor: AppColors.primary,
+              onChanged: (v) {
+                setState(() => _len = v.length);
+                widget.onChanged?.call(v);
+              },
+              style: AppText.body().copyWith(fontSize: 15, height: 1.5),
+              decoration: InputDecoration(
+                isCollapsed: true,
+                border: InputBorder.none,
+                counterText: '',
+                hintText: 'Competitive padel player looking for evening matches.',
+                hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 15, height: 1.5),
+              ),
             ),
-          ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text('$_len/${widget.max}',
-                style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 11, letterSpacing: 0)),
-          ),
-        ]),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text('$_len/${widget.max}',
+                  style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 11, letterSpacing: 0)),
+            ),
+          ]),
+        ),
       ),
     ]);
   }

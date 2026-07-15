@@ -506,19 +506,23 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
       );
 
   Widget _input(TextEditingController c, String hint, {TextInputType? keyboard}) => Container(
-        height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 13),
         decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: AppRadius.cardR,
             border: Border.all(color: AppColors.line, width: 1.5)),
-        alignment: Alignment.centerLeft,
+        // contentPadding fills the box so the whole field is a tap target
+        // (InputDecoration.collapsed shrank it to the text line).
         child: TextField(
           controller: c,
           keyboardType: keyboard,
+          textInputAction: TextInputAction.next,
+          onEditingComplete: () => FocusScope.of(context).nextFocus(),
           onChanged: (_) => setState(() {}),
           style: AppText.bodyStrong().copyWith(fontSize: 14),
-          decoration: InputDecoration.collapsed(
+          decoration: InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 15),
               hintText: hint,
               hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 14)),
         ),

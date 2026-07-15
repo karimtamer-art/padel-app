@@ -361,7 +361,11 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
     return Container(
       height: MediaQuery.of(context).size.height * 0.92,
       decoration: _sheetDeco,
-      child: Column(children: [
+      // Reserve the keyboard height so the partner-search field and the pinned
+      // Continue/Create button stay above it.
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Column(children: [
         _grip(),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 18),
@@ -396,7 +400,8 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
             ),
           ]),
         ),
-      ]),
+        ]),
+      ),
     );
   }
 

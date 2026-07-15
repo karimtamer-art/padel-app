@@ -253,8 +253,10 @@ class _StoreScreenState extends State<StoreScreen> {
                 textInputAction: TextInputAction.search,
                 style: AppText.body().copyWith(fontSize: 14),
                 decoration: InputDecoration(
-                  isCollapsed: true,
+                  isDense: true,
                   border: InputBorder.none,
+                  // Fill the bar height so the whole thing is tappable.
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
                   hintText: 'Search equipment, brands…',
                   hintStyle: AppText.body(AppColors.inkFaint),
                 ),
@@ -889,7 +891,11 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         boxShadow: kPopShadow,
       ),
-      child: Column(children: [
+      // Reserve the keyboard's height so the pinned Continue button and the
+      // fields stay above it (a fixed-height sheet doesn't do this on its own).
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Column(children: [
         Container(
           width: 40,
           height: 4,
@@ -930,7 +936,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
             onPressed: (_canNext && !_busy) ? _advance : null,
           ),
         ),
-      ]),
+        ]),
+      ),
     );
   }
 
@@ -1093,6 +1100,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
               TextField(
                   controller: _nameC,
                   style: AppText.body(),
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   decoration: _inputDeco('e.g. Adipower Ctrl 3.2'),
                   onChanged: (_) => setState(() {}))),
           _field(
@@ -1100,6 +1109,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
               TextField(
                   controller: _brandC,
                   style: AppText.body(),
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   decoration: _inputDeco('e.g. Adidas'),
                   onChanged: (_) => setState(() {}))),
           _field(

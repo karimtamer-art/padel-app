@@ -83,6 +83,8 @@ class _SignInScreenState extends State<SignInScreen> {
               hint: 'you@email.com',
               keyboard: TextInputType.emailAddress,
               controller: _email,
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => FocusScope.of(context).nextFocus(),
             ),
             const SizedBox(height: 16),
             AuthField(
@@ -91,6 +93,8 @@ class _SignInScreenState extends State<SignInScreen> {
               hint: '••••••••',
               obscure: true,
               controller: _password,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _loading ? null : _submit(),
             ),
             const SizedBox(height: 9),
             Align(

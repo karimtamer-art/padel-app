@@ -804,7 +804,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _upcomingMatches(BuildContext context) {
     if (_loading) {
       return SizedBox(
-        height: 226,
+        height: 224,
         child: ListView(
           scrollDirection: Axis.horizontal,
           padding: AppSpacing.screenH,
@@ -861,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     return SizedBox(
-      height: 226,
+      height: 224,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: AppSpacing.screenH,
@@ -919,7 +919,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     return SizedBox(
-      height: 176,
+      height: 224,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: AppSpacing.screenH,
@@ -1059,14 +1059,14 @@ class _UpcomingMatchCard extends StatelessWidget {
             Text(_timeLabel(match['scheduled_at'] as String?),
                 style: AppText.small().copyWith(fontSize: 12.5)),
           ]),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Row(children: [
             for (int i = 0; i < 4; i++) _avatarDot(i < filled),
             const Spacer(),
             Text('$players/4',
                 style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
           ]),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           AppButton('Join Match', full: true, height: 44, onPressed: onOpen),
         ]),
       ),
@@ -1150,7 +1150,7 @@ class _TournamentTile extends StatelessWidget {
     };
 
     return Container(
-      width: 250,
+      width: 262,
       margin: const EdgeInsets.only(right: 12),
       child: AppCard(
         onTap: onTap,
@@ -1194,7 +1194,7 @@ class _TournamentTile extends StatelessWidget {
           ]),
           const SizedBox(height: 12),
           AppButton(canRegister ? 'Register' : 'View',
-              full: true, height: 38,
+              full: true, height: 44,
               variant: canRegister ? AppBtnVariant.solid : AppBtnVariant.outline,
               onPressed: onTap),
         ]),
