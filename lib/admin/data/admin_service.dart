@@ -314,13 +314,26 @@ class AdminService {
   // ── Matches ───────────────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> fetchMatches(
-      {int limit = 50}) async {
+      {int limit = 100}) async {
     final res = await _db
         .from('matches')
-        .select('*, profiles!matches_created_by_fkey(name)')
+        .select('*, profiles!matches_created_by_fkey(name), match_players(player_id)')
         .order('scheduled_at', ascending: false)
         .limit(limit);
     return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  /// Admin-only: remove a match (faulty/orphaned) and its players. Returns null
+  /// on success, else an error message.
+  static Future<String?> deleteMatch(String id) async {
+    try {
+      final res = await _db.rpc('admin_delete_match', params: {'p_match_id': id});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   // ── Tournaments ───────────────────────────────────────────────

@@ -84,6 +84,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
 
     final open = _matches.where((m) => m['status'] == 'open').length;
     final completed = _matches.where((m) => m['status'] == 'completed').length;
+    final faulty = _matches.where(_isFaulty).length;
 
     return RefreshIndicator(
       color: AdminColors.primary,
@@ -95,7 +96,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
             StatCard(icon: Icons.sports_tennis_rounded, tone: AdminColors.primary, label: 'Total matches', value: '${_matches.length}'),
             StatCard(icon: Icons.lock_open_outlined, tone: AdminColors.success, label: 'Open', value: '$open'),
             StatCard(icon: Icons.check_circle_outline_rounded, tone: AdminColors.inkSoft, label: 'Completed', value: '$completed'),
-            const StatCard(icon: Icons.people_outline_rounded, tone: AdminColors.info, label: 'Max players', value: '4'),
+            StatCard(icon: Icons.report_gmailerrorred_outlined, tone: AdminColors.danger, label: 'Faulty', value: '$faulty'),
           ]),
           const SizedBox(height: 16),
           AdminSection('Match history', sub: '${_matches.length} matches'),
@@ -108,12 +109,16 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
     );
   }
 
+  static bool _isFaulty(Map<String, dynamic> m) =>
+      ((m['match_players'] as List?)?.length ?? 0) == 0;
+
   Widget _card(Map<String, dynamic> m) {
     final status = m['status'] as String?;
     final format = m['match_type'] as String? ?? 'casual';
     final scheduled = _fmtDate(m['scheduled_at'] as String?);
-    final duration = (m['duration_minutes'] as num?)?.toInt() ?? 90;
     final creator = (m['profiles'] as Map?)?['name'] as String?;
+    final players = (m['match_players'] as List?)?.length ?? 0;
+    final faulty = players == 0;
     final statusColor = _statusColor(status);
 
     return Padding(
@@ -125,10 +130,11 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
             width: 44, height: 44,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: AdminColors.wash(statusColor, 0.12),
+              color: AdminColors.wash(faulty ? AdminColors.danger : statusColor, 0.12),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(Icons.sports_tennis_rounded, size: 20, color: statusColor),
+            child: Icon(faulty ? Icons.report_gmailerrorred_outlined : Icons.sports_tennis_rounded,
+                size: 20, color: faulty ? AdminColors.danger : statusColor),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -142,6 +148,17 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (faulty)
+                  Container(
+                    margin: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AdminColors.wash(AdminColors.danger, 0.14),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text('Faulty · no players',
+                        style: AdminText.sans(10.5, FontWeight.w800, AdminColors.danger)),
+                  ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
@@ -156,17 +173,59 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
               Text(scheduled, style: AdminText.small()),
               const SizedBox(height: 2),
               Row(children: [
-                Text('$duration min', style: AdminText.mono(10.5, FontWeight.w500, AdminColors.inkFaint)),
+                Text('$players/4 players',
+                    style: AdminText.mono(10.5, FontWeight.w500, AdminColors.inkFaint)),
                 if (creator != null) ...[
                   Text('  ·  ', style: AdminText.small()),
-                  Text(creator, style: AdminText.small()),
+                  Flexible(
+                    child: Text(creator,
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: AdminText.small()),
+                  ),
                 ],
               ]),
             ]),
           ),
+          const SizedBox(width: 6),
+          IconButton(
+            icon: const Icon(Icons.delete_outline_rounded, color: AdminColors.danger),
+            tooltip: 'Delete match',
+            onPressed: () => _delete(m),
+          ),
         ]),
       ),
     );
+  }
+
+  Future<void> _delete(Map<String, dynamic> m) async {
+    final id = m['id'] as String?;
+    if (id == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AdminColors.surface,
+        title: Text('Delete match?', style: AdminText.h2()),
+        content: Text(
+            'This permanently removes the match and its players. This can’t be undone.',
+            style: AdminText.small()),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Cancel', style: AdminText.strong())),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Delete',
+                  style: AdminText.sans(13.5, FontWeight.w800, AdminColors.danger))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final err = await AdminService.deleteMatch(id);
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err);
+      return;
+    }
+    setState(() => _matches.removeWhere((x) => x['id'] == id));
   }
 
   Widget _emptyState(String title, String sub) => Padding(

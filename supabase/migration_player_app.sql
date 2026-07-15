@@ -297,6 +297,20 @@ begin
   return v_id;
 end $$;
 grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
+
+-- Admin: delete a match (e.g. a faulty/orphaned one) from the console. Clears
+-- the FKs that would block it, then removes players + the match.
+create or replace function public.admin_delete_match(p_match_id uuid)
+returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public._is_admin() then return 'Admins only.'; end if;
+  update public.ranking_history set match_id = null where match_id = p_match_id;
+  delete from public.match_players where match_id = p_match_id;
+  delete from public.matches where id = p_match_id;
+  return null;
+end $$;
+grant execute on function public.admin_delete_match(uuid) to authenticated;
 -- submit_match_result / confirm_match_result grants moved to the v2 block (their
 -- definitions live there now, so the grants must follow them).
 
