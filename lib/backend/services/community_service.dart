@@ -254,6 +254,54 @@ class CommunityService {
       _rpc('send_community_message',
           {'p_community_id': communityId, 'p_body': body});
 
+  // ── Community group chat (hub "Chat" tab) ───────────────────────
+
+  /// All messages in the community-wide chat, oldest first. Each row:
+  /// { id, body, created_at, sender_id, fromMe, senderName }.
+  static Future<List<Map<String, dynamic>>> chat(String communityId) async {
+    final uid = _uid;
+    try {
+      final res = await _db
+          .from('community_chat')
+          .select('id, body, created_at, sender_id, profiles(name)')
+          .eq('community_id', communityId)
+          .order('created_at')
+          .limit(200);
+      return (res as List).map((r) {
+        final m = Map<String, dynamic>.from(r as Map);
+        return {
+          'id': m['id'],
+          'body': m['body'],
+          'created_at': m['created_at'],
+          'sender_id': m['sender_id'],
+          'fromMe': m['sender_id'] == uid,
+          'senderName': (m['profiles'] as Map?)?['name'] as String? ?? 'Player',
+        };
+      }).toList();
+    } catch (e) {
+      debugPrint('[CommunityService] chat: $e');
+      return [];
+    }
+  }
+
+  /// Post to the community chat. Returns null on success, else an error.
+  static Future<String?> sendChat(String communityId, String body) async {
+    final uid = _uid;
+    if (uid == null) return 'Not signed in.';
+    try {
+      await _db.from('community_chat').insert({
+        'community_id': communityId,
+        'sender_id': uid,
+        'body': body,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   // ── Organizer console ───────────────────────────────────────────
 
   /// The signed-in organizer's own community, or null if not created yet.

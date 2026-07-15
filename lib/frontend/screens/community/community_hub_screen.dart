@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../backend/services/community_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -23,13 +24,26 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   List<CommunityEvent> _events = [];
   List<Announcement> _feed = [];
   List<MemberLite> _members = [];
-  bool _loading = true, _busy = false;
+  List<Map<String, dynamic>> _chat = [];
+  final _chatCtrl = TextEditingController();
+  final _chatScroll = ScrollController();
+  bool _loading = true, _busy = false, _sendingChat = false;
   int _tab = 0;
+
+  // Tab order: Events(0) · Chat(1) · Feed(2) · Members(3).
+  static const _chatTabIndex = 1;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _chatCtrl.dispose();
+    _chatScroll.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -43,6 +57,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       CommunityService.events(c.organizerId),
       CommunityService.feed(c.id),
       CommunityService.members(c.id),
+      CommunityService.chat(c.id),
     ]);
     if (!mounted) return;
     setState(() {
@@ -50,7 +65,36 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       _events = results[0] as List<CommunityEvent>;
       _feed = results[1] as List<Announcement>;
       _members = results[2] as List<MemberLite>;
+      _chat = results[3] as List<Map<String, dynamic>>;
       _loading = false;
+    });
+  }
+
+  Future<void> _sendChat() async {
+    final c = _c;
+    final body = _chatCtrl.text.trim();
+    if (c == null || body.isEmpty || _sendingChat) return;
+    if (!c.isMember) {
+      AppToast.show(context, 'Join the community to chat', kind: ToastKind.info);
+      return;
+    }
+    setState(() => _sendingChat = true);
+    final err = await CommunityService.sendChat(c.id, body);
+    if (!mounted) return;
+    setState(() => _sendingChat = false);
+    if (err != null) {
+      AppToast.show(context, err, kind: ToastKind.error);
+      return;
+    }
+    _chatCtrl.clear();
+    final chat = await CommunityService.chat(c.id);
+    if (!mounted) return;
+    setState(() => _chat = chat);
+    // Jump to the newest message.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
+      }
     });
   }
 
@@ -205,29 +249,27 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.bg,
-      body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-            : _c == null
-                ? _notFound()
-                : Column(children: [
-                    _topBar(),
-                    Expanded(
-                      child: RefreshIndicator(
-                        color: AppColors.primary,
-                        onRefresh: _load,
-                        child: ListView(
-                          padding: const EdgeInsets.only(bottom: 24),
-                          children: [
-                            _hero(_c!),
-                            _tabs(),
-                            _tabBody(),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ]),
-      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          : _c == null
+              ? SafeArea(child: _notFound())
+              : Column(children: [
+                  // Full-bleed green header (extends under the status bar).
+                  _hero(_c!),
+                  _tabs(),
+                  Expanded(
+                    child: _tab == _chatTabIndex
+                        ? _chatView()
+                        : RefreshIndicator(
+                            color: AppColors.primary,
+                            onRefresh: _load,
+                            child: ListView(
+                              padding: const EdgeInsets.only(bottom: 24),
+                              children: [_tabBody()],
+                            ),
+                          ),
+                  ),
+                ]),
     );
   }
 
@@ -242,37 +284,116 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
         ]),
       );
 
-  Widget _topBar() => Padding(
-        padding: const EdgeInsets.fromLTRB(6, 4, 14, 4),
-        child: Row(children: [
-          IconButton(
-              icon: const Icon(Icons.arrow_back_rounded, color: AppColors.ink),
-              onPressed: () => Navigator.pop(context)),
-          Expanded(child: Text('Community', style: AppText.barTitle())),
-        ]),
+  void _share(Community c) {
+    final handle = c.handle;
+    if (handle == null) {
+      AppToast.show(context, 'No share handle yet');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: '@$handle'));
+    AppToast.show(context, 'Copied @$handle');
+  }
+
+  Widget _glassBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.black.withValues(alpha: 0.22)),
+          child: Icon(icon, size: 19, color: AppColors.heroInk),
+        ),
+      );
+
+  Widget _memberStack() {
+    final show = _members.take(5).toList();
+    if (show.isEmpty) return const SizedBox.shrink();
+    const d = 30.0, step = 20.0;
+    return SizedBox(
+      width: d + (show.length - 1) * step,
+      height: d,
+      child: Stack(children: [
+        for (int i = 0; i < show.length; i++)
+          Positioned(
+            left: i * step,
+            child: Container(
+              width: d,
+              height: d,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.field,
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.hero, width: 2),
+              ),
+              child: Text(show[i].initials,
+                  style: AppText.small(AppColors.inkSoft)
+                      .copyWith(fontSize: 10, fontWeight: FontWeight.w800)),
+            ),
+          ),
+      ]),
+    );
+  }
+
+  Widget _heroButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onTap,
+    required bool cream,
+  }) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          height: 50,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: cream ? AppColors.surface : Colors.transparent,
+            borderRadius: AppRadius.btnR,
+            border: cream ? null : Border.all(color: AppColors.primary, width: 1.5),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 18, color: cream ? AppColors.ink : AppColors.primary),
+            const SizedBox(width: 8),
+            Text(label,
+                style: AppText.bodyStrong(cream ? AppColors.ink : AppColors.primary)
+                    .copyWith(fontSize: 14.5)),
+          ]),
+        ),
       );
 
   Widget _hero(Community c) {
+    final top = MediaQuery.of(context).padding.top;
+    final loc = [
+      if (c.city != null && c.city!.isNotEmpty) c.city!,
+      if (c.handle != null) '@${c.handle}',
+    ].join(' · ');
     return Container(
-      margin: AppSpacing.screenH,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: AppRadius.cardR,
-        gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(18, top + 10, 18, 20),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
             colors: [AppColors.hero, AppColors.hero2]),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Glass close + share.
+        Row(children: [
+          _glassBtn(Icons.close_rounded, () => Navigator.pop(context)),
+          const Spacer(),
+          _glassBtn(Icons.ios_share_rounded, () => _share(c)),
+        ]),
+        const SizedBox(height: 16),
         Row(children: [
           Container(
-            width: 52,
-            height: 52,
+            width: 56,
+            height: 56,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-                color: AppColors.gold.withValues(alpha: 0.22),
-                borderRadius: BorderRadius.circular(14)),
-            child: const Icon(Icons.groups_2_rounded, size: 26, color: AppColors.gold),
+                color: AppColors.gold,
+                borderRadius: BorderRadius.circular(15)),
+            child: const Icon(Icons.groups_2_rounded, size: 28, color: Colors.white),
           ),
           const SizedBox(width: 13),
           Expanded(
@@ -280,56 +401,57 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
               Row(children: [
                 Flexible(
                     child: Text(c.name,
-                        style: AppText.cardTitle(AppColors.heroInk),
+                        style: AppText.cardTitle(AppColors.heroInk).copyWith(fontSize: 21),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis)),
-                // Auto-verified for now.
-                const SizedBox(width: 5),
-                const Icon(Icons.verified_rounded, size: 15, color: AppColors.gold),
+                const SizedBox(width: 6),
+                const Icon(Icons.verified_rounded, size: 17, color: AppColors.gold),
               ]),
-              const SizedBox(height: 2),
-              Text(
-                  [
-                    if (c.handle != null) '@${c.handle}',
-                    if (c.city != null) c.city!,
-                    '${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
-                  ].join(' · '),
-                  style: AppText.small(AppColors.heroFaint)),
+              if (loc.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  const Icon(Icons.location_on_outlined, size: 13, color: AppColors.heroFaint),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(loc,
+                        style: AppText.small(AppColors.heroFaint),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                ]),
+              ],
             ]),
           ),
         ]),
-        if (c.about != null) ...[
-          const SizedBox(height: 12),
-          Text(c.about!, style: AppText.body(AppColors.heroFaint)),
-        ],
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
+        Row(children: [
+          _memberStack(),
+          if (_members.isNotEmpty) const SizedBox(width: 11),
+          Text('${c.memberCount} member${c.memberCount == 1 ? '' : 's'}',
+              style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 13.5)),
+        ]),
+        const SizedBox(height: 16),
         Row(children: [
           Expanded(
-            child: AppButton(
-              c.isMember
+            child: _heroButton(
+              label: c.isMember
                   ? 'Joined'
                   : (c.approvalRequired ? 'Request to join' : 'Join community'),
               icon: c.isMember ? Icons.check_rounded : Icons.add_rounded,
-              variant: c.isMember ? AppBtnVariant.ghost : AppBtnVariant.solid,
-              onPressed: _busy ? null : _toggleJoin,
+              cream: true,
+              onTap: _busy ? null : _toggleJoin,
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: AppButton('Message',
-                icon: Icons.chat_bubble_outline_rounded,
-                variant: AppBtnVariant.accent,
-                onPressed: _message),
+            child: _heroButton(
+              label: 'Message',
+              icon: Icons.chat_bubble_outline_rounded,
+              cream: false,
+              onTap: _message,
+            ),
           ),
         ]),
-        if (c.isMember) ...[
-          const SizedBox(height: 10),
-          AppButton('Request a match',
-              icon: Icons.sports_tennis_rounded,
-              full: true,
-              variant: AppBtnVariant.outline,
-              onPressed: _requestMatch),
-        ],
       ]),
     );
   }
@@ -339,18 +461,21 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       final on = _tab == i;
       return Expanded(
         child: GestureDetector(
-          onTap: () => setState(() => _tab = i),
+          onTap: () {
+            setState(() => _tab = i);
+            if (i == _chatTabIndex) _refreshChat();
+          },
           child: Container(
             margin: const EdgeInsets.all(3),
             padding: const EdgeInsets.symmetric(vertical: 8),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-                color: on ? AppColors.surface : Colors.transparent,
+                color: on ? AppColors.primary : Colors.transparent,
                 borderRadius: BorderRadius.circular(9),
                 boxShadow: on ? kCardShadow : null),
             child: Text(label,
                 style: on
-                    ? AppText.bodyStrong(AppColors.ink)
+                    ? AppText.bodyStrong(AppColors.primaryInk)
                     : AppText.body(AppColors.inkSoft)),
           ),
         ),
@@ -362,18 +487,23 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
           color: AppColors.field, borderRadius: BorderRadius.circular(12)),
-      child: Row(children: [seg(0, 'Events'), seg(1, 'Feed'), seg(2, 'Members')]),
+      child: Row(children: [
+        seg(0, 'Events'),
+        seg(1, 'Chat'),
+        seg(2, 'Feed'),
+        seg(3, 'Members'),
+      ]),
     );
   }
 
   Widget _tabBody() {
     switch (_tab) {
-      case 1:
-        return _feedTab();
       case 2:
+        return _feedTab();
+      case 3:
         return _membersTab();
       default:
-        return _eventsTab();
+        return _eventsTab(); // Chat (1) is handled separately in build().
     }
   }
 
@@ -392,11 +522,21 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       ));
 
   Widget _eventsTab() {
-    if (_events.isEmpty) {
-      return _empty(Icons.emoji_events_outlined, 'No events yet. Check back soon.');
-    }
-    return Column(
-      children: _events
+    final c = _c!;
+    return Column(children: [
+      if (c.isMember)
+        _pad(Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: AppButton('Request a match',
+              icon: Icons.sports_tennis_rounded,
+              full: true,
+              variant: AppBtnVariant.outline,
+              onPressed: _requestMatch),
+        )),
+      if (_events.isEmpty)
+        _empty(Icons.emoji_events_outlined, 'No events yet. Check back soon.')
+      else
+        ..._events
           .map((e) => _pad(Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: AppCard(
@@ -432,9 +572,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
                         color: e.status == 'open' ? AppColors.success : AppColors.inkSoft),
                   ]),
                 ),
-              )))
-          .toList(),
-    );
+              ))),
+    ]);
   }
 
   Widget _feedTab() {
@@ -546,6 +685,141 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
               .toList(),
         )),
     ]);
+  }
+
+  // ── Chat tab ────────────────────────────────────────────────────
+  Future<void> _refreshChat() async {
+    final c = _c;
+    if (c == null) return;
+    final chat = await CommunityService.chat(c.id);
+    if (!mounted) return;
+    setState(() => _chat = chat);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
+      }
+    });
+  }
+
+  Widget _chatView() {
+    final c = _c!;
+    return Column(children: [
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 6, AppSpacing.screen, 8),
+        child: Text(
+            'Talk to the community. Events get their own channel automatically — it closes when the event ends.',
+            style: AppText.small(AppColors.inkSoft).copyWith(height: 1.4)),
+      ),
+      Expanded(
+        child: _chat.isEmpty
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.forum_outlined, size: 38, color: AppColors.inkFaint),
+                    const SizedBox(height: 10),
+                    Text('No messages yet. Say hello!',
+                        style: AppText.small(), textAlign: TextAlign.center),
+                  ]),
+                ),
+              )
+            : ListView.builder(
+                controller: _chatScroll,
+                padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 6, AppSpacing.screen, 12),
+                itemCount: _chat.length,
+                itemBuilder: (_, i) => _chatBubble(_chat[i]),
+              ),
+      ),
+      _chatComposer(c),
+    ]);
+  }
+
+  Widget _chatBubble(Map<String, dynamic> m) {
+    final fromMe = m['fromMe'] == true;
+    final name = (m['senderName'] as String? ?? 'Player').split(' ').first;
+    final body = m['body'] as String? ?? '';
+    return Align(
+      alignment: fromMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+        decoration: BoxDecoration(
+          color: fromMe ? AppColors.primary : AppColors.field,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (!fromMe) ...[
+            Text(name,
+                style: AppText.small(AppColors.inkSoft)
+                    .copyWith(fontSize: 11, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+          ],
+          Text(body,
+              style: AppText.body(fromMe ? AppColors.primaryInk : AppColors.ink)
+                  .copyWith(fontSize: 14, height: 1.35)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _chatComposer(Community c) {
+    final bottom = MediaQuery.of(context).padding.bottom;
+    if (!c.isMember) {
+      return Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+            color: AppColors.surface,
+            border: Border(top: BorderSide(color: AppColors.lineSoft))),
+        padding: EdgeInsets.fromLTRB(16, 14, 16, 14 + bottom),
+        child: Text('Join the community to chat',
+            textAlign: TextAlign.center, style: AppText.small()),
+      );
+    }
+    return Container(
+      decoration: const BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: AppColors.lineSoft))),
+      padding: EdgeInsets.fromLTRB(14, 10, 14, 14 + bottom),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+                color: AppColors.field,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: AppColors.line)),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _chatCtrl,
+              minLines: 1,
+              maxLines: 4,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _sendChat(),
+              style: AppText.body(AppColors.ink).copyWith(fontSize: 14),
+              decoration: InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                hintText: 'Message the community…',
+                hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 14),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 9),
+        GestureDetector(
+          onTap: _sendingChat ? null : _sendChat,
+          child: Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+            child: const Icon(Icons.arrow_upward_rounded, color: AppColors.primaryInk, size: 20),
+          ),
+        ),
+      ]),
+    );
   }
 
   // helpers
