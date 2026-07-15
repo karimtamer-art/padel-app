@@ -194,6 +194,10 @@ class PlayerProfile {
   final List<int> eloHistory;
   final List<RecentMatch> recent;
 
+  /// Whether the one-time "placement complete" reveal has already been shown.
+  /// Only meaningful once [ranking] is placed. Display-only.
+  final bool placementRevealed;
+
   const PlayerProfile({
     required this.isNew,
     required this.ranking,
@@ -210,6 +214,7 @@ class PlayerProfile {
     this.progress = 0,
     this.eloHistory = const [],
     this.recent = const [],
+    this.placementRevealed = false,
   });
 
   bool get hasMatches => played > 0;

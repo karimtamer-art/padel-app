@@ -9,20 +9,29 @@ import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 
 /// 3-step Create-a-Match, wired to Supabase:
 ///   Type → Schedule (real dates + courts from DB) → Team (partner search).
-/// On success, pops with the new match id so the caller can open the lobby.
+/// After the record is written it runs an in-sheet saving → success confirmation
+/// (with a match summary), then pops with the new match id ONLY when the user
+/// taps "View match" (null otherwise — the caller always refreshes Home).
 class CreateMatchSheet extends StatefulWidget {
-  const CreateMatchSheet({super.key});
+  /// The signed-in player's display name + initials — used for the success
+  /// summary card's "you" avatar. Optional; falls back to a neutral badge.
+  final String myName;
+  final String myInitials;
+  const CreateMatchSheet({super.key, this.myName = '', this.myInitials = 'P'});
   @override
   State<CreateMatchSheet> createState() => _CreateMatchSheetState();
 }
 
+/// form = the 3-step wizard · creating = saving spinner · done = confirmation.
+enum _CreatePhase { form, creating, done }
+
 class _CreateMatchSheetState extends State<CreateMatchSheet> {
+  _CreatePhase _phase = _CreatePhase.form;
+  String? _createdId; // set once the match is written; "View match" pops it
   int _step = 0;
   int _type = 0; // 0 competitive 1 casual
   int _date = 0;
   late TimeOfDay _tod; // scroll-picked time
-  bool _open = true;
-  int _minElo = 0;
   bool _busy = false;
 
   // live data
@@ -36,7 +45,6 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
   final _search = TextEditingController();
 
   late final List<DateTime> _days;
-  static const _minEloValues = [0, 1000, 1500, 1800];
 
   @override
   void initState() {
@@ -107,37 +115,254 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
       setState(() => _step++);
       return;
     }
-    setState(() => _busy = true);
-    final (err, id) = await MatchService.createMatch(
+    // Move into the saving state (spinner, non-dismissible) while the record
+    // writes. A short floor keeps the spinner from flashing on fast networks.
+    setState(() {
+      _busy = true;
+      _phase = _CreatePhase.creating;
+    });
+    // Matchmaking-only: the band handles who can join, so there's no public/
+    // private lobby or manual min-ELO. Always open to the band, no floor.
+    final createFuture = MatchService.createMatch(
       competitive: _type == 0,
       scheduledAt: _scheduledAt,
       courtId: _courtId,
       partnerId: _partner?['id'] as String?,
-      open: _open,
-      minElo: _type == 0 ? _minEloValues[_minElo] : 0,
+      open: true,
+      minElo: 0,
     );
+    await Future.delayed(const Duration(milliseconds: 700));
+    final (err, id) = await createFuture;
     if (!mounted) return;
-    setState(() => _busy = false);
     if (err != null) {
+      // Back to the form so the user can fix it and retry.
+      setState(() {
+        _busy = false;
+        _phase = _CreatePhase.form;
+      });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           behavior: SnackBarBehavior.floating,
           backgroundColor: AppColors.danger,
           content: Text(err)));
       return;
     }
-    Navigator.pop(context, id);
+    setState(() {
+      _busy = false;
+      _createdId = id;
+      _phase = _CreatePhase.done;
+    });
   }
+
+  /// "Create another" — reset the wizard to a fresh first step, keeping the
+  /// already-loaded courts/players so it opens instantly.
+  void _reset() => setState(() {
+        _phase = _CreatePhase.form;
+        _step = 0;
+        _partner = null;
+        _createdId = null;
+        _busy = false;
+      });
+
+  static const _sheetDeco = BoxDecoration(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)));
+
+  Widget _grip() => Container(
+      width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(color: AppColors.line, borderRadius: BorderRadius.circular(2)));
 
   @override
   Widget build(BuildContext context) {
+    // Can't dismiss while the record is being written.
+    return PopScope(
+      canPop: _phase != _CreatePhase.creating,
+      child: switch (_phase) {
+        _CreatePhase.creating => _creatingSheet(),
+        _CreatePhase.done => _doneSheet(),
+        _CreatePhase.form => _formSheet(),
+      },
+    );
+  }
+
+  // ── saving spinner ──
+  Widget _creatingSheet() => Container(
+        height: MediaQuery.of(context).size.height * 0.92,
+        decoration: _sheetDeco,
+        child: Column(children: [
+          _grip(),
+          Expanded(
+            child: Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const SizedBox(
+                    width: 54, height: 54,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 4, color: AppColors.primary, backgroundColor: AppColors.field)),
+                const SizedBox(height: 20),
+                Text('Creating your match…',
+                    style: AppText.cardTitle().copyWith(fontSize: 18)),
+                const SizedBox(height: 4),
+                Text('Saving and opening the lobby', style: AppText.small()),
+              ]),
+            ),
+          ),
+        ]),
+      );
+
+  // ── success confirmation ──
+  Widget _doneSheet() {
+    final partnerName = _partner?['name'] as String?;
+    final courtName = _courtName();
     return Container(
       height: MediaQuery.of(context).size.height * 0.92,
-      decoration: const BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      decoration: _sheetDeco,
       child: Column(children: [
-        Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: AppColors.line, borderRadius: BorderRadius.circular(2))),
+        _grip(),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+            children: [
+              Center(
+                child: _PopIn(
+                  child: Container(
+                    width: 84, height: 84,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.success.withValues(alpha: 0.16)),
+                    child: Center(
+                      child: Container(
+                        width: 60, height: 60,
+                        decoration: const BoxDecoration(
+                            shape: BoxShape.circle, color: AppColors.success),
+                        child: const Icon(Icons.check_rounded, color: Colors.white, size: 32),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Center(child: Text('Match created!', style: AppText.cardTitle().copyWith(fontSize: 21))),
+              const SizedBox(height: 5),
+              Center(
+                child: Text(
+                  "We're finding players near your level and city. You'll be notified when your match fills.",
+                  textAlign: TextAlign.center,
+                  style: AppText.small().copyWith(fontSize: 13.5, height: 1.5),
+                ),
+              ),
+              const SizedBox(height: 20),
+              _summaryCard(partnerName: partnerName, courtName: courtName),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                    color: AppColors.field, borderRadius: BorderRadius.circular(12)),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Icon(Icons.notifications_none_rounded, size: 16, color: AppColors.inkSoft),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text.rich(TextSpan(
+                        style: AppText.small().copyWith(fontSize: 12, height: 1.4),
+                        children: [
+                          const TextSpan(text: 'Added to '),
+                          TextSpan(text: 'Upcoming Matches', style: AppText.bodyStrong().copyWith(fontSize: 12)),
+                          const TextSpan(text: ". We'll ping you when it's full and confirmed."),
+                        ])),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
+          decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.lineSoft))),
+          child: Column(children: [
+            AppButton('View match', full: true, height: 52,
+                onPressed: () => Navigator.pop(context, _createdId)),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: AppButton('Create another', height: 48, variant: AppBtnVariant.outline, onPressed: _reset)),
+              const SizedBox(width: 10),
+              Expanded(child: AppButton('Done', height: 48, variant: AppBtnVariant.ghost, onPressed: () => Navigator.pop(context))),
+            ]),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _summaryCard({String? partnerName, required String courtName}) {
+    final partnerInitials = (partnerName == null || partnerName.trim().isEmpty)
+        ? null
+        : partnerName.trim().split(RegExp(r'\s+')).take(2).map((w) => w[0]).join().toUpperCase();
+    return Container(
+      decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.line)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          color: AppColors.hero,
+          child: Row(children: [
+            SizedBox(
+              width: partnerInitials != null ? 62 : 38, height: 38,
+              child: Stack(children: [
+                _stackAvatar(widget.myInitials, AppColors.primary, 0),
+                if (partnerInitials != null)
+                  _stackAvatar(partnerInitials, Colors.white.withValues(alpha: 0.18), 24),
+              ]),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${_type == 0 ? 'Competitive' : 'Casual'} · Doubles',
+                    style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 14.5)),
+                Text('Finding players nearby',
+                    style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12)),
+              ]),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999)),
+              child: Text('MATCHMAKING',
+                  style: AppText.tag(AppColors.heroInk).copyWith(fontSize: 10.5)),
+            ),
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(children: [
+            _sumRow('When', '${_dayLabel(_date)}, ${_todLabel(_tod)}'),
+            _sumRow('Court', courtName),
+            _sumRow('Your partner', partnerName ?? 'Open spot'),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _stackAvatar(String s, Color bg, double left) => Positioned(
+        left: left,
+        child: Container(
+          width: 38, height: 38,
+          decoration: BoxDecoration(
+              shape: BoxShape.circle, color: bg,
+              border: Border.all(color: AppColors.hero, width: 2)),
+          child: Center(child: Text(s, style: AppText.bodyStrong(Colors.white).copyWith(fontSize: 13))),
+        ),
+      );
+
+  // ── the 3-step wizard (unchanged) ──
+  Widget _formSheet() {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.92,
+      decoration: _sheetDeco,
+      child: Column(children: [
+        _grip(),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 18),
           child: Row(children: [
@@ -354,22 +579,34 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         _label('Your partner'),
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: Text('Padel is doubles — pick a friend for your side, or leave it open and the lobby fills all spots.',
+          child: Text('Padel is doubles — pick a friend for your side, or leave it open and the matchmaker fills all spots.',
               style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
         ),
         _partnerPick(),
         const SizedBox(height: 22),
-        _label('Who can join the other team?'),
-        Row(children: [
-          _toggle('Open', 'Anyone can join', _open, () => setState(() => _open = true)),
-          const SizedBox(width: 10),
-          _toggle('Private', 'Invite code only', !_open, () => setState(() => _open = false)),
-        ]),
-        if (_type == 0) ...[
-          const SizedBox(height: 22),
-          _label('Minimum ELO'),
-          _pills(const ['Any level', 'Lv 1.0+', 'Lv 3.5+', 'Lv 5.0+'], _minElo, (i) => setState(() => _minElo = i)),
-        ],
+        // The matchmaker (rating band + city + time window) decides who this
+        // match is offered to — no public/private lobby or manual level floor.
+        Container(
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.bolt_rounded, size: 18, color: AppColors.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text.rich(TextSpan(children: [
+                TextSpan(text: 'Matchmaking finds your opponents. ',
+                    style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
+                TextSpan(
+                    text: "We'll offer this match to players near your level, in your city, free around this time.",
+                    style: AppText.small().copyWith(fontSize: 12.5, height: 1.45)),
+              ])),
+            ),
+          ]),
+        ),
         const SizedBox(height: 22),
         AppCard(
           color: AppColors.field,
@@ -380,10 +617,6 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
             _sumRow('When', '${_dayLabel(_date)}, ${_todLabel(_tod)}'),
             _sumRow('Court', _courtName()),
             _sumRow('Your partner', _partner?['name'] as String? ?? 'Open spot'),
-            _sumRow('Other team', _open ? 'Open lobby' : 'Invite only'),
-            if (_type == 0 && _minElo > 0)
-              _sumRow('Min level',
-                  'Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo(_minEloValues[_minElo]))}+'),
           ]),
         ),
       ]);
@@ -508,25 +741,6 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         ]),
       );
 
-  Widget _toggle(String label, String sub, bool on, VoidCallback onTap) => Expanded(
-        child: GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: on ? AppColors.primary.withValues(alpha: 0.1) : AppColors.field,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: on ? AppColors.primary : AppColors.line, width: 1.5),
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: AppText.bodyStrong(on ? AppColors.ink : AppColors.inkSoft)),
-              const SizedBox(height: 1),
-              Text(sub, style: AppText.small().copyWith(fontSize: 11)),
-            ]),
-          ),
-        ),
-      );
-
   Widget _label(String t) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Text(t, style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 13)),
@@ -591,4 +805,26 @@ class _StepDots extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// One-shot elastic pop-in for the success check mark.
+class _PopIn extends StatefulWidget {
+  final Widget child;
+  const _PopIn({required this.child});
+  @override
+  State<_PopIn> createState() => _PopInState();
+}
+
+class _PopInState extends State<_PopIn> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 460))..forward();
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ScaleTransition(
+      scale: CurvedAnimation(parent: _c, curve: Curves.elasticOut), child: widget.child);
 }

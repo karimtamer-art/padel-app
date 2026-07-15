@@ -21,25 +21,63 @@ class MatchService {
       'match_players(player_id, team, elo_before, elo_after, '
       '  profiles(id, name, elo, level, tier, phone, username))';
 
-  // ── Browse ────────────────────────────────────────────────────────────────
+  // ── Matchmaking discovery (band-gatekept) ──────────────────────────────────
 
-  /// Public open matches in the future that the current user hasn't joined.
-  static Future<List<Map<String, dynamic>>> fetchOpenMatches() async {
-    final rows = await _db
-        .from('matches')
-        .select(matchCols)
-        .eq('status', 'open')
-        .eq('is_private', false)
-        .gte('scheduled_at', DateTime.now().toIso8601String())
-        .order('scheduled_at')
-        .limit(40);
-    final list = List<Map<String, dynamic>>.from(rows as List);
-    final uid = _uid;
-    if (uid == null) return list;
-    return list.where((m) {
-      final players = (m['match_players'] as List?) ?? const [];
-      return !players.any((p) => p['player_id'] == uid);
-    }).toList();
+  /// Candidate matches inside the caller's rating band (+ city + time window),
+  /// via the SECURITY DEFINER `mm_candidates` RPC. There is NO public browse —
+  /// this is the only way to see a match you're not already in. Returns flat
+  /// rows: match_id, scheduled_at, match_type, court_name, venue_name, city,
+  /// creator_id/name/rating/level, players, center_rating, level_match_pct.
+  static Future<List<Map<String, dynamic>>> fetchBandCandidates({int limit = 10}) async {
+    try {
+      final rows = await _db.rpc('mm_candidates', params: {'p_limit': limit});
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (e) {
+      debugPrint('[MatchService] fetchBandCandidates: $e');
+      return [];
+    }
+  }
+
+  /// The single best candidate for the caller, or null. Powers the "Match
+  /// found" card (Phase 2).
+  static Future<Map<String, dynamic>?> findCandidate() async {
+    final rows = await fetchBandCandidates(limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Count of matches in the caller's band — the home "N matches near you"
+  /// teaser. Band-filtered, not a public count.
+  static Future<int> countCandidates() async {
+    try {
+      final n = await _db.rpc('mm_count_candidates');
+      return (n as num?)?.toInt() ?? 0;
+    } catch (e) {
+      debugPrint('[MatchService] countCandidates: $e');
+      return 0;
+    }
+  }
+
+  /// The caller's most recent completed-but-unacked match for the "MATCH
+  /// COMPLETE" home hero, or null. Fields: match_id, won, my_team, score_team_a,
+  /// score_team_b, rating_delta (null for casual), rating_after, match_type.
+  static Future<Map<String, dynamic>?> resultHero() async {
+    try {
+      final rows = await _db.rpc('mm_result_hero');
+      final list = List<Map<String, dynamic>>.from(rows as List);
+      return list.isEmpty ? null : list.first;
+    } catch (e) {
+      debugPrint('[MatchService] resultHero: $e');
+      return null;
+    }
+  }
+
+  /// Acks the result hero so it doesn't reappear. Best-effort.
+  static Future<void> ackResult(String matchId) async {
+    try {
+      await _db.rpc('mm_ack_result', params: {'p_match_id': matchId});
+    } catch (e) {
+      debugPrint('[MatchService] ackResult: $e');
+    }
   }
 
   /// One match with court + players, or null.
@@ -150,6 +188,20 @@ class MatchService {
       return (e.message, null);
     } catch (e) {
       return (e.toString(), null);
+    }
+  }
+
+  /// Accept a surfaced matchmaking candidate — race-safe join that re-checks the
+  /// band server-side. Returns an error message or null. Use this from the
+  /// matchmaking flow instead of [joinMatch] (which is the plain capacity join).
+  static Future<String?> acceptCandidate(String matchId) async {
+    try {
+      final res = await _db.rpc('mm_accept', params: {'p_match_id': matchId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
     }
   }
 

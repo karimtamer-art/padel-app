@@ -96,6 +96,19 @@ class ProfileService {
     }
   }
 
+  /// Marks the one-time "placement complete" reveal as shown for the signed-in
+  /// user, so it never fires again. Best-effort — a failure just means the
+  /// player may see it once more next launch. Display-only (never rating math).
+  static Future<void> markPlacementRevealed() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      await _db
+          .from('profiles')
+          .update({'placement_revealed': true}).eq('id', uid);
+    } catch (_) {/* non-fatal */}
+  }
+
   static Future<String?> updateProfile(String uid, Map<String, dynamic> fields) async {
     try {
       await _db.from('profiles').update(fields).eq('id', uid);
@@ -118,7 +131,7 @@ class ProfileService {
         profileRow = await _db
             .from('profiles')
             .select('elo, tier, level, placement_played, '
-                'reliability, is_provisional')
+                'reliability, is_provisional, placement_revealed')
             .eq('id', userId)
             .single();
       } catch (_) {
@@ -299,6 +312,8 @@ class ProfileService {
         elo: (profileRow['elo'] as num?)?.toInt(),
         eloHistory: eloPoints,
         recent: recent,
+        // Absent on pre-migration DBs → false (reveal simply won't fire).
+        placementRevealed: profileRow['placement_revealed'] == true,
       );
     } catch (e) {
       debugPrint('[ProfileService] fetchPlayerProfile error: $e');

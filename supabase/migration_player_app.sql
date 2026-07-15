@@ -11,11 +11,19 @@ alter table public.matches add column if not exists is_private boolean not null 
 alter table public.matches add column if not exists invite_code text;
 alter table public.matches add column if not exists result_submitted_by uuid references public.profiles(id);
 alter table public.matches add column if not exists result_submitted_at timestamptz;
+-- Matchmaking band center: snapshot of the creator's rating at creation, set by
+-- trg_mm_center_rating (below). Drives who the match is visible to (mm_candidates).
+alter table public.matches add column if not exists mm_center_rating numeric;
+-- created_at drives the band's widen-over-time (search age). Guaranteed here in
+-- case the drifted live table never had it.
+alter table public.matches add column if not exists created_at timestamptz not null default now();
 
 create unique index if not exists matches_invite_code_key on public.matches (invite_code) where invite_code is not null;
 
 -- ── match_players ──────────────────────────────────────────────
 alter table public.match_players add column if not exists created_at timestamptz not null default now();
+-- Per-player ack of the "match complete" result hero (Phase 3). true once seen.
+alter table public.match_players add column if not exists result_ack boolean not null default false;
 create unique index if not exists match_players_unique on public.match_players (match_id, player_id);
 
 -- ── tournament entries ─────────────────────────────────────────
@@ -202,8 +210,19 @@ alter table public.ranking_history    enable row level security;
 drop policy if exists "matches: read own or open" on public.matches;
 drop policy if exists "match_players: read"       on public.match_players;
 
+-- Matchmaking visibility (Phase 1): matches are NOT public. Readable only by the
+-- creator or a participant here; admins get a separate OR'd policy after
+-- _is_admin() is defined. Discovery of matches you're not in goes through the
+-- band-gatekept mm_candidates() RPC. Safe from 42P17 recursion because
+-- match_players' SELECT policy is `using(true)` and never references matches.
+drop policy if exists "matches readable" on public.matches;
 do $$ begin
-  create policy "matches readable" on public.matches for select using (true);
+  create policy "matches: participant read" on public.matches for select
+    using (
+      created_by = auth.uid()
+      or exists (select 1 from public.match_players mp
+                  where mp.match_id = matches.id and mp.player_id = auth.uid())
+    );
 exception when duplicate_object then null; end $$;
 do $$ begin
   create policy "create own match" on public.matches for insert with check (auth.uid() = created_by);
@@ -327,6 +346,30 @@ do $$ begin
   end if;
 end $$;
 
+-- match_players.player_id → profiles, so PostgREST can embed the player's
+-- profile (name/level/…) on match reads (MatchService.matchCols). Missing on
+-- drifted live tables where player_id only referenced auth.users. Guarded on
+-- the *target table* (not a constraint name) so we never add a second,
+-- ambiguous profiles relationship.
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint c
+    join pg_class rel  on rel.oid  = c.conrelid
+    join pg_class frel on frel.oid = c.confrelid
+    where c.contype = 'f'
+      and rel.relnamespace = 'public'::regnamespace
+      and rel.relname  = 'match_players'
+      and frel.relname = 'profiles'
+  ) then
+    -- Distinct name: a drifted table already has match_players_player_id_fkey
+    -- pointing at auth.users. Both may coexist — PostgREST only exposes the
+    -- public.profiles one, so the embed stays unambiguous.
+    alter table public.match_players
+      add constraint match_players_player_id_profiles_fkey
+      foreign key (player_id) references public.profiles(id) on delete cascade;
+  end if;
+end $$;
+
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'tournament_entries_player_id_fkey') then
     alter table public.tournament_entries
@@ -399,6 +442,14 @@ create or replace function public._is_admin()
 returns boolean language sql stable security definer set search_path = public as $$
   select coalesce((select is_admin from profiles where id = auth.uid()), false);
 $$;
+
+-- Admin read on matches (OR'd with the participant policy above). Defined here
+-- because it needs _is_admin(); the participant policy earlier deliberately
+-- avoids referencing it so it can be created before this function exists.
+do $$ begin
+  create policy "matches: admin read" on public.matches for select
+    using (public._is_admin());
+exception when duplicate_object then null; end $$;
 
 -- ── Admin dashboard stats ──────────────────────────────────────
 -- Aggregate counts + division breakdown for the admin Dashboard. SECURITY DEFINER
@@ -1125,6 +1176,15 @@ alter table public.profiles add column if not exists tier text;
 alter table public.profiles add column if not exists division_pts int;
 alter table public.profiles add column if not exists placement_played int;
 alter table public.profiles add column if not exists username text;
+-- One-time gate for the "placement complete" reveal on Home: set true after the
+-- player has seen the celebration once. Display-only (the client flips it).
+alter table public.profiles add column if not exists placement_revealed boolean not null default false;
+-- Backfill: players already placed before this feature shipped shouldn't get a
+-- retroactive celebration — only NEW placements (going forward) trigger it.
+update public.profiles
+   set placement_revealed = true
+ where coalesce(placement_played, 0) >= 5
+   and placement_revealed is not true;
 
 -- migrate data from legacy columns before dropping them.
 -- Guarded so the section is safe to re-run after the columns are already gone.
@@ -1450,6 +1510,269 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 grant select on public.app_settings to anon, authenticated;
 grant insert, update on public.app_settings to authenticated;
+
+-- ── Matchmaking band config (Phase 0) ──────────────────────────
+-- Tunable constants for the video-game-style matchmaker (band = who sees/gets
+-- paired with whom). Single source of truth, admin-editable, no redeploy.
+-- Mirrored in Dart by MatchmakingConfig; keep in lockstep with that + the
+-- mm_* consumers below. See supabase/changes/2026-07-15_matchmaking_config.sql.
+insert into public.app_settings (key, value) values
+  ('mm_band_base',         '0.4'),
+  ('mm_band_widen_per_min','0.05'),
+  ('mm_band_max',          '1.5'),
+  ('mm_time_window_hours', '12'),
+  ('mm_confirm_seconds',   '120'),
+  ('mm_range_mode',        'city')
+on conflict (key) do nothing;
+
+-- Band half-width for a search running age_minutes minutes. coalesce() falls
+-- back to seed defaults so it's safe if a key is deleted.
+create or replace function public.mm_band_halfwidth(age_minutes numeric)
+returns numeric
+language sql stable as $$
+  with c as (
+    select
+      coalesce((select value::numeric from public.app_settings where key = 'mm_band_base'), 0.4)          as base,
+      coalesce((select value::numeric from public.app_settings where key = 'mm_band_widen_per_min'), 0.05) as widen,
+      coalesce((select value::numeric from public.app_settings where key = 'mm_band_max'), 1.5)           as bmax
+  )
+  select least(c.bmax, c.base + c.widen * greatest(coalesce(age_minutes, 0), 0)) from c;
+$$;
+grant execute on function public.mm_band_halfwidth(numeric) to authenticated;
+
+-- ── Matchmaking Phase 1: band-center snapshot + discovery RPCs ──
+-- Snapshot the creator's rating onto the match at creation so the band center
+-- can't be forged from the client.
+create or replace function public.mm_set_center_rating()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.mm_center_rating is null and new.created_by is not null then
+    select coalesce(rating, level, 2.0) into new.mm_center_rating
+      from public.profiles where id = new.created_by;
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists trg_mm_center_rating on public.matches;
+create trigger trg_mm_center_rating before insert on public.matches
+  for each row execute function public.mm_set_center_rating();
+
+update public.matches m
+   set mm_center_rating = coalesce(
+         (select coalesce(p.rating, p.level, 2.0) from public.profiles p where p.id = m.created_by),
+         2.0)
+ where m.mm_center_rating is null
+   and m.created_by is not null;
+
+-- The ONE way to discover a match you're not in: band-gatekept, SECURITY DEFINER
+-- so it can scan the pool to filter it, but only ever returns rows in the
+-- caller's band + city + time window. p_limit null = all (for counting).
+create or replace function public.mm_candidates(p_limit int default null)
+returns table(
+  match_id       uuid,
+  scheduled_at   timestamptz,
+  match_type     text,
+  court_name     text,
+  venue_name     text,
+  city           text,
+  creator_id     uuid,
+  creator_name   text,
+  creator_rating numeric,
+  creator_level  numeric,
+  players        int,
+  center_rating  numeric,
+  level_match_pct int
+)
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_uid       uuid := auth.uid();
+  v_rating    numeric;
+  v_city      text;
+  v_placement boolean;
+  v_window    numeric;
+begin
+  if v_uid is null then return; end if;
+
+  select coalesce(rating, level, 2.0), city, (coalesce(placement_played, 0) < 5)
+    into v_rating, v_city, v_placement
+    from public.profiles where id = v_uid;
+
+  v_window := coalesce(
+    (select value::numeric from public.app_settings where key = 'mm_time_window_hours'), 12);
+
+  return query
+  select m.id, m.scheduled_at, m.match_type,
+         c.name, c.venue_name, coalesce(c.city, cp.city),
+         m.created_by, cp.name,
+         coalesce(cp.rating, cp.level, 2.0), coalesce(cp.level, cp.rating, 2.0),
+         (select count(*)::int from public.match_players mp where mp.match_id = m.id),
+         coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0),
+         greatest(0, round((1 - abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) / 3.5) * 100))::int
+    from public.matches m
+    join public.profiles cp on cp.id = m.created_by
+    left join public.courts c on c.id = m.court_id
+   where m.status = 'open'
+     and m.created_by <> v_uid
+     and m.scheduled_at > now()
+     and m.scheduled_at < now() + (v_window * interval '1 hour')
+     and (select count(*) from public.match_players mp2 where mp2.match_id = m.id) < 4
+     and not exists (select 1 from public.match_players mp3
+                      where mp3.match_id = m.id and mp3.player_id = v_uid)
+     and (
+       case when v_placement
+         then coalesce(cp.placement_played, 0) < 5
+         else coalesce(cp.placement_played, 0) >= 5
+              and abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0))
+                  <= public.mm_band_halfwidth(extract(epoch from (now() - m.created_at)) / 60.0)
+       end
+     )
+     and (v_city is null or coalesce(c.city, cp.city) is null or coalesce(c.city, cp.city) = v_city)
+   order by abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) asc,
+            m.scheduled_at asc
+   limit p_limit;
+end $$;
+
+create or replace function public.mm_count_candidates()
+returns int
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from public.mm_candidates(null);
+$$;
+
+grant execute on function public.mm_candidates(int) to authenticated;
+grant execute on function public.mm_count_candidates() to authenticated;
+
+-- Accept a surfaced candidate (Phase 2). Race-safe join that RE-VERIFIES the
+-- band server-side — a client can pass any match_id, so we never trust it came
+-- from mm_candidates. First accepter wins the last slot (row lock).
+create or replace function public.mm_accept(p_match_id uuid)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid        uuid := auth.uid();
+  v_status     text;
+  v_created_by uuid;
+  v_center     numeric;
+  v_created_at timestamptz;
+  v_my_rating  numeric;
+  v_my_plac    boolean;
+  v_cr_plac    boolean;
+  v_count      int;
+  v_team_a     int;
+  v_team_b     int;
+  v_team       text;
+begin
+  if v_uid is null then return 'Not signed in.'; end if;
+
+  select status, created_by, coalesce(mm_center_rating, 2.0), created_at
+    into v_status, v_created_by, v_center, v_created_at
+    from matches where id = p_match_id for update;
+  if not found then return 'Match not found.'; end if;
+  if v_created_by = v_uid then return 'This is your own match.'; end if;
+  if v_status <> 'open' then return 'This match is no longer open.'; end if;
+
+  if exists (select 1 from match_players where match_id = p_match_id and player_id = v_uid) then
+    return null;
+  end if;
+
+  select count(*) into v_count from match_players where match_id = p_match_id;
+  if v_count >= 4 then return 'This match just filled up.'; end if;
+
+  select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
+    into v_my_rating, v_my_plac from profiles where id = v_uid;
+  select (coalesce(placement_played, 0) < 5) into v_cr_plac
+    from profiles where id = v_created_by;
+
+  if v_my_plac or v_cr_plac then
+    if not (v_my_plac and v_cr_plac) then
+      return 'This match is outside your matchmaking pool.';
+    end if;
+  elsif abs(v_my_rating - v_center)
+        > public.mm_band_halfwidth(extract(epoch from (now() - v_created_at)) / 60.0) then
+    return 'This match is outside your rating band.';
+  end if;
+
+  select count(*) filter (where team = 'a'), count(*) filter (where team = 'b')
+    into v_team_a, v_team_b from match_players where match_id = p_match_id;
+  v_team := case when v_team_a <= v_team_b then 'a' else 'b' end;
+  if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
+    v_team := case v_team when 'a' then 'b' else 'a' end;
+  end if;
+
+  insert into match_players (match_id, player_id, team) values (p_match_id, v_uid, v_team);
+  if v_count + 1 >= 4 then
+    update matches set status = 'full' where id = p_match_id;
+  end if;
+  return null;
+end $$;
+grant execute on function public.mm_accept(uuid) to authenticated;
+
+-- Phase 3: the post-match result hero + per-player ack. Backfill acks matches
+-- already completed so the hero doesn't retro-fire.
+update public.match_players mp
+   set result_ack = true
+  from public.matches m
+ where m.id = mp.match_id
+   and m.status = 'completed'
+   and coalesce(mp.result_ack, false) = false;
+
+create or replace function public.mm_result_hero()
+returns table(
+  match_id      uuid,
+  won           boolean,
+  my_team       text,
+  score_team_a  text,
+  score_team_b  text,
+  rating_delta  numeric,
+  rating_after  numeric,
+  match_type    text
+)
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_mid uuid;
+begin
+  if v_uid is null then return; end if;
+
+  select mp.match_id into v_mid
+    from public.match_players mp
+    join public.matches m on m.id = mp.match_id
+   where mp.player_id = v_uid
+     and m.status = 'completed'
+     and m.winner_team is not null
+     and coalesce(mp.result_ack, false) = false
+   order by m.scheduled_at desc nulls last
+   limit 1;
+  if v_mid is null then return; end if;
+
+  return query
+  select m.id,
+         (mp.team = m.winner_team),
+         mp.team,
+         m.score_team_a,
+         m.score_team_b,
+         (select rh.delta from public.ranking_history rh
+            where rh.profile_id = v_uid and rh.match_id = m.id
+            order by rh.created_at desc limit 1),
+         (select rh.rating_after from public.ranking_history rh
+            where rh.profile_id = v_uid and rh.match_id = m.id
+            order by rh.created_at desc limit 1),
+         m.match_type
+    from public.matches m
+    join public.match_players mp on mp.match_id = m.id and mp.player_id = v_uid
+   where m.id = v_mid;
+end $$;
+
+create or replace function public.mm_ack_result(p_match_id uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.match_players
+     set result_ack = true
+   where match_id = p_match_id and player_id = auth.uid();
+end $$;
+
+grant execute on function public.mm_result_hero() to authenticated;
+grant execute on function public.mm_ack_result(uuid) to authenticated;
 
 -- Private bucket for InstaPay transfer screenshots. Players upload; only
 -- admins read them back (via signed URLs in the admin console).

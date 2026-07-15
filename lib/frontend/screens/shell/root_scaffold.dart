@@ -92,10 +92,16 @@ class _RootScaffoldState extends State<RootScaffold> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const CreateMatchSheet(),
+      builder: (_) => CreateMatchSheet(
+        myName: widget.displayName,
+        myInitials: widget.initials,
+      ),
     );
-    if (matchId == null || !mounted) return;
+    if (!mounted) return;
+    // A match may have been created even when the sheet closes without "View"
+    // (Done / Create-another) — refresh Home either way so it shows up.
     setState(() => _homeRefresh++);
+    if (matchId == null) return;
     await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => MatchDetailScreen(matchId: matchId)));
     if (mounted) setState(() => _homeRefresh++);

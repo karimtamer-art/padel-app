@@ -14,6 +14,8 @@ import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
 import 'package:padel_clay/backend/services/store_service.dart';
 import 'package:padel_clay/backend/services/community_service.dart';
+import 'package:padel_clay/backend/services/profile_service.dart';
+import 'package:padel_clay/backend/services/match_service.dart';
 import '../matches/find_match_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
@@ -55,7 +57,14 @@ class _HomeScreenState extends State<HomeScreen> {
   List<MemberLite> _communityMembers = [];
   int _communityEventsWeek = 0;
   int _unread = 0;
+  // Matches in the player's rating band near them (the "N near you" teaser).
+  int _bandCount = 0;
+  // Most recent completed-but-unacked match → the "MATCH COMPLETE" hero.
+  Map<String, dynamic>? _resultHero;
   bool _loading = true;
+  // Local latch so the one-time placement reveal disappears the instant it's
+  // dismissed (the persisted flag catches the next launch).
+  bool _revealDismissed = false;
   RealtimeChannel? _notifChannel;
 
   static SupabaseClient get _db => Supabase.instance.client;
@@ -109,6 +118,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _fetchUnread(),
       _fetchFeatured(),
       _fetchCommunity(),
+      _fetchBandCount(),
+      _fetchResultHero(),
     ]);
     if (mounted) setState(() => _loading = false);
   }
@@ -157,9 +168,33 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openFindMatch(BuildContext c) async {
-    await Navigator.of(c)
-        .push(MaterialPageRoute(builder: (_) => const FindMatchScreen()));
+    final r = widget.profile.ranking;
+    final label = r.placed
+        ? 'Div ${RankingScale.divisionFor(r.level).key}'
+        : 'Placement';
+    await Navigator.of(c).push(
+        MaterialPageRoute(builder: (_) => FindMatchScreen(levelLabel: label)));
     _loadData();
+  }
+
+  /// Dismiss the one-time placement reveal: hide it now, persist that it's been
+  /// seen (best-effort) so it doesn't reappear on the next launch.
+  void _dismissReveal() {
+    setState(() => _revealDismissed = true);
+    ProfileService.markPlacementRevealed();
+  }
+
+  /// The soonest match to surface in the hero: the next future slot, or one
+  /// that's currently in progress. `_myMatches` is already sorted ascending by
+  /// scheduled_at, so the first qualifying row is the closest one.
+  Map<String, dynamic>? _nextUpcomingMatch() {
+    final now = DateTime.now();
+    for (final m in _myMatches) {
+      if (m['status'] == 'in_progress') return m;
+      final dt = DateTime.tryParse(m['scheduled_at'] as String? ?? '')?.toLocal();
+      if (dt != null && dt.isAfter(now)) return m;
+    }
+    return null;
   }
 
   Future<void> _openMatch(BuildContext c, String id) async {
@@ -177,6 +212,40 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _fetchUnread() async {
     final n = await NotificationService.unreadCount();
     if (mounted) _unread = n;
+  }
+
+  Future<void> _fetchBandCount() async {
+    final n = await MatchService.countCandidates();
+    if (mounted) _bandCount = n;
+  }
+
+  Future<void> _fetchResultHero() async {
+    final r = await MatchService.resultHero();
+    if (mounted) _resultHero = r;
+  }
+
+  /// Ack the result hero and drop back to the booking state.
+  Future<void> _ackResult(String matchId) async {
+    setState(() => _resultHero = null);
+    await MatchService.ackResult(matchId);
+    _loadData(silent: true);
+  }
+
+  /// A match that's happening now: full, its start time has passed (within the
+  /// last few hours), and it hasn't produced a result yet. Nothing sets an
+  /// explicit 'in_progress', so "live" is derived from the clock.
+  Map<String, dynamic>? _liveMatch() {
+    final now = DateTime.now();
+    for (final m in _myMatches) {
+      final status = m['status'] as String?;
+      if (status != 'full' && status != 'in_progress') continue;
+      final dt = DateTime.tryParse(m['scheduled_at'] as String? ?? '')?.toLocal();
+      if (dt == null) continue;
+      if (!dt.isAfter(now) && dt.isAfter(now.subtract(const Duration(hours: 6)))) {
+        return m;
+      }
+    }
+    return null;
   }
 
   Future<void> _fetchFeatured() async {
@@ -230,6 +299,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final liveMatch = _liveMatch();
+    final nextMatch = _nextUpcomingMatch();
     return Column(
       children: [
         ScreenBar(
@@ -252,9 +323,43 @@ class _HomeScreenState extends State<HomeScreen> {
                   displayName: widget.displayName,
                   profile: widget.profile,
                 ),
+                // The top hero slot is never empty for a placed player: it
+                // cycles reveal → next-match → book-next as their state changes.
                 if (!widget.profile.ranking.placed)
                   _PlacementWelcome(
                     ranking: widget.profile.ranking,
+                    onFindMatch: () => _openFindMatch(context),
+                  )
+                // Just placed and hasn't seen the celebration → one-time reveal.
+                else if (!widget.profile.placementRevealed && !_revealDismissed)
+                  _PlacementReveal(
+                    profile: widget.profile,
+                    onNext: _dismissReveal,
+                  )
+                // A match just finished → one-time result celebration.
+                else if (_resultHero != null)
+                  _ResultHero(
+                    result: _resultHero!,
+                    onNext: () => _ackResult(_resultHero!['match_id'] as String),
+                  )
+                // A match is happening right now → live / check-in.
+                else if (liveMatch != null)
+                  _LiveHero(
+                    match: liveMatch,
+                    onEnterScore: () =>
+                        _openMatch(context, liveMatch['id'] as String),
+                  )
+                // Has a booked match → surface it as the hero.
+                else if (nextMatch != null)
+                  _NextMatchHero(
+                    match: nextMatch,
+                    onTap: () => _openMatch(context, nextMatch['id'] as String),
+                  )
+                // Otherwise nudge them to book their next game (never blank).
+                else if (!_loading)
+                  _BookNextHero(
+                    ranking: widget.profile.ranking,
+                    bandCount: _bandCount,
                     onFindMatch: () => _openFindMatch(context),
                   ),
                 const SizedBox(height: 24),
@@ -283,7 +388,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Upcoming Matches',
-                    action: 'Find a Match',
+                    action: 'View All',
                     onAction: () => _openFindMatch(context)),
                 _upcomingMatches(context),
                 const SizedBox(height: AppSpacing.section),
@@ -663,12 +768,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _upcomingMatches(BuildContext context) {
     if (_loading) {
-      return Padding(
-        padding: AppSpacing.screenH,
-        child: AppCard(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          child: Column(
-            children: List.generate(3, (_) => const SkeletonListRow()),
+      return SizedBox(
+        height: 226,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: AppSpacing.screenH,
+          children: List.generate(
+            2,
+            (_) => Container(
+              width: 262,
+              margin: const EdgeInsets.only(right: 12),
+              child: const AppCard(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Skeleton(width: 100, height: 22, radius: 999),
+                  SizedBox(height: 14),
+                  Skeleton(width: 170, height: 16, radius: 5),
+                  SizedBox(height: 9),
+                  Skeleton(width: 110, height: 12, radius: 5),
+                  SizedBox(height: 16),
+                  Skeleton(width: 140, height: 30, radius: 8),
+                  SizedBox(height: 16),
+                  Skeleton(width: double.infinity, height: 44, radius: 12),
+                ]),
+              ),
+            ),
           ),
         ),
       );
@@ -702,15 +825,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-    return Padding(
-      padding: AppSpacing.screenH,
-      child: AppCard(
-        padding: EdgeInsets.zero,
-        child: Column(children: [
-          for (int i = 0; i < _myMatches.length; i++)
-            _MatchTile(_myMatches[i], divider: i > 0,
-                onTap: () => _openMatch(context, _myMatches[i]['id'] as String)),
-        ]),
+    return SizedBox(
+      height: 226,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: AppSpacing.screenH,
+        children: [
+          for (final m in _myMatches)
+            _UpcomingMatchCard(m,
+                onOpen: () => _openMatch(context, m['id'] as String)),
+        ],
       ),
     );
   }
@@ -823,96 +947,110 @@ class _HomeScreenState extends State<HomeScreen> {
 
 // ── Match tile ───────────────────────────────────────────────────────────────
 
-class _MatchTile extends StatelessWidget {
+class _UpcomingMatchCard extends StatelessWidget {
   final Map<String, dynamic> match;
-  final bool divider;
-  final VoidCallback? onTap;
-  const _MatchTile(this.match, {this.divider = false, this.onTap});
+  final VoidCallback onOpen;
+  const _UpcomingMatchCard(this.match, {required this.onOpen});
 
-  static String _fmtTime(String? iso) {
-    if (iso == null) return '—';
-    try {
-      final dt = DateTime.parse(iso).toLocal();
-      final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-      final m = dt.minute.toString().padLeft(2, '0');
-      final ampm = dt.hour < 12 ? 'AM' : 'PM';
-      const months = ['Jan','Feb','Mar','Apr','May','Jun',
-                      'Jul','Aug','Sep','Oct','Nov','Dec'];
-      return '${months[dt.month - 1]} ${dt.day}  ·  $h:$m $ampm';
-    } catch (_) {
-      return iso.substring(0, 10);
+  static const _months = ['Jan','Feb','Mar','Apr','May','Jun',
+                          'Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  static String _timeLabel(String? iso) {
+    if (iso == null) return 'Time to be set';
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return 'Time to be set';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(dt.year, dt.month, dt.day);
+    final diff = day.difference(today).inDays;
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour < 12 ? 'AM' : 'PM';
+    final time = '$h:$m $ampm';
+    final label = diff == 0
+        ? 'Today'
+        : diff == 1
+            ? 'Tomorrow'
+            : '${_months[dt.month - 1]} ${dt.day}';
+    return '$label,  $time';
+  }
+
+  static String _title(Map? court) {
+    final venue = (court?['venue_name'] as String?)?.trim();
+    final name = (court?['name'] as String?)?.trim();
+    if ((venue?.isNotEmpty ?? false) && (name?.isNotEmpty ?? false)) {
+      return '$venue — $name';
     }
+    if (venue?.isNotEmpty ?? false) return venue!;
+    if (name?.isNotEmpty ?? false) return name!;
+    return 'Court to be agreed';
   }
 
   @override
   Widget build(BuildContext context) {
+    final ranked = match['match_type'] == 'ranked';
     final court = match['courts'] as Map?;
-    final courtName = court?['venue_name'] as String? ?? court?['name'] as String? ?? 'TBD';
     final players = (match['match_players'] as List?)?.length ?? 0;
-    final isRanked = match['match_type'] == 'ranked';
-    final status = match['status'] as String? ?? 'open';
-    final statusColor = switch (status) {
-      'in_progress' => AppColors.success,
-      'full' => AppColors.warn,
-      'pending_confirm' => AppColors.gold,
-      'disputed' => AppColors.danger,
-      _ => AppColors.primary,
-    };
-    final statusLabel = switch (status) {
-      'pending_confirm' => 'Score pending',
-      'in_progress' => 'In progress',
-      'disputed' => 'Disputed',
-      _ => status[0].toUpperCase() + status.substring(1),
-    };
+    final filled = players.clamp(0, 4);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-          border: divider
-              ? const Border(top: BorderSide(color: AppColors.line))
-              : null),
-      child: Row(children: [
-        Container(
-          width: 40, height: 40,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(11),
+    return Container(
+      width: 262,
+      margin: const EdgeInsets.only(right: 12),
+      child: AppCard(
+        onTap: onOpen,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Type pill — COMPETITIVE (green) / CASUAL (neutral).
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+            decoration: BoxDecoration(
+              color: ranked
+                  ? AppColors.success.withValues(alpha: 0.15)
+                  : AppColors.field,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(ranked ? 'COMPETITIVE' : 'CASUAL',
+                style: AppText.tag(ranked ? AppColors.success : AppColors.inkSoft)
+                    .copyWith(fontSize: 10.5, letterSpacing: 0.5, fontWeight: FontWeight.w800)),
           ),
-          child: const Icon(Icons.sports_tennis_rounded,
-              size: 20, color: AppColors.primary),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              AppTag(isRanked ? 'Ranked' : 'Casual',
-                  color: isRanked ? AppColors.warn : AppColors.primary),
-              const SizedBox(width: 6),
-              AppTag(statusLabel, color: statusColor),
-            ]),
-            const SizedBox(height: 4),
-            Text(courtName,
-                style: AppText.bodyStrong().copyWith(fontSize: 13),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 2),
-            Text(_fmtTime(match['scheduled_at'] as String?),
-                style: AppText.small().copyWith(fontSize: 11.5)),
+          const SizedBox(height: 12),
+          Text(_title(court),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.cardTitle().copyWith(fontSize: 16.5)),
+          const SizedBox(height: 7),
+          Row(children: [
+            const Icon(Icons.schedule_rounded, size: 14, color: AppColors.inkFaint),
+            const SizedBox(width: 6),
+            Text(_timeLabel(match['scheduled_at'] as String?),
+                style: AppText.small().copyWith(fontSize: 12.5)),
           ]),
-        ),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('$players/4',
-              style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 13)),
-          const SizedBox(height: 2),
-          Text('players',
-              style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10)),
+          const SizedBox(height: 14),
+          Row(children: [
+            for (int i = 0; i < 4; i++) _avatarDot(i < filled),
+            const Spacer(),
+            Text('$players/4',
+                style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
+          ]),
+          const SizedBox(height: 14),
+          AppButton('Join Match', full: true, height: 44, onPressed: onOpen),
         ]),
-      ]),
-    ));
+      ),
+    );
   }
+
+  Widget _avatarDot(bool filled) => Container(
+        width: 30, height: 30,
+        margin: const EdgeInsets.only(right: 7),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: filled ? AppColors.primary.withValues(alpha: 0.12) : AppColors.field,
+          border: Border.all(
+              color: filled ? AppColors.primary : AppColors.line, width: 1.5),
+        ),
+        child: filled
+            ? const Icon(Icons.person_rounded, size: 16, color: AppColors.primary)
+            : null,
+      );
 }
 
 // ── Tournament tile ──────────────────────────────────────────────────────────
@@ -1206,6 +1344,560 @@ class _PlacementWelcome extends StatelessWidget {
             AppButton('Find a Match', full: true, height: 48, onPressed: onFindMatch),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Book-next hero (placed player, nothing booked) ───────────────────────────
+
+class _BookNextHero extends StatelessWidget {
+  final Ranking ranking;
+  final int bandCount;
+  final VoidCallback onFindMatch;
+  const _BookNextHero({
+    required this.ranking,
+    required this.onFindMatch,
+    this.bandCount = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final div = RankingScale.divisionFor(ranking.level);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: AppRadius.cardR,
+          gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.hero, AppColors.hero2]),
+          boxShadow: kCardShadow,
+        ),
+        child: Stack(children: [
+          // Warm primary glow, top-right (mirrors the placement/community heroes).
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: const Alignment(0.85, -1.0),
+                  radius: 1.1,
+                  colors: [AppColors.primary.withValues(alpha: 0.20), Colors.transparent],
+                  stops: const [0.0, 0.6],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(7)),
+                    child: Text('NO MATCH SCHEDULED',
+                        style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 10.5, letterSpacing: 0.4)),
+                  ),
+                  Row(children: [
+                    const Icon(Icons.check_circle_rounded, size: 13, color: AppColors.success),
+                    const SizedBox(width: 5),
+                    Text('Ready to play',
+                        style: AppText.tag(AppColors.success).copyWith(fontSize: 11)),
+                  ]),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text('Book your next game',
+                  style: AppText.stat(22, AppColors.heroInk).copyWith(height: 1.1, letterSpacing: -0.5)),
+              const SizedBox(height: 6),
+              Text(
+                  "You're placed in Division ${div.key}. Keep your ELO climbing — line up your next match.",
+                  style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 13, height: 1.5)),
+              if (bandCount > 0) ...[
+                const SizedBox(height: 14),
+                GestureDetector(
+                  onTap: onFindMatch,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.07),
+                        borderRadius: BorderRadius.circular(12)),
+                    child: Row(children: [
+                      Container(
+                        width: 34, height: 34,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(9)),
+                        child: const Icon(Icons.groups_2_rounded, size: 18, color: AppColors.primaryInk),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Text(
+                            '$bandCount match${bandCount == 1 ? '' : 'es'} near your level',
+                            style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 13)),
+                      ),
+                      const Icon(Icons.arrow_forward_rounded, size: 16, color: AppColors.heroFaint),
+                    ]),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              AppButton('Find a Match',
+                  full: true, height: 48, icon: Icons.search_rounded, onPressed: onFindMatch),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Next-match hero (placed player, a match is booked/live) ──────────────────
+
+class _NextMatchHero extends StatelessWidget {
+  final Map<String, dynamic> match;
+  final VoidCallback onTap;
+  const _NextMatchHero({required this.match, required this.onTap});
+
+  static const _months = ['Jan','Feb','Mar','Apr','May','Jun',
+                          'Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  String _fullWhen(DateTime dt) {
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour < 12 ? 'AM' : 'PM';
+    return '${_months[dt.month - 1]} ${dt.day}  ·  $h:$m $ampm';
+  }
+
+  String _countdown(DateTime dt) {
+    final diff = dt.difference(DateTime.now());
+    if (diff.isNegative) return 'now';
+    if (diff.inHours >= 24) return 'in ${diff.inDays}d';
+    if (diff.inHours >= 1) return 'in ${diff.inHours}h ${diff.inMinutes % 60}m';
+    return 'in ${diff.inMinutes}m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = match['status'] as String? ?? 'open';
+    final live = status == 'in_progress';
+    final court = match['courts'] as Map?;
+    final courtName = court?['venue_name'] as String? ??
+        court?['name'] as String? ?? 'Court to be agreed';
+    final players = (match['match_players'] as List?)?.length ?? 0;
+    final ranked = match['match_type'] == 'ranked';
+    final dt = DateTime.tryParse(match['scheduled_at'] as String? ?? '')?.toLocal();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.cardR,
+            gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppColors.hero, AppColors.hero2]),
+            boxShadow: kCardShadow,
+          ),
+          child: Stack(children: [
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0.85, -1.0),
+                    radius: 1.1,
+                    colors: [
+                      (live ? AppColors.success : AppColors.primary).withValues(alpha: 0.20),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.6],
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    AppTag(live ? 'Live now' : 'Next match',
+                        color: live ? AppColors.success : AppColors.primary, solid: true),
+                    if (!live && dt != null)
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.schedule_rounded, size: 13, color: AppColors.gold),
+                        const SizedBox(width: 5),
+                        Text(_countdown(dt),
+                            style: AppText.tag(AppColors.gold).copyWith(fontSize: 11)),
+                      ])
+                    else
+                      AppTag(ranked ? 'Ranked' : 'Casual', color: AppColors.heroFaint),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(courtName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.stat(21, AppColors.heroInk).copyWith(letterSpacing: -0.4)),
+                const SizedBox(height: 6),
+                Text(
+                    live
+                        ? 'Your match is underway — good luck!'
+                        : (dt != null ? _fullWhen(dt) : 'Time to be set'),
+                    style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 13)),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(8)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.group_rounded, size: 13, color: AppColors.heroInk),
+                      const SizedBox(width: 6),
+                      Text('$players/4 players',
+                          style: AppText.tag(AppColors.heroInk).copyWith(fontSize: 11, letterSpacing: 0.2)),
+                    ]),
+                  ),
+                  const Spacer(),
+                  Text('View details →',
+                      style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 13.5)),
+                ]),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Live hero (match happening now) ──────────────────────────────────────────
+
+class _LiveHero extends StatelessWidget {
+  final Map<String, dynamic> match;
+  final VoidCallback onEnterScore;
+  const _LiveHero({required this.match, required this.onEnterScore});
+
+  @override
+  Widget build(BuildContext context) {
+    final court = match['courts'] as Map?;
+    final courtName = court?['venue_name'] as String? ??
+        court?['name'] as String? ?? 'Your court';
+    final players = (match['match_players'] as List?)?.length ?? 0;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: AppRadius.cardR,
+          gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.hero, AppColors.hero2]),
+          boxShadow: kCardShadow,
+        ),
+        child: Stack(children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: const Alignment(0.85, -1.0),
+                  radius: 1.1,
+                  colors: [AppColors.success.withValues(alpha: 0.24), Colors.transparent],
+                  stops: const [0.0, 0.6],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Container(width: 8, height: 8,
+                    decoration: const BoxDecoration(color: AppColors.success, shape: BoxShape.circle)),
+                const SizedBox(width: 7),
+                Text('LIVE NOW',
+                    style: AppText.tag(AppColors.success).copyWith(fontSize: 11, letterSpacing: 0.8)),
+                const Spacer(),
+                Text('$players/4 checked in',
+                    style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 11)),
+              ]),
+              const SizedBox(height: 16),
+              Text(courtName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.stat(21, AppColors.heroInk).copyWith(letterSpacing: -0.4)),
+              const SizedBox(height: 6),
+              Text('Your match is on — good luck! Enter the score when you finish.',
+                  style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 13, height: 1.5)),
+              const SizedBox(height: 16),
+              AppButton('Enter score when done',
+                  full: true, height: 48, icon: Icons.scoreboard_rounded, onPressed: onEnterScore),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Result hero (match just finished — one-time) ─────────────────────────────
+
+class _ResultHero extends StatelessWidget {
+  final Map<String, dynamic> result;
+  final VoidCallback onNext;
+  const _ResultHero({required this.result, required this.onNext});
+
+  /// Set chips from MY perspective. Scores are stored per team as
+  /// comma-separated games ("6,3,6" vs "4,6,2"); zip them and orient to my team.
+  List<String> _sets() {
+    final a = ((result['score_team_a'] as String?) ?? '').split(',');
+    final b = ((result['score_team_b'] as String?) ?? '').split(',');
+    final mine = result['my_team'] == 'a' ? a : b;
+    final opp = result['my_team'] == 'a' ? b : a;
+    final n = mine.length < opp.length ? mine.length : opp.length;
+    final out = <String>[];
+    for (int i = 0; i < n; i++) {
+      final m = mine[i].trim();
+      final o = opp[i].trim();
+      if (m.isEmpty || o.isEmpty) continue;
+      out.add('$m–$o');
+    }
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final won = result['won'] == true;
+    final delta = (result['rating_delta'] as num?)?.toDouble();
+    final after = (result['rating_after'] as num?)?.toDouble();
+    final sets = _sets();
+    final accent = won ? AppColors.success : AppColors.inkSoft;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: AppRadius.cardR,
+          gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.hero, AppColors.hero2]),
+          boxShadow: kCardShadow,
+        ),
+        child: Stack(children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: const Alignment(0, -1.0),
+                  radius: 1.2,
+                  colors: [accent.withValues(alpha: 0.22), Colors.transparent],
+                  stops: const [0.0, 0.65],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: AppTag('Match Complete', color: AppColors.success, solid: true),
+              ),
+              const SizedBox(height: 16),
+              TweenAnimationBuilder<double>(
+                duration: const Duration(milliseconds: 520),
+                curve: Curves.elasticOut,
+                tween: Tween(begin: 0, end: 1),
+                builder: (_, t, child) => Transform.scale(scale: t, child: child),
+                child: Container(
+                  width: 74, height: 74,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    color: accent.withValues(alpha: 0.18),
+                    border: Border.all(color: accent, width: 2),
+                  ),
+                  child: Text(won ? 'W' : 'L',
+                      style: AppText.stat(30, AppColors.heroInk).copyWith(fontWeight: FontWeight.w900)),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(won ? 'You won!' : 'Good game',
+                  style: AppText.stat(23, AppColors.heroInk).copyWith(letterSpacing: -0.5)),
+              if (sets.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(spacing: 8, runSpacing: 8, alignment: WrapAlignment.center, children: [
+                  for (final s in sets)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                      decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.09),
+                          borderRadius: BorderRadius.circular(9)),
+                      child: Text(s,
+                          style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 14)),
+                    ),
+                ]),
+              ],
+              if (delta != null && after != null) ...[
+                const SizedBox(height: 14),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(delta >= 0 ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                      size: 16, color: delta >= 0 ? AppColors.success : AppColors.danger),
+                  const SizedBox(width: 4),
+                  Text('${delta.abs().toStringAsFixed(2)}   ·   Lv ${RankingScale.fmtQuarter(after)}',
+                      style: AppText.bodyStrong(
+                              delta >= 0 ? AppColors.success : AppColors.danger)
+                          .copyWith(fontSize: 15)),
+                ]),
+                const SizedBox(height: 4),
+                Text('${RankingScale.divisionFor(after).name} · ${RankingScale.divisionFor(after).metalName}',
+                    style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12.5)),
+              ] else ...[
+                const SizedBox(height: 12),
+                Text('Casual match · no rating change',
+                    style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12.5)),
+              ],
+              const SizedBox(height: 18),
+              AppButton('Book your next game',
+                  full: true, height: 48, icon: Icons.search_rounded, onPressed: onNext),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Placement reveal (one-time celebration) ──────────────────────────────────
+
+class _PlacementReveal extends StatelessWidget {
+  final PlayerProfile profile;
+  final VoidCallback onNext;
+  const _PlacementReveal({required this.profile, required this.onNext});
+
+  static Color _metalColor(String metal) => switch (metal) {
+        'elite' => AppColors.primary,
+        'gold' => AppColors.warn,
+        'silver' => AppColors.inkSoft,
+        _ => const Color(0xFFB0754A), // bronze
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final level = profile.ranking.level;
+    final div = RankingScale.divisionFor(level);
+    final metal = _metalColor(div.metal);
+    final record = '${profile.wins}–${profile.losses}';
+
+    Widget stat(String value, String label) => Expanded(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 6),
+            decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(12)),
+            child: Column(children: [
+              Text(value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.stat(19, AppColors.heroInk)),
+              const SizedBox(height: 3),
+              Text(label,
+                  textAlign: TextAlign.center,
+                  style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 9.5, letterSpacing: 0.3)),
+            ]),
+          ),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: AppRadius.cardR,
+          gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.hero, AppColors.hero2]),
+          boxShadow: kCardShadow,
+        ),
+        child: Stack(children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: const Alignment(0.0, -1.0),
+                  radius: 1.2,
+                  colors: [AppColors.gold.withValues(alpha: 0.22), Colors.transparent],
+                  stops: const [0.0, 0.65],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: AppTag('Placement Complete', color: AppColors.gold, solid: true),
+              ),
+              const SizedBox(height: 18),
+              // Pop-in division badge.
+              TweenAnimationBuilder<double>(
+                duration: const Duration(milliseconds: 520),
+                curve: Curves.elasticOut,
+                tween: Tween(begin: 0, end: 1),
+                builder: (_, t, child) => Transform.scale(scale: t, child: child),
+                child: Container(
+                  width: 88, height: 88,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(22),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color.lerp(metal, Colors.white, 0.35)!, metal],
+                    ),
+                    boxShadow: [
+                      BoxShadow(color: metal.withValues(alpha: 0.4), blurRadius: 20, offset: const Offset(0, 6)),
+                    ],
+                  ),
+                  child: Text(div.key,
+                      style: AppText.stat(38, Colors.white).copyWith(fontWeight: FontWeight.w900)),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text("You're in ${div.name}",
+                  style: AppText.stat(23, AppColors.heroInk).copyWith(letterSpacing: -0.5)),
+              const SizedBox(height: 4),
+              Text('${div.metalName} · ${div.league}',
+                  style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 13)),
+              const SizedBox(height: 18),
+              Row(children: [
+                stat('Lv ${RankingScale.fmtQuarter(level)}', 'STARTING LEVEL'),
+                stat(div.metalName, 'TIER'),
+                stat(record, 'RECORD'),
+              ]),
+              const SizedBox(height: 18),
+              AppButton('See what\'s next',
+                  full: true, height: 48, icon: Icons.arrow_forward_rounded, onPressed: onNext),
+            ]),
+          ),
+        ]),
       ),
     );
   }
