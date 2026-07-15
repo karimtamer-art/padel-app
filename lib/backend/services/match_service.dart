@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -187,11 +186,6 @@ class MatchService {
 
   // ── Create / join / leave ────────────────────────────────────────────────
 
-  static String _inviteCode() {
-    final n = Random().nextInt(9000) + 1000;
-    return 'PDL-$n';
-  }
-
   /// Creates the match and adds the creator (+ optional partner) to team A.
   /// Returns `(error, matchId)`.
   static Future<(String?, String?)> createMatch({
@@ -205,29 +199,18 @@ class MatchService {
     final uid = _uid;
     if (uid == null) return ('Not signed in.', null);
     try {
-      final match = await _db
-          .from('matches')
-          .insert({
-            'status': 'open',
-            'match_type': competitive ? 'ranked' : 'casual',
-            'scheduled_at': scheduledAt.toUtc().toIso8601String(),
-            'created_by': uid,
-            if (courtId != null) 'court_id': courtId,
-            'is_private': !open,
-            'min_elo': minElo,
-            'invite_code': _inviteCode(),
-          })
-          .select('id')
-          .single();
-      final id = match['id'] as String;
-
-      final players = <Map<String, dynamic>>[
-        {'match_id': id, 'player_id': uid, 'team': 'a'},
-        if (partnerId != null)
-          {'match_id': id, 'player_id': partnerId, 'team': 'a'},
-      ];
-      await _db.from('match_players').insert(players);
-      return (null, id);
+      // Atomic: matches + match_players are inserted together server-side, so a
+      // match can never be created without its creator/partner. (Direct client
+      // match_players inserts are blocked by RLS — hence the RPC.)
+      final id = await _db.rpc('create_match', params: {
+        'p_competitive': competitive,
+        'p_scheduled_at': scheduledAt.toUtc().toIso8601String(),
+        'p_court_id': courtId,
+        'p_partner_id': partnerId,
+        'p_min_elo': minElo,
+        'p_open': open,
+      });
+      return (null, id as String?);
     } on PostgrestException catch (e) {
       return (e.message, null);
     } catch (e) {

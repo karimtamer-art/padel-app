@@ -258,6 +258,45 @@ grant select on public.tournament_matches  to authenticated, anon;
 
 grant execute on function public.join_match(uuid, text) to authenticated;
 grant execute on function public.leave_match(uuid) to authenticated;
+
+-- Atomic create: match + players (creator + optional partner) in one txn.
+-- SECURITY DEFINER because match_players has no client INSERT policy; a direct
+-- client insert was being denied and leaving orphaned, player-less matches.
+create or replace function public.create_match(
+  p_competitive  boolean,
+  p_scheduled_at timestamptz,
+  p_court_id     uuid default null,
+  p_partner_id   uuid default null,
+  p_min_elo      int default 0,
+  p_open         boolean default true
+) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_id  uuid;
+begin
+  if v_uid is null then raise exception 'Not signed in.'; end if;
+  if p_scheduled_at is null then raise exception 'Pick a time for the match.'; end if;
+
+  insert into public.matches
+    (status, match_type, scheduled_at, created_by, court_id, is_private, min_elo, invite_code)
+  values
+    ('open',
+     case when p_competitive then 'ranked' else 'casual' end,
+     p_scheduled_at, v_uid, p_court_id,
+     not coalesce(p_open, true),
+     coalesce(p_min_elo, 0),
+     'PDL-' || upper(substr(md5(gen_random_uuid()::text), 1, 5)))
+  returning id into v_id;
+
+  insert into public.match_players (match_id, player_id, team) values (v_id, v_uid, 'a');
+  if p_partner_id is not null and p_partner_id <> v_uid then
+    insert into public.match_players (match_id, player_id, team) values (v_id, p_partner_id, 'a');
+  end if;
+
+  return v_id;
+end $$;
+grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
 -- submit_match_result / confirm_match_result grants moved to the v2 block (their
 -- definitions live there now, so the grants must follow them).
 
