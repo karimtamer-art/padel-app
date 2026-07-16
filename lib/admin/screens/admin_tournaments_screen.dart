@@ -1128,21 +1128,64 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
   Future<void> _pickTime(TextEditingController c) async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final picked = await showTimePicker(
+    // Parse the currently stored 'h:mm AP' string back to a time, else 6:00 PM.
+    var initial = DateTime(2020, 1, 1, 18, 0);
+    final m = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', caseSensitive: false)
+        .firstMatch(c.text.trim());
+    if (m != null) {
+      var h = int.parse(m.group(1)!) % 12;
+      if (m.group(3)!.toUpperCase() == 'PM') h += 12;
+      initial = DateTime(2020, 1, 1, h, int.parse(m.group(2)!));
+    }
+    var temp = initial;
+    await showModalBottomSheet(
       context: context,
-      initialTime: const TimeOfDay(hour: 18, minute: 0),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: const ColorScheme.light(primary: AdminColors.primary),
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        height: 320,
+        decoration: const BoxDecoration(
+          color: AdminColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: child!,
+        child: SafeArea(
+          top: false,
+          child: Column(children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 14, 12, 12),
+              decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: AdminColors.lineSoft))),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Pick a start time', style: AdminText.strong()),
+                  CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    onPressed: () {
+                      final h = temp.hour % 12 == 0 ? 12 : temp.hour % 12;
+                      final mm = temp.minute.toString().padLeft(2, '0');
+                      final ap = temp.hour < 12 ? 'AM' : 'PM';
+                      c.text = '$h:$mm $ap';
+                      Navigator.pop(ctx);
+                    },
+                    child: Text('Done', style: AdminText.strong(AdminColors.primary)),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: CupertinoDatePicker(
+                mode: CupertinoDatePickerMode.time,
+                minuteInterval: 5,
+                use24hFormat: false,
+                initialDateTime: DateTime(2020, 1, 1, initial.hour,
+                    initial.minute - (initial.minute % 5)),
+                onDateTimeChanged: (d) => temp = d,
+              ),
+            ),
+          ]),
+        ),
       ),
     );
-    if (picked == null) return;
-    final h = picked.hourOfPeriod == 0 ? 12 : picked.hourOfPeriod;
-    final mm = picked.minute.toString().padLeft(2, '0');
-    final ap = picked.period == DayPeriod.am ? 'AM' : 'PM';
-    c.text = '$h:$mm $ap';
   }
 
   // A quick "choose from courts" button that fills the venue field.
