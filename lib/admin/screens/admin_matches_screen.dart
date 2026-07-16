@@ -169,7 +169,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
         ]),
         const SizedBox(height: 14),
         SizedBox(
-          height: 96,
+          height: 112,
           child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             for (int i = 0; i < 7; i++)
               Expanded(
@@ -709,13 +709,17 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
         child: AdminCard(
           padding: EdgeInsets.zero,
           onTap: onTap,
-          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Container(width: 4,
-                decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)))),
-            Expanded(child: Padding(padding: const EdgeInsets.all(12), child: child)),
-          ]),
+          // IntrinsicHeight so the stretched accent bar has a bounded height
+          // (a stretch Row inside a ListView is otherwise unbounded → crash).
+          child: IntrinsicHeight(
+            child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Container(width: 4,
+                  decoration: BoxDecoration(
+                      color: accent,
+                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)))),
+              Expanded(child: Padding(padding: const EdgeInsets.all(12), child: child)),
+            ]),
+          ),
         ),
       );
 
