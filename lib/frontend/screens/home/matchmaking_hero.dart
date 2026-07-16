@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/cupertino.dart' show CupertinoDatePicker, CupertinoDatePickerMode, CupertinoTheme, CupertinoThemeData, CupertinoTextThemeData;
 import 'package:flutter/material.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -484,6 +485,7 @@ class _WhenSheetState extends State<_WhenSheet> {
   late DateTime _day;
   late TimeOfDay _start;
   late TimeOfDay _end;
+  String? _picking; // null · 'from' · 'to' — which field the wheel edits
 
   @override
   void initState() {
@@ -529,10 +531,6 @@ class _WhenSheetState extends State<_WhenSheet> {
     if (picked != null) setState(() => _day = DateTime(picked.year, picked.month, picked.day));
   }
 
-  Future<void> _pickTime(bool start) async {
-    final picked = await showTimePicker(context: context, initialTime: start ? _start : _end);
-    if (picked != null) setState(() => start ? _start = picked : _end = picked);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -595,10 +593,15 @@ class _WhenSheetState extends State<_WhenSheet> {
           Text('TIME RANGE', style: AppText.tag(AppColors.inkFaint)),
           const SizedBox(height: 8),
           Row(children: [
-            Expanded(child: _timeBox('From', loc.formatTimeOfDay(_start), () => _pickTime(true))),
+            Expanded(child: _timeBox('from', 'From', loc.formatTimeOfDay(_start))),
             const SizedBox(width: 10),
-            Expanded(child: _timeBox('To', loc.formatTimeOfDay(_end), () => _pickTime(false))),
+            Expanded(child: _timeBox('to', 'To', loc.formatTimeOfDay(_end))),
           ]),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            child: _picking == null ? const SizedBox(width: double.infinity) : _wheel(),
+          ),
         ],
         const SizedBox(height: 20),
         SizedBox(
@@ -656,26 +659,68 @@ class _WhenSheetState extends State<_WhenSheet> {
         ),
       );
 
-  Widget _timeBox(String label, String value, VoidCallback onTap) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceAlt,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.line),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label.toUpperCase(), style: AppText.tag(AppColors.inkFaint)),
-            const SizedBox(height: 4),
-            Row(children: [
-              const Icon(Icons.schedule_rounded, size: 15, color: AppColors.primary),
-              const SizedBox(width: 6),
-              Text(value, style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 14)),
-            ]),
-          ]),
+  Widget _timeBox(String field, String label, String value) {
+    final on = _picking == field;
+    return GestureDetector(
+      onTap: () => setState(() => _picking = on ? null : field),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          color: on ? AppColors.primary.withValues(alpha: 0.08) : AppColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: on ? AppColors.primary : AppColors.line, width: on ? 1.5 : 1),
         ),
-      );
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label.toUpperCase(), style: AppText.tag(AppColors.inkFaint)),
+          const SizedBox(height: 4),
+          Row(children: [
+            Icon(on ? Icons.expand_more_rounded : Icons.schedule_rounded,
+                size: 15, color: AppColors.primary),
+            const SizedBox(width: 6),
+            Text(value, style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 14)),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  // Inline scroll-wheel for the active From/To field (no dial popup).
+  Widget _wheel() {
+    final editingFrom = _picking == 'from';
+    final t = editingFrom ? _start : _end;
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      height: 168,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.line),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: CupertinoTheme(
+        data: CupertinoThemeData(
+          textTheme: CupertinoTextThemeData(
+            dateTimePickerTextStyle: AppText.bodyStrong().copyWith(fontSize: 20),
+          ),
+        ),
+        child: CupertinoDatePicker(
+          key: ValueKey(_picking), // rebuild the wheel when switching fields
+          mode: CupertinoDatePickerMode.time,
+          minuteInterval: 5,
+          use24hFormat: false,
+          initialDateTime: DateTime(2020, 1, 1, t.hour, t.minute - (t.minute % 5)),
+          onDateTimeChanged: (dt) => setState(() {
+            final tod = TimeOfDay(hour: dt.hour, minute: dt.minute);
+            if (editingFrom) {
+              _start = tod;
+            } else {
+              _end = tod;
+            }
+          }),
+        ),
+      ),
+    );
+  }
 }
 
 /// Expanding-ring radar with the player's initials on the center puck.
