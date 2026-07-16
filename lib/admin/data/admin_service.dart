@@ -319,11 +319,20 @@ class AdminService {
     return List<Map<String, dynamic>>.from(res as List);
   }
 
+  /// Rich console read: matches with court, host, players (name+team), score,
+  /// winner, ELO delta. Admin-gated server-side.
+  static Future<List<Map<String, dynamic>>> matchesConsole({int limit = 200}) async {
+    final res = await _db.rpc('admin_matches_console', params: {'p_limit': limit});
+    return List<Map<String, dynamic>>.from(res as List);
+  }
+
   /// Admin-only: soft-remove a match — marks it 'cancelled' (hidden from players,
-  /// kept in the DB). Returns null on success, else an error message.
-  static Future<String?> removeMatch(String id) async {
+  /// kept in the DB) and logs the reason/note to the audit trail. Returns null
+  /// on success, else an error message.
+  static Future<String?> removeMatch(String id, {String? reason, String? note}) async {
     try {
-      final res = await _db.rpc('admin_cancel_match', params: {'p_match_id': id});
+      final res = await _db.rpc('admin_cancel_match',
+          params: {'p_match_id': id, 'p_reason': reason, 'p_note': note});
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;
