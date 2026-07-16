@@ -11,6 +11,19 @@ class AdminService {
 
   // ── Players ───────────────────────────────────────────────────
 
+  /// Rich players feed for the console: rating v2 + win/loss + last-active +
+  /// email + global rank, all real (server RPC). Falls back to [fetchPlayers]
+  /// on pre-migration databases so the tab still renders.
+  static Future<List<Map<String, dynamic>>> playersConsole() async {
+    try {
+      final res = await _db.rpc('admin_players_console');
+      return List<Map<String, dynamic>>.from((res as List)
+          .map((e) => Map<String, dynamic>.from(e as Map)));
+    } catch (_) {
+      return fetchPlayers();
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> fetchPlayers() async {
     const base = 'id, name, phone, city, avatar_url, elo, tier, division_pts, '
         'level, placement_played, status, verified, is_admin, created_at';
