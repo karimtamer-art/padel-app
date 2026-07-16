@@ -8,7 +8,10 @@ import '../data/admin_service.dart';
 /// Disputes / Lobbies / Completed tabs with a detail sheet and a
 /// remove-with-reason flow (soft cancel + audit log).
 class AdminMatchesScreen extends StatefulWidget {
-  const AdminMatchesScreen({super.key});
+  /// Organizers run events, not the platform — they don't need the
+  /// competitive-vs-casual format split, so it's hidden for them.
+  final bool isOrganizer;
+  const AdminMatchesScreen({super.key, this.isOrganizer = false});
   @override
   State<AdminMatchesScreen> createState() => _AdminMatchesScreenState();
 }
@@ -148,8 +151,10 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
         ]),
         const SizedBox(height: 16),
         _volumeCard(weekTotal),
-        const SizedBox(height: 12),
-        _formatCard(comp, casual, disputeRate),
+        if (!widget.isOrganizer) ...[
+          const SizedBox(height: 12),
+          _formatCard(comp, casual, disputeRate),
+        ],
         const SizedBox(height: 18),
         _tabs(),
         const SizedBox(height: 12),
