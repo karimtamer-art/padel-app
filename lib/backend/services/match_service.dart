@@ -27,9 +27,18 @@ class MatchService {
   /// this is the only way to see a match you're not already in. Returns flat
   /// rows: match_id, scheduled_at, match_type, court_name, venue_name, city,
   /// creator_id/name/rating/level, players, center_rating, level_match_pct.
-  static Future<List<Map<String, dynamic>>> fetchBandCandidates({int limit = 10}) async {
+  ///
+  /// Optional [from]/[to] restrict candidates to matches scheduled inside that
+  /// window (the player's chosen day + time range). When both are null the
+  /// server uses its default rolling window (next `mm_time_window_hours`).
+  static Future<List<Map<String, dynamic>>> fetchBandCandidates(
+      {int limit = 10, DateTime? from, DateTime? to}) async {
     try {
-      final rows = await _db.rpc('mm_candidates', params: {'p_limit': limit});
+      final rows = await _db.rpc('mm_candidates', params: {
+        'p_limit': limit,
+        'p_from': from?.toUtc().toIso8601String(),
+        'p_to': to?.toUtc().toIso8601String(),
+      });
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (e) {
       debugPrint('[MatchService] fetchBandCandidates: $e');
@@ -46,9 +55,12 @@ class MatchService {
 
   /// Count of matches in the caller's band — the home "N matches near you"
   /// teaser. Band-filtered, not a public count.
-  static Future<int> countCandidates() async {
+  static Future<int> countCandidates({DateTime? from, DateTime? to}) async {
     try {
-      final n = await _db.rpc('mm_count_candidates');
+      final n = await _db.rpc('mm_count_candidates', params: {
+        'p_from': from?.toUtc().toIso8601String(),
+        'p_to': to?.toUtc().toIso8601String(),
+      });
       return (n as num?)?.toInt() ?? 0;
     } catch (e) {
       debugPrint('[MatchService] countCandidates: $e');

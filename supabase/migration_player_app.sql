@@ -1783,7 +1783,16 @@ update public.matches m
 -- The ONE way to discover a match you're not in: band-gatekept, SECURITY DEFINER
 -- so it can scan the pool to filter it, but only ever returns rows in the
 -- caller's band + city + time window. p_limit null = all (for counting).
-create or replace function public.mm_candidates(p_limit int default null)
+-- Signature carries optional [p_from, p_to] so the client can matchmake on a
+-- chosen day + time range; drop the older overloads first so calls stay
+-- unambiguous (mm_count_candidates depends on it → drop that first).
+drop function if exists public.mm_count_candidates();
+drop function if exists public.mm_candidates(int);
+create or replace function public.mm_candidates(
+  p_limit int default null,
+  p_from  timestamptz default null,
+  p_to    timestamptz default null
+)
 returns table(
   match_id       uuid,
   scheduled_at   timestamptz,
@@ -1834,7 +1843,14 @@ begin
    where m.status = 'open'
      and m.created_by <> v_uid
      and m.scheduled_at > now()
-     and m.scheduled_at < now() + (v_window * interval '1 hour')
+     -- Time window: explicit [p_from, p_to] when given, else the rolling window.
+     and (
+       case when p_from is null and p_to is null
+         then m.scheduled_at < now() + (v_window * interval '1 hour')
+         else m.scheduled_at >= greatest(now(), coalesce(p_from, now()))
+              and m.scheduled_at <= coalesce(p_to, now() + interval '365 days')
+       end
+     )
      and (select count(*) from public.match_players mp2 where mp2.match_id = m.id) < 4
      and not exists (select 1 from public.match_players mp3
                       where mp3.match_id = m.id and mp3.player_id = v_uid)
@@ -1852,14 +1868,17 @@ begin
    limit p_limit;
 end $$;
 
-create or replace function public.mm_count_candidates()
+create or replace function public.mm_count_candidates(
+  p_from timestamptz default null,
+  p_to   timestamptz default null
+)
 returns int
 language sql stable security definer set search_path = public as $$
-  select count(*)::int from public.mm_candidates(null);
+  select count(*)::int from public.mm_candidates(null, p_from, p_to);
 $$;
 
-grant execute on function public.mm_candidates(int) to authenticated;
-grant execute on function public.mm_count_candidates() to authenticated;
+grant execute on function public.mm_candidates(int, timestamptz, timestamptz) to authenticated;
+grant execute on function public.mm_count_candidates(timestamptz, timestamptz) to authenticated;
 
 -- Accept a surfaced candidate (Phase 2). Race-safe join that RE-VERIFIES the
 -- band server-side — a client can pass any match_id, so we never trust it came

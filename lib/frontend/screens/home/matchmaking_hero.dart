@@ -38,6 +38,9 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
   int _confirmLeft = 0;
   Timer? _poll;
   Timer? _tick;
+  // Optional day + time-range filter. Null = default rolling window (next Nh).
+  DateTime? _from;
+  DateTime? _to;
 
   @override
   void initState() {
@@ -69,7 +72,8 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
 
   Future<void> _pollOnce() async {
     if (!mounted || _phase != _MMPhase.searching) return;
-    final rows = await MatchService.fetchBandCandidates(limit: 10);
+    final rows =
+        await MatchService.fetchBandCandidates(limit: 10, from: _from, to: _to);
     if (!mounted || _phase != _MMPhase.searching) return;
     Map<String, dynamic>? next;
     for (final r in rows) {
@@ -196,16 +200,18 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
           style: AppText.stat(21, AppColors.heroInk).copyWith(letterSpacing: -0.3)),
       const SizedBox(height: 6),
       Text(
-          widening
-              ? 'Widening your search — pairing you with the closest ${widget.levelLabel} player available.'
-              : 'Pairing you with a ${widget.levelLabel} player free soon, near you.',
+          _from != null
+              ? 'Pairing you with a ${widget.levelLabel} player for ${_whenLong()}.'
+              : widening
+                  ? 'Widening your search — pairing you with the closest ${widget.levelLabel} player available.'
+                  : 'Pairing you with a ${widget.levelLabel} player free soon, near you.',
           textAlign: TextAlign.center,
           style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12.5, height: 1.5)),
       const SizedBox(height: 18),
       Row(children: [
         _criteria(Icons.military_tech_rounded, 'LEVEL', widget.levelLabel),
         _criteria(Icons.place_rounded, 'RANGE', 'Nearby'),
-        _criteria(Icons.schedule_rounded, 'WHEN', 'Next ${MatchmakingConfig.timeWindowHours}h'),
+        _criteria(Icons.schedule_rounded, 'WHEN', _whenShort(), onTap: _editWhen),
       ]),
       const SizedBox(height: 16),
       SizedBox(
@@ -216,26 +222,96 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
     ]);
   }
 
-  Widget _criteria(IconData icon, String label, String value) => Expanded(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 6),
-          decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(12)),
-          child: Column(children: [
-            Icon(icon, size: 16, color: AppColors.gold),
-            const SizedBox(height: 6),
-            Text(value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 12.5)),
-            const SizedBox(height: 2),
-            Text(label,
-                style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 9, letterSpacing: 0.5)),
-          ]),
-        ),
-      );
+  Widget _criteria(IconData icon, String label, String value, {VoidCallback? onTap}) {
+    final active = onTap != null && _from != null;
+    final tile = Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 6),
+      decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: active ? 0.13 : 0.07),
+          borderRadius: BorderRadius.circular(12),
+          border: onTap != null
+              ? Border.all(color: AppColors.gold.withValues(alpha: active ? 0.55 : 0.28))
+              : null),
+      child: Column(children: [
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, size: 16, color: AppColors.gold),
+          if (onTap != null) ...[
+            const SizedBox(width: 3),
+            const Icon(Icons.expand_more_rounded, size: 13, color: AppColors.heroFaint),
+          ],
+        ]),
+        const SizedBox(height: 6),
+        Text(value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 12.5)),
+        const SizedBox(height: 2),
+        Text(label,
+            style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 9, letterSpacing: 0.5)),
+      ]),
+    );
+    return Expanded(
+      child: onTap == null
+          ? tile
+          : GestureDetector(onTap: onTap, behavior: HitTestBehavior.opaque, child: tile),
+    );
+  }
+
+  // ── WHEN filter ──
+  String _whenShort() {
+    if (_from == null) return 'Next ${MatchmakingConfig.timeWindowHours}h';
+    return '${_dayShort(_from!)} ${_hm(_from!)}';
+  }
+
+  String _whenLong() {
+    if (_from == null) return 'the next ${MatchmakingConfig.timeWindowHours} hours';
+    final to = _to;
+    final range = to == null ? _hm(_from!) : '${_hm(_from!)}–${_hm(to)}';
+    return '${_dayLong(_from!)}, $range';
+  }
+
+  static const _wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  String _dayShort(DateTime d) {
+    final now = DateTime.now();
+    if (_sameDay(d, now)) return 'Today';
+    if (_sameDay(d, now.add(const Duration(days: 1)))) return 'Tmrw';
+    return _wd[d.weekday - 1];
+  }
+
+  String _dayLong(DateTime d) {
+    final now = DateTime.now();
+    if (_sameDay(d, now)) return 'today';
+    if (_sameDay(d, now.add(const Duration(days: 1)))) return 'tomorrow';
+    return '${_wd[d.weekday - 1]} ${d.day} ${_mo[d.month - 1]}';
+  }
+
+  static String _hm(DateTime d) {
+    final h = d.hour == 0 ? 12 : (d.hour > 12 ? d.hour - 12 : d.hour);
+    final ap = d.hour < 12 ? 'am' : 'pm';
+    return d.minute == 0 ? '$h$ap' : '$h:${d.minute.toString().padLeft(2, '0')}$ap';
+  }
+
+  Future<void> _editWhen() async {
+    final res = await showModalBottomSheet<_WhenResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _WhenSheet(from: _from, to: _to),
+    );
+    if (res == null || !mounted) return; // dismissed
+    setState(() {
+      _from = res.from;
+      _to = res.to;
+      _declined.clear();
+    });
+    _startSearch();
+  }
 
   // ── found ──
   Widget _found() {
@@ -365,6 +441,223 @@ class _JoiningText extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text('Locking it in…',
       style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 16));
+}
+
+/// Result of the WHEN filter sheet: both null → any time (rolling window),
+/// otherwise the chosen [from, to] window (local time).
+class _WhenResult {
+  final DateTime? from;
+  final DateTime? to;
+  const _WhenResult(this.from, this.to);
+}
+
+/// Bottom sheet: pick "any time" or a specific day + time-of-day range for
+/// which matches to matchmake against.
+class _WhenSheet extends StatefulWidget {
+  final DateTime? from;
+  final DateTime? to;
+  const _WhenSheet({this.from, this.to});
+  @override
+  State<_WhenSheet> createState() => _WhenSheetState();
+}
+
+class _WhenSheetState extends State<_WhenSheet> {
+  late bool _any;
+  late DateTime _day;
+  late TimeOfDay _start;
+  late TimeOfDay _end;
+
+  @override
+  void initState() {
+    super.initState();
+    final f = widget.from;
+    final now = DateTime.now();
+    _any = f == null;
+    _day = f != null
+        ? DateTime(f.year, f.month, f.day)
+        : DateTime(now.year, now.month, now.day);
+    _start = f != null
+        ? TimeOfDay(hour: f.hour, minute: f.minute)
+        : const TimeOfDay(hour: 18, minute: 0);
+    final t = widget.to;
+    _end = t != null
+        ? TimeOfDay(hour: t.hour, minute: t.minute)
+        : const TimeOfDay(hour: 22, minute: 0);
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  void _apply() {
+    if (_any) {
+      Navigator.pop(context, const _WhenResult(null, null));
+      return;
+    }
+    var from = DateTime(_day.year, _day.month, _day.day, _start.hour, _start.minute);
+    var to = DateTime(_day.year, _day.month, _day.day, _end.hour, _end.minute);
+    if (!to.isAfter(from)) to = from.add(const Duration(hours: 2));
+    Navigator.pop(context, _WhenResult(from, to));
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _day.isBefore(today) ? today : _day,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 30)),
+    );
+    if (picked != null) setState(() => _day = DateTime(picked.year, picked.month, picked.day));
+  }
+
+  Future<void> _pickTime(bool start) async {
+    final picked = await showTimePicker(context: context, initialTime: start ? _start : _end);
+    if (picked != null) setState(() => start ? _start = picked : _end = picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final beyond = !_sameDay(_day, today) && !_sameDay(_day, tomorrow);
+    final loc = MaterialLocalizations.of(context);
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      padding: EdgeInsets.only(
+          left: 20, right: 20, top: 10, bottom: 20 + MediaQuery.of(context).padding.bottom),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(
+          child: Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(color: AppColors.line, borderRadius: BorderRadius.circular(999)),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text('When do you want to play?', style: AppText.stat(19, AppColors.ink)),
+        const SizedBox(height: 4),
+        Text('Match against games created for a time that suits you.',
+            style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 12.5)),
+        const SizedBox(height: 16),
+        Row(children: [
+          _mode('Any time', _any, () => setState(() => _any = true)),
+          const SizedBox(width: 10),
+          _mode('Specific slot', !_any, () => setState(() => _any = false)),
+        ]),
+        const SizedBox(height: 18),
+        if (_any)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+                color: AppColors.surfaceAlt, borderRadius: BorderRadius.circular(14)),
+            child: Text(
+                'We\'ll pair you with any matching-level game in the next '
+                '${MatchmakingConfig.timeWindowHours} hours near you.',
+                style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 12.5, height: 1.4)),
+          )
+        else ...[
+          Text('DAY', style: AppText.tag(AppColors.inkFaint)),
+          const SizedBox(height: 8),
+          Row(children: [
+            _dayChip('Today', _sameDay(_day, today), () => setState(() => _day = today)),
+            const SizedBox(width: 8),
+            _dayChip('Tomorrow', _sameDay(_day, tomorrow), () => setState(() => _day = tomorrow)),
+            const SizedBox(width: 8),
+            _dayChip(beyond ? '${_day.day} ${_MatchmakingHeroState._mo[_day.month - 1]}' : 'Pick date',
+                beyond, _pickDate,
+                icon: Icons.event_rounded),
+          ]),
+          const SizedBox(height: 16),
+          Text('TIME RANGE', style: AppText.tag(AppColors.inkFaint)),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: _timeBox('From', loc.formatTimeOfDay(_start), () => _pickTime(true))),
+            const SizedBox(width: 10),
+            Expanded(child: _timeBox('To', loc.formatTimeOfDay(_end), () => _pickTime(false))),
+          ]),
+        ],
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          child: AppButton('Apply', height: 50, icon: Icons.check_rounded, onPressed: _apply),
+        ),
+      ]),
+    );
+  }
+
+  Widget _mode(String label, bool on, VoidCallback onTap) => Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: on ? AppColors.primary : AppColors.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: on ? AppColors.primary : AppColors.line),
+            ),
+            child: Text(label,
+                style: AppText.bodyStrong(on ? AppColors.primaryInk : AppColors.inkSoft)
+                    .copyWith(fontSize: 13.5)),
+          ),
+        ),
+      );
+
+  Widget _dayChip(String label, bool on, VoidCallback onTap, {IconData? icon}) => Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: 42,
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            decoration: BoxDecoration(
+              color: on ? AppColors.gold.withValues(alpha: 0.14) : AppColors.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: on ? AppColors.gold : AppColors.line),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              if (icon != null) ...[
+                Icon(icon, size: 14, color: on ? AppColors.gold : AppColors.inkFaint),
+                const SizedBox(width: 5),
+              ],
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.bodyStrong(on ? AppColors.ink : AppColors.inkSoft)
+                        .copyWith(fontSize: 12.5)),
+              ),
+            ]),
+          ),
+        ),
+      );
+
+  Widget _timeBox(String label, String value, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.line),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label.toUpperCase(), style: AppText.tag(AppColors.inkFaint)),
+            const SizedBox(height: 4),
+            Row(children: [
+              const Icon(Icons.schedule_rounded, size: 15, color: AppColors.primary),
+              const SizedBox(width: 6),
+              Text(value, style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 14)),
+            ]),
+          ]),
+        ),
+      );
 }
 
 /// Expanding-ring radar with the player's initials on the center puck.
