@@ -16,12 +16,18 @@ class MatchmakingHero extends StatefulWidget {
   final String levelLabel; // LEVEL criteria (e.g. "Div B")
   final void Function(String matchId) onAccepted;
   final VoidCallback onCancel;
+  // Optional starting day + time-range window (from the "choose when" entry).
+  // Null = quick auto-match (default rolling window).
+  final DateTime? initialFrom;
+  final DateTime? initialTo;
   const MatchmakingHero({
     super.key,
     required this.initials,
     required this.levelLabel,
     required this.onAccepted,
     required this.onCancel,
+    this.initialFrom,
+    this.initialTo,
   });
 
   @override
@@ -45,6 +51,8 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
   @override
   void initState() {
     super.initState();
+    _from = widget.initialFrom;
+    _to = widget.initialTo;
     _startSearch();
   }
 
@@ -298,16 +306,11 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
   }
 
   Future<void> _editWhen() async {
-    final res = await showModalBottomSheet<_WhenResult>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _WhenSheet(from: _from, to: _to),
-    );
-    if (res == null || !mounted) return; // dismissed
+    final w = await showMatchWhenPicker(context, from: _from, to: _to);
+    if (w == null || !mounted) return; // dismissed
     setState(() {
-      _from = res.from;
-      _to = res.to;
+      _from = w.from;
+      _to = w.to;
       _declined.clear();
     });
     _startSearch();
@@ -441,6 +444,21 @@ class _JoiningText extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text('Locking it in…',
       style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 16));
+}
+
+/// Opens the day + time-range picker. Returns the chosen window, or null if the
+/// sheet was dismissed. A result with both fields null means "any time" (the
+/// quick/rolling window). Shared by the searching hero's WHEN tile and the
+/// home "choose a day & time" entry.
+Future<({DateTime? from, DateTime? to})?> showMatchWhenPicker(
+    BuildContext context, {DateTime? from, DateTime? to}) async {
+  final res = await showModalBottomSheet<_WhenResult>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _WhenSheet(from: from, to: to),
+  );
+  return res == null ? null : (from: res.from, to: res.to);
 }
 
 /// Result of the WHEN filter sheet: both null → any time (rolling window),

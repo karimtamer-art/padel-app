@@ -67,6 +67,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _revealDismissed = false;
   // The player tapped "Find a Match" → the hero morphs into the searching radar.
   bool _searching = false;
+  // Chosen day + time-range window for a scheduled search (null = quick/now).
+  DateTime? _searchFrom;
+  DateTime? _searchTo;
   RealtimeChannel? _notifChannel;
 
   static SupabaseClient get _db => Supabase.instance.client;
@@ -173,9 +176,21 @@ class _HomeScreenState extends State<HomeScreen> {
   // Matchmaking is now the home hero itself (MatchmakingHero), not a screen.
   // The search is ticket-backed so it survives the app closing (background push
   // brings the player back to the resumed radar).
-  void _startSearch() {
-    setState(() => _searching = true);
+  // Quick auto-match now (no window), or a scheduled search when from/to are set.
+  void _startSearch({DateTime? from, DateTime? to}) {
+    setState(() {
+      _searchFrom = from;
+      _searchTo = to;
+      _searching = true;
+    });
     MatchService.startSearch();
+  }
+
+  // "Choose a day & time" → pick a window first, then search scoped to it.
+  Future<void> _scheduleSearch() async {
+    final w = await showMatchWhenPicker(context, from: _searchFrom, to: _searchTo);
+    if (w == null || !mounted) return;
+    _startSearch(from: w.from, to: w.to);
   }
 
   void _stopSearch() {
@@ -359,6 +374,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     levelLabel: _searchLevelLabel,
                     onAccepted: _onMatchAccepted,
                     onCancel: _stopSearch,
+                    initialFrom: _searchFrom,
+                    initialTo: _searchTo,
                   )
                 else if (!widget.profile.ranking.placed)
                   _PlacementWelcome(
@@ -396,6 +413,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ranking: widget.profile.ranking,
                     bandCount: _bandCount,
                     onFindMatch: _startSearch,
+                    onSchedule: _scheduleSearch,
                   ),
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
@@ -1389,10 +1407,12 @@ class _PlacementWelcome extends StatelessWidget {
 class _BookNextHero extends StatelessWidget {
   final Ranking ranking;
   final int bandCount;
-  final VoidCallback onFindMatch;
+  final VoidCallback onFindMatch; // quick auto-match now
+  final VoidCallback onSchedule; // pick a day + time range, then search
   const _BookNextHero({
     required this.ranking,
     required this.onFindMatch,
+    required this.onSchedule,
     this.bandCount = 0,
   });
 
@@ -1484,8 +1504,34 @@ class _BookNextHero extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 16),
+              // Two paths: quick auto-match now, or choose a day + time range.
               AppButton('Find a Match',
-                  full: true, height: 48, icon: Icons.search_rounded, onPressed: onFindMatch),
+                  full: true, height: 48, icon: Icons.bolt_rounded, onPressed: onFindMatch),
+              const SizedBox(height: 4),
+              Center(
+                child: Text('Quick match — auto-paired for the next few hours',
+                    style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 10.5)),
+              ),
+              const SizedBox(height: 10),
+              GestureDetector(
+                onTap: onSchedule,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.07),
+                    borderRadius: AppRadius.btnR,
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+                  ),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.event_rounded, size: 17, color: AppColors.gold),
+                    const SizedBox(width: 8),
+                    Text('Choose a day & time',
+                        style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 14)),
+                  ]),
+                ),
+              ),
             ]),
           ),
         ]),
