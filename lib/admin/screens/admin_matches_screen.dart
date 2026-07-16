@@ -335,8 +335,16 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
   Widget _disputeCard(Map<String, dynamic> m) {
     final (teamA, teamB) = _teams(m);
     final minElo = (m['min_elo'] as num?)?.toInt() ?? 0;
-    final by = m['submitted_by'] as String?;
-    final scoreA = m['score_team_a'] as String?;
+    final subs = (m['submissions'] as List?) ?? const [];
+    Map<String, dynamic>? subA, subB;
+    for (final s in subs) {
+      if (s['team'] == 'a') {
+        subA = Map<String, dynamic>.from(s as Map);
+      } else if (s['team'] == 'b') {
+        subB = Map<String, dynamic>.from(s as Map);
+      }
+    }
+    final conflict = subA != null && subB != null && subA['winner'] != subB['winner'];
     return _accentCard(
       accent: AdminColors.danger,
       onTap: () => _detail(m, 'dispute'),
@@ -352,23 +360,22 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
         const SizedBox(height: 4),
         _teamLine(teamB, false),
         const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(9),
-          decoration: BoxDecoration(color: AdminColors.surfaceAlt, borderRadius: BorderRadius.circular(9)),
-          child: Row(children: [
-            Icon(scoreA == null ? Icons.hourglass_empty_rounded : Icons.sports_score_rounded,
-                size: 15, color: AdminColors.inkSoft),
+        // Both teams' claims side-by-side.
+        IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _claimBox(subA, 'TEAM A CLAIMS'),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                  scoreA == null
-                      ? 'Awaiting a submitted result'
-                      : 'Submitted $scoreA / ${m['score_team_b'] ?? '—'}'
-                          '${by != null ? '  ·  by $by' : ''}',
-                  style: AdminText.small(AdminColors.inkSoft)),
-            ),
+            _claimBox(subB, 'TEAM B CLAIMS'),
           ]),
         ),
+        if (conflict) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.report_gmailerrorred_outlined, size: 14, color: AdminColors.danger),
+            const SizedBox(width: 6),
+            Text('Teams disagree on the winner', style: AdminText.sans(11, FontWeight.w700, AdminColors.danger)),
+          ]),
+        ],
         const SizedBox(height: 10),
         Row(children: [
           if (minElo > 0) ...[
@@ -657,6 +664,44 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
                   : AdminText.small(AdminColors.inkSoft)),
         ),
       ]);
+
+  Widget _claimBox(Map<String, dynamic>? sub, String label) {
+    if (sub == null) {
+      return Expanded(
+        child: Container(
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(color: AdminColors.surfaceAlt, borderRadius: BorderRadius.circular(9)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: AdminText.kicker()),
+            const SizedBox(height: 4),
+            Text('No submission', style: AdminText.small()),
+          ]),
+        ),
+      );
+    }
+    final score = _zipScore((sub['score_a'] as String?) ?? '', (sub['score_b'] as String?) ?? '');
+    final w = sub['winner'];
+    final winnerLabel = w == 'a' ? 'Team A won' : w == 'b' ? 'Team B won' : '—';
+    final by = sub['submitter'] as String?;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(color: AdminColors.surfaceAlt, borderRadius: BorderRadius.circular(9)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: AdminText.kicker()),
+          const SizedBox(height: 4),
+          Text(score.isEmpty ? '—' : score, style: AdminText.mono(12, FontWeight.w800, AdminColors.ink)),
+          const SizedBox(height: 2),
+          Text(winnerLabel, style: AdminText.sans(11, FontWeight.w700, AdminColors.inkSoft)),
+          if (by != null) ...[
+            const SizedBox(height: 1),
+            Text('by ${by.split(' ').first}',
+                style: AdminText.sans(10, FontWeight.w500, AdminColors.inkFaint)),
+          ],
+        ]),
+      ),
+    );
+  }
 
   Widget _accentCard({required Color accent, required Widget child, VoidCallback? onTap}) =>
       Padding(

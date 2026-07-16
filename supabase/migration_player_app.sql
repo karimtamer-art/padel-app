@@ -343,6 +343,11 @@ begin
         (select coalesce(json_agg(json_build_object('name', pr.name, 'team', mp.team) order by mp.team), '[]'::json)
            from public.match_players mp join public.profiles pr on pr.id = mp.player_id
           where mp.match_id = m.id)                                                  as players,
+        (select coalesce(json_agg(json_build_object(
+                   'team', s.team,
+                   'submitter', (select p2.name from public.profiles p2 where p2.id = s.submitter_id),
+                   'score_a', s.score_team_a, 'score_b', s.score_team_b, 'winner', s.winner) order by s.team), '[]'::json)
+           from public.match_result_submissions s where s.match_id = m.id)           as submissions,
         (select max(rh.delta) from public.ranking_history rh where rh.match_id = m.id) as elo_delta
       from public.matches m
       left join public.courts c on c.id = m.court_id
@@ -2772,19 +2777,41 @@ begin
   update matches set rating_applied = true where id = p_match_id;
 end $$;
 
+-- Two-claim dispute model: each team's submitted result, kept even after a
+-- dispute clears matches.score (so an admin can see both claims side-by-side).
+create table if not exists public.match_result_submissions (
+  match_id     uuid not null references public.matches(id) on delete cascade,
+  team         text not null check (team in ('a','b')),
+  submitter_id uuid references public.profiles(id),
+  score_team_a text,
+  score_team_b text,
+  winner       text,
+  created_at   timestamptz not null default now(),
+  primary key (match_id, team)
+);
+alter table public.match_result_submissions enable row level security;
+do $$ begin
+  create policy "mrs: player or admin read" on public.match_result_submissions for select
+    using (
+      exists (select 1 from public.match_players mp
+               where mp.match_id = match_result_submissions.match_id and mp.player_id = auth.uid())
+      or public._is_admin()
+    );
+exception when duplicate_object then null; end $$;
+grant select on public.match_result_submissions to authenticated;
+
 create or replace function public.submit_match_result(
   p_match_id uuid, p_score_a text, p_score_b text, p_winner text)
 returns text
 language plpgsql security definer set search_path = public as $$
 declare
   v_uid uuid := auth.uid();
-  v_type text; v_status text; v_sched timestamptz;
+  v_type text; v_status text; v_sched timestamptz; v_team text;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
   if p_winner not in ('a','b') then return 'Invalid winner.'; end if;
-  if not exists (select 1 from match_players where match_id = p_match_id and player_id = v_uid) then
-    return 'Only players in this match can submit a score.';
-  end if;
+  select team into v_team from match_players where match_id = p_match_id and player_id = v_uid;
+  if v_team is null then return 'Only players in this match can submit a score.'; end if;
   select match_type, status, scheduled_at into v_type, v_status, v_sched
     from matches where id = p_match_id for update;
   if v_status = 'completed' then return 'Result already confirmed.'; end if;
@@ -2794,9 +2821,25 @@ begin
     result_submitted_by = v_uid, result_submitted_at = now(),
     status = case when v_type = 'ranked' then 'pending_confirm' else 'completed' end
   where id = p_match_id;
-  -- casual matches are not rated; ranked matches settle on confirmation
+  insert into public.match_result_submissions
+    (match_id, team, submitter_id, score_team_a, score_team_b, winner)
+  values (p_match_id, v_team, v_uid, p_score_a, p_score_b, p_winner)
+  on conflict (match_id, team) do update set
+    submitter_id = excluded.submitter_id, score_team_a = excluded.score_team_a,
+    score_team_b = excluded.score_team_b, winner = excluded.winner, created_at = now();
   return null;
 end $$;
+
+-- Backfill a submission from any match that currently has a stored result.
+insert into public.match_result_submissions
+  (match_id, team, submitter_id, score_team_a, score_team_b, winner)
+select m.id,
+       coalesce((select mp.team from public.match_players mp
+                  where mp.match_id = m.id and mp.player_id = m.result_submitted_by), 'a'),
+       m.result_submitted_by, m.score_team_a, m.score_team_b, m.winner_team
+  from public.matches m
+ where m.result_submitted_by is not null and m.winner_team is not null
+on conflict (match_id, team) do nothing;
 
 create or replace function public.confirm_match_result(p_match_id uuid, p_confirm boolean)
 returns text
