@@ -379,8 +379,133 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
           const Spacer(),
           _removeBtn(m),
         ]),
+        const SizedBox(height: 10),
+        AdminButton('Resolve dispute',
+            full: true, height: 40, icon: Icons.gavel_rounded,
+            onPressed: () => _resolve(m)),
       ]),
     );
+  }
+
+  Future<void> _resolve(Map<String, dynamic> m) async {
+    final id = m['id'] as String?;
+    if (id == null) return;
+    final (teamA, teamB) = _teams(m);
+    String? winner;
+    final aC = TextEditingController();
+    final bC = TextEditingController();
+    final noteC = TextEditingController();
+
+    Widget opt(String team, String label, List<String> names, void Function(void Function()) setSheet) {
+      final on = winner == team;
+      return GestureDetector(
+        onTap: () => setSheet(() => winner = team),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: on ? AdminColors.wash(AdminColors.primary, 0.10) : AdminColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+                color: on ? AdminColors.primary : AdminColors.line, width: 1.5),
+          ),
+          child: Row(children: [
+            Icon(on ? Icons.emoji_events_rounded : Icons.circle_outlined,
+                size: 18, color: on ? AdminColors.gold : AdminColors.inkFaint),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(label, style: AdminText.kicker()),
+                const SizedBox(height: 1),
+                Text(names.isEmpty ? '—' : names.join(' & '),
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: AdminText.strong()),
+              ]),
+            ),
+          ]),
+        ),
+      );
+    }
+
+    final res = await showModalBottomSheet<Map<String, String?>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            margin: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: AdminColors.surface, borderRadius: BorderRadius.circular(18)),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Resolve dispute', style: AdminText.h2()),
+                  const SizedBox(height: 4),
+                  Text('Pick the winner and confirm the score. ELO recalculates for all players and both teams are notified.',
+                      style: AdminText.small()),
+                  const SizedBox(height: 16),
+                  Text('WINNING TEAM', style: AdminText.kicker()),
+                  const SizedBox(height: 8),
+                  opt('a', 'Team A', teamA, setSheet),
+                  const SizedBox(height: 8),
+                  opt('b', 'Team B', teamB, setSheet),
+                  const SizedBox(height: 14),
+                  Text('SCORE (optional)', style: AdminText.kicker()),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(
+                      child: TextField(
+                        controller: aC,
+                        decoration: const InputDecoration(hintText: 'A games · e.g. 6, 4'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: bC,
+                        decoration: const InputDecoration(hintText: 'B games · e.g. 3, 6'),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteC,
+                    minLines: 1,
+                    maxLines: 2,
+                    decoration: const InputDecoration(hintText: 'Resolution note (optional)'),
+                  ),
+                  const SizedBox(height: 16),
+                  AdminButton('Finalize result',
+                      full: true,
+                      onPressed: winner == null
+                          ? null
+                          : () => Navigator.pop(ctx, {
+                                'winner': winner,
+                                'a': aC.text.trim(),
+                                'b': bC.text.trim(),
+                                'note': noteC.text.trim(),
+                              })),
+                ]),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+    aC.dispose();
+    bC.dispose();
+    noteC.dispose();
+    if (res == null) return;
+    final err = await AdminService.resolveMatch(id,
+        winner: res['winner']!, scoreA: res['a'], scoreB: res['b'], note: res['note']);
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err);
+      return;
+    }
+    adminToast(context, 'Dispute resolved');
+    _load(); // now completed → moves to the Completed tab
   }
 
   // ── Lobbies ──

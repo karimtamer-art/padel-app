@@ -326,6 +326,26 @@ class AdminService {
     return List<Map<String, dynamic>>.from(res as List);
   }
 
+  /// Admin-only: resolve a disputed match — finalize winner + score, recalc ELO,
+  /// notify players, log to audit. Returns null on success, else an error.
+  static Future<String?> resolveMatch(String id,
+      {required String winner, String? scoreA, String? scoreB, String? note}) async {
+    try {
+      final res = await _db.rpc('admin_resolve_match', params: {
+        'p_match_id': id,
+        'p_winner': winner,
+        'p_score_a': scoreA,
+        'p_score_b': scoreB,
+        'p_note': note,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Admin-only: soft-remove a match — marks it 'cancelled' (hidden from players,
   /// kept in the DB) and logs the reason/note to the audit trail. Returns null
   /// on success, else an error message.
