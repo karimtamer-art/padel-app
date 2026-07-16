@@ -131,6 +131,8 @@ class StatusBadge extends StatelessWidget {
   static const _map = <String, List<dynamic>>{
     'active': [AdminColors.success, 'Active'],
     'unverified': [AdminColors.warn, 'Unverified'],
+    'ranked': [AdminColors.success, 'Ranked'],
+    'provisional': [AdminColors.warn, 'Provisional'],
     'flagged': [AdminColors.info, 'Flagged'],
     'banned': [AdminColors.danger, 'Banned'],
     'in': [AdminColors.success, 'In stock'],

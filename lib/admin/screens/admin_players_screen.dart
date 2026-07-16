@@ -25,21 +25,37 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       final data = await AdminService.fetchPlayers();
+      // Legacy `elo` is dead in rating engine v2 — sort by the real 0..7 rating.
+      data.sort((a, b) => _ratingOf(b).compareTo(_ratingOf(a)));
       if (mounted) setState(() { _all = data; _loading = false; });
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
   }
 
+  // Rating engine v2: the live skill number is the 0..7 `rating` (mirrored by
+  // `level`). `elo`/`tier` are legacy/backfill and usually null on live rows.
+  static double _ratingOf(Map<String, dynamic> p) =>
+      (p['rating'] as num?)?.toDouble() ??
+      (p['level'] as num?)?.toDouble() ??
+      0.0;
+
+  static bool _isProvisional(Map<String, dynamic> p) {
+    if (p['is_provisional'] is bool) return p['is_provisional'] as bool;
+    return ((p['competitive_matches'] as num?)?.toInt() ??
+            (p['placement_played'] as num?)?.toInt() ??
+            0) <
+        5;
+  }
+
   List<Map<String, dynamic>> get _rows {
     return _all.where((p) {
       final s = p['status'] as String? ?? 'active';
-      final v = p['verified'] as bool? ?? false;
-      if (_filter == 'flagged') return s == 'flagged';
+      if (_filter == 'provisional') return _isProvisional(p);
       if (_filter == 'banned') return s == 'banned';
-      if (_filter == 'unverified') return !v && s == 'active';
+      if (_filter == 'flagged') return s == 'flagged';
       if (['A', 'B', 'C', 'D'].contains(_filter)) {
-        return _divLetter(p['tier'] as String? ?? 'bronze') == _filter;
+        return _divLetter(_tierForRating(_ratingOf(p))) == _filter;
       }
       return true;
     }).toList();
@@ -63,11 +79,11 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
     return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
+  // Account moderation state wins; otherwise show ranking state (rating v2).
   static String _statusKey(Map<String, dynamic> p) {
     final s = p['status'] as String? ?? 'active';
-    if (s != 'active') return s;
-    final v = p['verified'] as bool? ?? false;
-    return v ? 'active' : 'unverified';
+    if (s == 'banned' || s == 'flagged') return s;
+    return _isProvisional(p) ? 'provisional' : 'ranked';
   }
 
   @override
@@ -87,8 +103,9 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
       );
     }
 
-    final flagged = _all.where((p) => (p['status'] as String?) == 'flagged').length;
     final banned = _all.where((p) => (p['status'] as String?) == 'banned').length;
+    final provisional = _all.where(_isProvisional).length;
+    final ranked = _all.length - provisional - banned;
 
     return RefreshIndicator(
       color: AdminColors.primary,
@@ -98,8 +115,8 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         children: [
           KpiGrid([
             StatCard(icon: Icons.groups_outlined, tone: AdminColors.green, label: 'Total players', value: '${_all.length}'),
-            StatCard(icon: Icons.how_to_reg_outlined, tone: AdminColors.primary, label: 'Verified', value: '${_all.where((p) => (p['verified'] as bool?) ?? false).length}'),
-            StatCard(icon: Icons.flag_outlined, tone: AdminColors.info, label: 'Flagged', value: '$flagged'),
+            StatCard(icon: Icons.verified_outlined, tone: AdminColors.primary, label: 'Ranked', value: '$ranked'),
+            StatCard(icon: Icons.hourglass_bottom_rounded, tone: AdminColors.warn, label: 'Provisional', value: '$provisional'),
             StatCard(icon: Icons.lock_outline_rounded, tone: AdminColors.danger, label: 'Banned', value: '$banned'),
           ]),
           const SizedBox(height: 16),
@@ -114,8 +131,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                   ['B', 'Div B'],
                   ['C', 'Div C'],
                   ['D', 'Div D'],
-                  ['flagged', 'Flagged'],
-                  ['unverified', 'Unverified'],
+                  ['provisional', 'Provisional'],
                   ['banned', 'Banned'],
                 ])
                   Padding(
@@ -158,8 +174,8 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
 
   Widget _row(int rank, Map<String, dynamic> p) {
     final name = p['name'] as String? ?? 'Unknown';
-    final tier = p['tier'] as String? ?? 'bronze';
-    final elo = (p['elo'] as num?)?.toInt() ?? 1000;
+    final rating = _ratingOf(p);
+    final tier = _tierForRating(rating);
     final statusKey = _statusKey(p);
 
     return Padding(
@@ -201,8 +217,13 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
             ]),
           ),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text('$elo',
-                style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+            Row(crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic, children: [
+              Text('Lv ',
+                  style: AdminText.sans(10.5, FontWeight.w700, AdminColors.inkFaint)),
+              Text(rating.toStringAsFixed(2),
+                  style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+            ]),
             const SizedBox(height: 4),
             StatusBadge(statusKey, dot: true),
           ]),
@@ -213,12 +234,14 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
 
   void _openPlayer(Map<String, dynamic> p) {
     final name = p['name'] as String? ?? 'Unknown';
-    final tier = p['tier'] as String? ?? 'bronze';
-    final elo = (p['elo'] as num?)?.toInt() ?? 1000;
+    final rating = _ratingOf(p);
+    final tier = _tierForRating(rating);
     final statusKey = _statusKey(p);
     final phone = p['phone'] as String?;
     final city = p['city'] as String?;
     final id = p['id'] as String;
+    final reliability = (p['reliability'] as num?)?.round() ??
+        (p['sigma'] is num ? ((1 - (p['sigma'] as num)) * 100).round() : null);
 
     adminSheet(
       context,
@@ -277,11 +300,11 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         ]),
         const SizedBox(height: 18),
         Row(children: [
-          _statBox('ELO', '$elo'),
+          _statBox('Level', rating.toStringAsFixed(2)),
           const SizedBox(width: 10),
-          _statBox('Division', _divLabel(tier)),
+          _statBox('Division', 'Div ${_divLetter(tier)}'),
           const SizedBox(width: 10),
-          _statBox('Verified', (p['verified'] as bool? ?? false) ? 'Yes' : 'No'),
+          _statBox('Reliability', reliability == null ? '—' : '$reliability%'),
         ]),
       ]),
     );
@@ -347,12 +370,13 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                 'tier': tier,
                 'elo': (800 + rating * 200).round(),
                 'sigma': sigma,
+                'reliability': ((1 - sigma) * 100).round(),
                 'is_anchor': anchor,
+                'is_provisional': false,
                 'competitive_matches': 10,
                 'placement_played': 5,
               };
-              _all.sort((a, b) => ((b['elo'] as num?)?.toInt() ?? 0)
-                  .compareTo((a['elo'] as num?)?.toInt() ?? 0));
+              _all.sort((a, b) => _ratingOf(b).compareTo(_ratingOf(a)));
             });
           }
           adminToast(context,
