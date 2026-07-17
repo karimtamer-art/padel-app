@@ -10,6 +10,7 @@ import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import '../chat/dm_chat_screen.dart';
+import 'join_match_sheet.dart';
 
 /// Live match detail — lobby + player-submitted result flow, driven by the
 /// `matches` row status:
@@ -140,8 +141,16 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
     }
   }
 
-  Future<void> _join() => _run(() => MatchService.joinMatch(widget.matchId),
-      ok: "You're in! See you on court.");
+  Future<void> _join() async {
+    final choice = await showJoinMatchSheet(context,
+        slotsLeft: (4 - _players.length).clamp(0, 4));
+    if (choice == null || !mounted) return;
+    await _run(
+        () => MatchService.joinMatch(widget.matchId, partnerId: choice.partnerId),
+        ok: choice.solo
+            ? "You're in! See you on court."
+            : 'You and your partner are in! See you on court.');
+  }
 
   Future<void> _leave() async {
     final sure = await showDialog<bool>(

@@ -1085,7 +1085,9 @@ class _UpcomingMatchCard extends StatelessWidget {
                 style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
           ]),
           const SizedBox(height: 12),
-          AppButton('Join Match', full: true, height: 44, onPressed: onOpen),
+          // These cards are always matches the player is already in, so the
+          // action opens the match — never "Join".
+          AppButton('View Match', full: true, height: 44, onPressed: onOpen),
         ]),
       ),
     );

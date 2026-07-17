@@ -233,9 +233,12 @@ class MatchService {
   /// Accept a surfaced matchmaking candidate — race-safe join that re-checks the
   /// band server-side. Returns an error message or null. Use this from the
   /// matchmaking flow instead of [joinMatch] (which is the plain capacity join).
-  static Future<String?> acceptCandidate(String matchId) async {
+  /// [partnerId] brings a chosen partner onto your side (both take one team);
+  /// null joins solo and pairs you with a random player.
+  static Future<String?> acceptCandidate(String matchId, {String? partnerId}) async {
     try {
-      final res = await _db.rpc('mm_accept', params: {'p_match_id': matchId});
+      final res = await _db.rpc('mm_accept',
+          params: {'p_match_id': matchId, 'p_partner_id': partnerId});
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;
@@ -245,9 +248,11 @@ class MatchService {
   }
 
   /// Race-safe join via RPC. Returns an error message or null.
-  static Future<String?> joinMatch(String matchId) async {
+  /// [partnerId] brings a chosen partner onto your side; null joins solo.
+  static Future<String?> joinMatch(String matchId, {String? partnerId}) async {
     try {
-      final res = await _db.rpc('join_match', params: {'p_match_id': matchId});
+      final res = await _db.rpc('join_match',
+          params: {'p_match_id': matchId, 'p_partner_id': partnerId});
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;

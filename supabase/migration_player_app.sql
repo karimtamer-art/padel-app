@@ -68,7 +68,11 @@ create table if not exists public.ranking_history (
 -- RPC: join_match — race-safe join (capacity + min ELO checked
 -- server-side so two players can't take the last slot at once).
 -- ============================================================
-create or replace function public.join_match(p_match_id uuid, p_team text default null)
+-- Signature CHANGED (added p_partner_id) → drop the old 2-arg version first so
+-- the named-arg call isn't ambiguous.
+drop function if exists public.join_match(uuid, text);
+create or replace function public.join_match(
+  p_match_id uuid, p_team text default null, p_partner_id uuid default null)
 returns text
 language plpgsql security definer set search_path = public as $$
 declare
@@ -77,11 +81,14 @@ declare
   v_status text;
   v_min_elo int;
   v_my_elo int;
+  v_partner_elo int;
   v_team text;
   v_team_a int;
   v_team_b int;
+  v_need int;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
+  if p_partner_id = v_uid then p_partner_id := null; end if;
 
   select status, min_elo into v_status, v_min_elo
     from matches where id = p_match_id for update;
@@ -97,20 +104,50 @@ begin
     return null; -- already in: treat as success
   end if;
 
-  select count(*) into v_count from match_players where match_id = p_match_id;
-  if v_count >= 4 then return 'This match is already full.'; end if;
+  -- Bringing a partner: validate them before we touch anything.
+  if p_partner_id is not null then
+    if exists (select 1 from match_players where match_id = p_match_id and player_id = p_partner_id) then
+      return 'That partner is already in this match.';
+    end if;
+    select coalesce(elo, 1000) into v_partner_elo from profiles where id = p_partner_id;
+    if not found then return 'Partner not found.'; end if;
+    if v_partner_elo < v_min_elo then
+      return 'Your partner needs ' || v_min_elo || '+ ELO for this match.';
+    end if;
+  end if;
 
-  -- auto-balance teams unless caller asked for one
+  v_need := case when p_partner_id is not null then 2 else 1 end;
+  select count(*) into v_count from match_players where match_id = p_match_id;
+  if v_count + v_need > 4 then
+    return case when v_need = 2
+      then 'Not enough room for you and a partner.'
+      else 'This match is already full.' end;
+  end if;
+
   select count(*) filter (where team = 'a'), count(*) filter (where team = 'b')
     into v_team_a, v_team_b from match_players where match_id = p_match_id;
-  v_team := coalesce(p_team, case when v_team_a <= v_team_b then 'a' else 'b' end);
-  if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
-    v_team := case v_team when 'a' then 'b' else 'a' end;
+
+  if p_partner_id is not null then
+    -- A pair needs one side with two open slots.
+    if 2 - v_team_a >= 2 then v_team := 'a';
+    elsif 2 - v_team_b >= 2 then v_team := 'b';
+    else return 'No side has room for a pair — join solo instead.'; end if;
+  else
+    -- auto-balance teams unless caller asked for one
+    v_team := coalesce(p_team, case when v_team_a <= v_team_b then 'a' else 'b' end);
+    if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
+      v_team := case v_team when 'a' then 'b' else 'a' end;
+    end if;
   end if;
 
   insert into match_players (match_id, player_id, team) values (p_match_id, v_uid, v_team);
+  if p_partner_id is not null then
+    -- notify trigger pings the partner ("you were added"), not the host.
+    perform set_config('padel.partner_add', '1', true);
+    insert into match_players (match_id, player_id, team) values (p_match_id, p_partner_id, v_team);
+  end if;
 
-  if v_count + 1 >= 4 then
+  if v_count + v_need >= 4 then
     update matches set status = 'full' where id = p_match_id;
   end if;
   return null;
@@ -256,7 +293,7 @@ grant select, insert, update on public.tournament_entries to authenticated;
 grant select on public.tournament_entries to anon;
 grant select on public.tournament_matches  to authenticated, anon;
 
-grant execute on function public.join_match(uuid, text) to authenticated;
+grant execute on function public.join_match(uuid, text, uuid) to authenticated;
 grant execute on function public.leave_match(uuid) to authenticated;
 
 -- Atomic create: match + players (creator + optional partner) in one txn.
@@ -291,6 +328,9 @@ begin
 
   insert into public.match_players (match_id, player_id, team) values (v_id, v_uid, 'a');
   if p_partner_id is not null and p_partner_id <> v_uid then
+    -- Flag this insert as a deliberate partner-add so the notify trigger pings
+    -- the PARTNER ("you were added") instead of the host. Transaction-local.
+    perform set_config('padel.partner_add', '1', true);
     insert into public.match_players (match_id, player_id, team) values (v_id, p_partner_id, 'a');
   end if;
 
@@ -1883,7 +1923,9 @@ grant execute on function public.mm_count_candidates(timestamptz, timestamptz) t
 -- Accept a surfaced candidate (Phase 2). Race-safe join that RE-VERIFIES the
 -- band server-side — a client can pass any match_id, so we never trust it came
 -- from mm_candidates. First accepter wins the last slot (row lock).
-create or replace function public.mm_accept(p_match_id uuid)
+-- Signature CHANGED (added p_partner_id) → drop the old 1-arg version first.
+drop function if exists public.mm_accept(uuid);
+create or replace function public.mm_accept(p_match_id uuid, p_partner_id uuid default null)
 returns text
 language plpgsql security definer set search_path = public as $$
 declare
@@ -1899,8 +1941,10 @@ declare
   v_team_a     int;
   v_team_b     int;
   v_team       text;
+  v_need       int;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
+  if p_partner_id = v_uid then p_partner_id := null; end if;
 
   select status, created_by, coalesce(mm_center_rating, 2.0), created_at
     into v_status, v_created_by, v_center, v_created_at
@@ -1913,8 +1957,27 @@ begin
     return null;
   end if;
 
+  -- Bringing a partner: they must exist and not already be in the match. The
+  -- partner is a friend you chose, so we do NOT band-check them.
+  if p_partner_id is not null then
+    if v_created_by = p_partner_id then
+      return 'That player created this match.';
+    end if;
+    if exists (select 1 from match_players where match_id = p_match_id and player_id = p_partner_id) then
+      return 'That partner is already in this match.';
+    end if;
+    if not exists (select 1 from profiles where id = p_partner_id) then
+      return 'Partner not found.';
+    end if;
+  end if;
+
+  v_need := case when p_partner_id is not null then 2 else 1 end;
   select count(*) into v_count from match_players where match_id = p_match_id;
-  if v_count >= 4 then return 'This match just filled up.'; end if;
+  if v_count + v_need > 4 then
+    return case when v_need = 2
+      then 'Not enough room for you and a partner.'
+      else 'This match just filled up.' end;
+  end if;
 
   select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
     into v_my_rating, v_my_plac from profiles where id = v_uid;
@@ -1932,18 +1995,30 @@ begin
 
   select count(*) filter (where team = 'a'), count(*) filter (where team = 'b')
     into v_team_a, v_team_b from match_players where match_id = p_match_id;
-  v_team := case when v_team_a <= v_team_b then 'a' else 'b' end;
-  if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
-    v_team := case v_team when 'a' then 'b' else 'a' end;
+
+  if p_partner_id is not null then
+    if 2 - v_team_a >= 2 then v_team := 'a';
+    elsif 2 - v_team_b >= 2 then v_team := 'b';
+    else return 'No side has room for a pair — join solo instead.'; end if;
+  else
+    v_team := case when v_team_a <= v_team_b then 'a' else 'b' end;
+    if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
+      v_team := case v_team when 'a' then 'b' else 'a' end;
+    end if;
   end if;
 
   insert into match_players (match_id, player_id, team) values (p_match_id, v_uid, v_team);
-  if v_count + 1 >= 4 then
+  if p_partner_id is not null then
+    perform set_config('padel.partner_add', '1', true);
+    insert into match_players (match_id, player_id, team) values (p_match_id, p_partner_id, v_team);
+  end if;
+
+  if v_count + v_need >= 4 then
     update matches set status = 'full' where id = p_match_id;
   end if;
   return null;
 end $$;
-grant execute on function public.mm_accept(uuid) to authenticated;
+grant execute on function public.mm_accept(uuid, uuid) to authenticated;
 
 -- Phase 3: the post-match result hero + per-player ack. Backfill acks matches
 -- already completed so the hero doesn't retro-fire.
@@ -2609,16 +2684,40 @@ create trigger trg_notify_new_dm
 -- straight into MatchDetailScreen.
 -- ============================================================
 
--- Tell the host when another player joins their match.
+-- Tell the host when another player joins their match — and tell a player when
+-- they've been ADDED to a match by someone else (create-with-partner or
+-- join-with-partner). The adder sets the `padel.partner_add` GUC (transaction-
+-- local) right before inserting the partner row, which routes the notification
+-- to that partner instead of the host.
 create or replace function public.notify_match_join()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
-  v_host   uuid;
-  v_joiner text;
+  v_host        uuid;
+  v_joiner      text;
+  v_host_name   text;
+  v_partner_add boolean;
 begin
   select created_by into v_host from public.matches where id = new.match_id;
-  -- No host, or the host themselves joined (match creation) → nothing to send.
-  if v_host is null or v_host = new.player_id then return new; end if;
+  if v_host is null then return new; end if;
+
+  v_partner_add := coalesce(current_setting('padel.partner_add', true), '') = '1';
+
+  -- Deliberate partner-add: ping the partner (the newly inserted player), never
+  -- the host (they did the adding on purpose).
+  if v_partner_add then
+    if new.player_id <> v_host then
+      select name into v_host_name from public.profiles where id = v_host;
+      insert into public.notifications (user_id, type, title, body, data)
+      values (new.player_id, 'match', 'You were added to a match',
+              coalesce(v_host_name, 'A player') || ' added you to their match.',
+              jsonb_build_object('match_id', new.match_id));
+    end if;
+    return new;
+  end if;
+
+  -- Normal join: tell the host. The host themselves joining (creation) sends
+  -- nothing.
+  if v_host = new.player_id then return new; end if;
   select name into v_joiner from public.profiles where id = new.player_id;
   insert into public.notifications (user_id, type, title, body, data)
   values (v_host, 'match', 'New player joined',

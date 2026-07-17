@@ -8,6 +8,7 @@ import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import 'package:padel_clay/backend/models/matchmaking_config.dart';
+import '../detail/join_match_sheet.dart';
 
 /// The searching → "match found" flow AS THE HOME HERO (in-widget, not a
 /// screen). Morphs radar → candidate card → accept/decline, all in the slot.
@@ -121,10 +122,13 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
   Future<void> _accept() async {
     final c = _candidate;
     if (c == null) return;
-    _tick?.cancel();
-    setState(() => _phase = _MMPhase.joining);
     final id = c['match_id'] as String;
-    final err = await MatchService.acceptCandidate(id);
+    // Ask: join solo (random partner) or bring your own partner.
+    _tick?.cancel();
+    final choice = await showJoinMatchSheet(context);
+    if (choice == null || !mounted) return; // dismissed → keep the found card
+    setState(() => _phase = _MMPhase.joining);
+    final err = await MatchService.acceptCandidate(id, partnerId: choice.partnerId);
     if (!mounted) return;
     if (err != null) {
       _declined.add(id);
