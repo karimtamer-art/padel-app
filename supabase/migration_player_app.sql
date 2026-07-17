@@ -1431,6 +1431,11 @@ alter table public.profiles add column if not exists level numeric;
 alter table public.profiles add column if not exists tier text;
 alter table public.profiles add column if not exists division_pts int;
 alter table public.profiles add column if not exists placement_played int;
+-- Legacy/backfill columns (rating engine v2 uses `rating`): allow NULL so an
+-- unranked player can have no elo/level/tier. Older DBs created elo NOT NULL.
+alter table public.profiles alter column elo   drop not null;
+alter table public.profiles alter column level drop not null;
+alter table public.profiles alter column tier  drop not null;
 alter table public.profiles add column if not exists username text;
 -- One-time gate for the "placement complete" reveal on Home: set true after the
 -- player has seen the celebration once. Display-only (the client flips it).

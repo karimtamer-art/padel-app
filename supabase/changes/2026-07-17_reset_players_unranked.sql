@@ -9,6 +9,12 @@
 -- list below. Admins and anchors are skipped. To hard-keep specific people by
 -- handle, list their usernames in the CTE.
 
+-- Legacy elo/level/tier must allow NULL (older DBs created elo NOT NULL) before
+-- we can clear them. Idempotent.
+alter table public.profiles alter column elo   drop not null;
+alter table public.profiles alter column level drop not null;
+alter table public.profiles alter column tier  drop not null;
+
 with keep as (
   select id from public.profiles
   where coalesce(is_admin, false)  = true

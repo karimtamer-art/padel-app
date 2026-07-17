@@ -12,6 +12,12 @@
 -- Idempotent; also folded into migration_player_app.sql. To also reset EXISTING
 -- players to unranked, run 2026-07-17_reset_players_unranked.sql (opt-in).
 
+-- Legacy elo/level/tier must allow NULL (older DBs created elo NOT NULL) so an
+-- unranked player can have no elo/level/tier.
+alter table public.profiles alter column elo   drop not null;
+alter table public.profiles alter column level drop not null;
+alter table public.profiles alter column tier  drop not null;
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
