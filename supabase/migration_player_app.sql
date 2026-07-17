@@ -425,6 +425,7 @@ begin
         coalesce(p.is_provisional,
                  coalesce(p.competitive_matches, 0) < 5)      as is_provisional,
         coalesce(p.competitive_matches, 0)                    as competitive_matches,
+        coalesce(p.placement_played, 0)                       as placement_played,
         coalesce(p.is_anchor, false)                          as is_anchor,
         coalesce(p.status, 'active')                          as status,
         coalesce(agg.played, 0)                               as played,
@@ -1614,7 +1615,10 @@ begin
        v_dob, v_gender,
        coalesce(v_hand, 'right'),
        coalesce(v_side, 'both'),
-       1000, 1.0, 'bronze', 0, 0)
+       -- Start UNRANKED: no seeded elo/level/tier. rating stays NULL, sigma
+       -- keeps its default (0.85). The player earns a rating over 5 placement
+       -- matches (or an admin sets it). placement_played 0 = in placement.
+       null, null, null, 0, 0)
     on conflict (id) do nothing;
   exception when others then
     raise warning 'handle_new_user: % — inserting minimal profile for %', sqlerrm, new.id;

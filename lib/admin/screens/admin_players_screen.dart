@@ -73,6 +73,18 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         5;
   }
 
+  // Unranked = still in placement (< 5 competitive matches). Mirrors the player
+  // app's Unranked/placement gate. Falls back to competitive/played count when
+  // placement_played isn't in the payload (pre-migration RPC).
+  static bool _isUnranked(Map<String, dynamic> p) {
+    final placement = (p['placement_played'] as num?)?.toInt();
+    if (placement != null) return placement < 5;
+    return ((p['competitive_matches'] as num?)?.toInt() ??
+            (p['played'] as num?)?.toInt() ??
+            0) <
+        5;
+  }
+
   static String _tierForRating(double lv) {
     if (lv >= 5.0) return 'elite';
     if (lv >= 3.5) return 'gold';
@@ -123,6 +135,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
   static String _statusKey(Map<String, dynamic> p) {
     final s = p['status'] as String? ?? 'active';
     if (s == 'banned' || s == 'flagged') return s;
+    if (_isUnranked(p)) return 'unranked';
     return _isProvisional(p) ? 'provisional' : 'ranked';
   }
 
@@ -155,10 +168,10 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
   List<Map<String, dynamic>> get _rows {
     final q = _search.text.trim().toLowerCase();
     final rows = _all.where((p) {
-      if (_filter == 'provisional' && !_isProvisional(p)) return false;
+      if (_filter == 'unranked' && !_isUnranked(p)) return false;
       if (_filter == 'banned' && (p['status'] as String?) != 'banned') return false;
       if (['A', 'B', 'C', 'D'].contains(_filter) &&
-          _divLetter(_tierForRating(_ratingOf(p))) != _filter) {
+          (_isUnranked(p) || _divLetter(_tierForRating(_ratingOf(p))) != _filter)) {
         return false;
       }
       if (q.isNotEmpty) {
@@ -209,7 +222,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
     final activeToday = _all
         .where((p) => (_at(p, 'last_sign_in_at') ?? DateTime(2000)).isAfter(now24))
         .length;
-    final provisional = _all.where(_isProvisional).length;
+    final unranked = _all.where(_isUnranked).length;
     final banned = _all.where((p) => (p['status'] as String?) == 'banned').length;
     final rows = _rows;
 
@@ -222,7 +235,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
           KpiGrid([
             StatCard(icon: Icons.groups_outlined, tone: AdminColors.green, label: 'Total players', value: '${_all.length}'),
             StatCard(icon: Icons.bolt_rounded, tone: AdminColors.primary, label: 'Active today', value: '$activeToday'),
-            StatCard(icon: Icons.hourglass_bottom_rounded, tone: provisional > 0 ? AdminColors.warn : AdminColors.inkFaint, label: 'Provisional', value: '$provisional', foot: 'Still placing'),
+            StatCard(icon: Icons.hourglass_bottom_rounded, tone: unranked > 0 ? AdminColors.warn : AdminColors.inkFaint, label: 'Unranked', value: '$unranked', foot: 'In placement'),
             StatCard(icon: Icons.lock_outline_rounded, tone: AdminColors.danger, label: 'Banned', value: '$banned'),
           ]),
           const SizedBox(height: 16),
@@ -241,7 +254,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                   ['B', 'Div B'],
                   ['C', 'Div C'],
                   ['D', 'Div D'],
-                  ['provisional', 'Provisional'],
+                  ['unranked', 'Unranked'],
                   ['banned', 'Banned'],
                 ])
                   Padding(
@@ -322,9 +335,11 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
     const tiers = ['elite', 'gold', 'silver', 'bronze'];
     final counts = {for (final t in tiers) t: 0};
     for (final p in _all) {
+      if (_isUnranked(p)) continue; // unranked players have no division yet
       counts[_tierForRating(_ratingOf(p))] = counts[_tierForRating(_ratingOf(p))]! + 1;
     }
-    final total = _all.length;
+    final ranked = counts.values.fold<int>(0, (a, b) => a + b);
+    final unranked = _all.length - ranked;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -336,7 +351,10 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('Division distribution', style: AdminText.sans(13.5, FontWeight.w800, AdminColors.ink)),
-        Text('$total players across 4 divisions', style: AdminText.small(AdminColors.inkFaint)),
+        Text(
+            '$ranked ranked across 4 divisions'
+            '${unranked > 0 ? ' · $unranked unranked' : ''}',
+            style: AdminText.small(AdminColors.inkFaint)),
         const SizedBox(height: 14),
         ClipRRect(
           borderRadius: BorderRadius.circular(6),
@@ -352,7 +370,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                       color: AdminColors.tier(t),
                     ),
                   ),
-              if (total == 0) Expanded(child: Container(color: AdminColors.surface3)),
+              if (ranked == 0) Expanded(child: Container(color: AdminColors.surface3)),
             ]),
           ),
         ),
@@ -435,7 +453,9 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
   void _openPlayer(Map<String, dynamic> p) {
     final name = p['name'] as String? ?? 'Unknown';
     final rating = _ratingOf(p);
+    final unranked = _isUnranked(p);
     final tier = _tierForRating(rating);
+    final tierColor = unranked ? AdminColors.inkFaint : AdminColors.tier(tier);
     final statusKey = _statusKey(p);
     final phone = p['phone'] as String?;
     final email = p['email'] as String?;
@@ -489,7 +509,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
       ]),
       body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          AdminAvatar(_initials(name), size: 60, color: AdminColors.tier(tier)),
+          AdminAvatar(_initials(name), size: 60, color: tierColor),
           const SizedBox(width: 14),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -503,15 +523,15 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         ]),
         const SizedBox(height: 18),
         Row(children: [
-          _statBox('Rank', rank == null ? '—' : '#$rank'),
+          _statBox('Rank', unranked || rank == null ? '—' : '#$rank'),
           const SizedBox(width: 10),
-          _statBox('Level', rating.toStringAsFixed(2)),
+          _statBox('Level', unranked ? '—' : rating.toStringAsFixed(2)),
           const SizedBox(width: 10),
           _statBox('Win rate', wr == null ? '—' : '$wr%'),
         ]),
         const SizedBox(height: 10),
         Row(children: [
-          _statBox('Division', 'Div ${_divLetter(tier)}'),
+          _statBox('Division', unranked ? '—' : 'Div ${_divLetter(tier)}'),
           const SizedBox(width: 10),
           _statBox('Reliability', reliability == null ? '—' : '$reliability%'),
           const SizedBox(width: 10),
@@ -525,19 +545,27 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
               color: AdminColors.surfaceAlt, borderRadius: BorderRadius.circular(12)),
           child: Row(children: [
             Container(width: 11, height: 11,
-                decoration: BoxDecoration(color: AdminColors.tier(tier), shape: BoxShape.circle)),
+                decoration: BoxDecoration(color: tierColor, shape: BoxShape.circle)),
             const SizedBox(width: 10),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('Current division', style: AdminText.kicker()),
                 const SizedBox(height: 4),
-                Text('${_metalName(tier)} · Division ${_divLetter(tier)}',
+                Text(
+                    unranked
+                        ? 'Unranked · no division yet'
+                        : '${_metalName(tier)} · Division ${_divLetter(tier)}',
                     style: AdminText.sans(15, FontWeight.w800, AdminColors.ink)),
               ]),
             ),
-            Text(_isProvisional(p) ? 'Provisional' : 'Ranked',
+            Text(
+                unranked
+                    ? 'Unranked'
+                    : (_isProvisional(p) ? 'Provisional' : 'Ranked'),
                 style: AdminText.sans(12.5, FontWeight.w800,
-                    _isProvisional(p) ? AdminColors.warn : AdminColors.success)),
+                    unranked
+                        ? AdminColors.inkFaint
+                        : (_isProvisional(p) ? AdminColors.warn : AdminColors.success))),
           ]),
         ),
       ]),
@@ -730,9 +758,10 @@ class _PlayerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = p['name'] as String? ?? 'Unknown';
     final rating = _AdminPlayersScreenState._ratingOf(p);
+    final unranked = _AdminPlayersScreenState._isUnranked(p);
     final tier = _AdminPlayersScreenState._tierForRating(rating);
     final statusKey = _AdminPlayersScreenState._statusKey(p);
-    final c = AdminColors.tier(tier);
+    final c = unranked ? AdminColors.inkFaint : AdminColors.tier(tier);
     final rank = (p['rank'] as num?)?.toInt();
     final played = (p['played'] as num?)?.toInt() ?? 0;
     final wins = (p['wins'] as num?)?.toInt() ?? 0;
@@ -797,19 +826,26 @@ class _PlayerCard extends StatelessWidget {
                               Container(width: 7, height: 7,
                                   decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
                               const SizedBox(width: 5),
-                              Text('Div ${_AdminPlayersScreenState._divLetter(tier)}',
+                              Text(
+                                  unranked
+                                      ? 'Unranked'
+                                      : 'Div ${_AdminPlayersScreenState._divLetter(tier)}',
                                   style: AdminText.sans(11.5, FontWeight.w700, AdminColors.inkSoft)),
                             ]),
                           ]),
                         ),
                         const SizedBox(width: 8),
                         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                          Row(crossAxisAlignment: CrossAxisAlignment.baseline,
-                              textBaseline: TextBaseline.alphabetic, children: [
-                            Text('Lv ', style: AdminText.sans(9.5, FontWeight.w700, AdminColors.inkFaint)),
-                            Text(rating.toStringAsFixed(2),
-                                style: AdminText.mono(14, FontWeight.w800, AdminColors.ink)),
-                          ]),
+                          if (unranked)
+                            Text('—',
+                                style: AdminText.mono(14, FontWeight.w800, AdminColors.inkFaint))
+                          else
+                            Row(crossAxisAlignment: CrossAxisAlignment.baseline,
+                                textBaseline: TextBaseline.alphabetic, children: [
+                              Text('Lv ', style: AdminText.sans(9.5, FontWeight.w700, AdminColors.inkFaint)),
+                              Text(rating.toStringAsFixed(2),
+                                  style: AdminText.mono(14, FontWeight.w800, AdminColors.ink)),
+                            ]),
                           const SizedBox(height: 4),
                           StatusBadge(statusKey, dot: true),
                           const SizedBox(height: 3),

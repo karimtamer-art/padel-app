@@ -133,6 +133,7 @@ class StatusBadge extends StatelessWidget {
     'unverified': [AdminColors.warn, 'Unverified'],
     'ranked': [AdminColors.success, 'Ranked'],
     'provisional': [AdminColors.warn, 'Provisional'],
+    'unranked': [AdminColors.inkFaint, 'Unranked'],
     'flagged': [AdminColors.info, 'Flagged'],
     'banned': [AdminColors.danger, 'Banned'],
     'in': [AdminColors.success, 'In stock'],
