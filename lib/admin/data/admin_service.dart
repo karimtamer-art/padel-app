@@ -555,6 +555,20 @@ class AdminService {
     }
   }
 
+  /// Finalize a tournament: apply ratings for every decided match and mark it
+  /// completed. One-shot per tournament. Returns a status message or an error.
+  static Future<String?> finalizeTournament(String tournamentId) async {
+    try {
+      final res = await _db
+          .rpc('finalize_tournament', params: {'p_tournament_id': tournamentId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// The organizer's reusable format library.
   static Future<List<Map<String, dynamic>>> savedFormats() async {
     try {

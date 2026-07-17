@@ -375,6 +375,32 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               Navigator.pop(context);
               _bracketSheet(t);
             }),
+        const SizedBox(height: 10),
+        if (t['rating_applied'] == true)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            decoration: BoxDecoration(
+                color: AdminColors.success.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(11)),
+            child: Row(children: [
+              const Icon(Icons.verified_rounded, size: 17, color: AdminColors.success),
+              const SizedBox(width: 8),
+              Text('Ratings applied', style: AdminText.sans(13, FontWeight.w800, AdminColors.success)),
+            ]),
+          )
+        else
+          AdminButton(
+            (t['rated'] == false) ? 'Finalize tournament' : 'Finalize & apply ratings',
+            full: true,
+            height: 46,
+            icon: Icons.verified_outlined,
+            variant: AdminBtn.ghost,
+            onPressed: () {
+              Navigator.pop(context);
+              _finalize(t);
+            },
+          ),
         const SizedBox(height: 14),
         Row(children: [
           _kv('Prize pool', _egp(t['prize_pool'])),
@@ -694,6 +720,41 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         ]),
       );
 
+  Future<void> _finalize(Map<String, dynamic> t) async {
+    final rated = t['rated'] != false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: AdminColors.surface,
+        title: Text(rated ? 'Finalize & apply ratings?' : 'Finalize tournament?',
+            style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+        content: Text(
+            rated
+                ? 'Every completed match will count toward the players\' ratings. '
+                    'This runs once and can\'t be undone.'
+                : 'This tournament isn\'t rated, so no ratings change — it will '
+                    'just be marked complete.',
+            style: AdminText.body(AdminColors.inkSoft)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Finalize')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final res = await AdminService.finalizeTournament(t['id'] as String);
+    if (!mounted) return;
+    await _load();
+    if (!mounted) return;
+    final blocked = res != null &&
+        (res.contains('authoris') ||
+            res.contains('Finish') ||
+            res.contains('No completed') ||
+            res.contains('already') ||
+            res.contains('not found'));
+    adminToast(context, res ?? 'Tournament finalized', ok: !blocked);
+  }
+
   void _create() => _form(null);
   void _edit(Map<String, dynamic> t) => _form(t);
 
@@ -763,6 +824,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     String status = (rawStatus == 'upcoming' || rawStatus == 'open' || rawStatus == 'completed')
         ? 'auto'
         : rawStatus;
+    bool rated = t?['rated'] as bool? ?? true;
 
     // Eligibility — derive mode from existing data
     final existingMin = (t?['min_elo'] as num?)?.toInt() ?? 0;
@@ -811,6 +873,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'max_elo': eligMode == 'range' ? (800 + (maxLevel * 200)).round() : null,
             'format': format,
             'status': status,
+            'rated': rated,
           };
           if (!isNew) data['id'] = t['id'];
           final err = await AdminService.upsertTournament(data);
@@ -991,6 +1054,27 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                     'to add matches into groups/rounds and set winners yourself.'
                   : _formatBlurb(format),
               style: AdminText.small(AdminColors.inkFaint),
+            ),
+            const SizedBox(height: 16),
+            // ── Rated ─────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                  color: AdminColors.surfaceAlt, borderRadius: BorderRadius.circular(12)),
+              child: Row(children: [
+                Icon(Icons.trending_up_rounded, size: 18,
+                    color: rated ? AdminColors.primary : AdminColors.inkFaint),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Rated tournament', style: AdminText.sans(14, FontWeight.w800, AdminColors.ink)),
+                    const SizedBox(height: 2),
+                    Text('Results count toward player ratings when you finalize.',
+                        style: AdminText.small(AdminColors.inkFaint)),
+                  ]),
+                ),
+                Switch.adaptive(value: rated, onChanged: (v) => setSheet(() => rated = v)),
+              ]),
             ),
             const SizedBox(height: 16),
             // ── Status ────────────────────────────────────────────
