@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../backend/services/community_service.dart';
 import '../../theme/app_colors.dart';
@@ -1030,15 +1031,20 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
   bool _loading = true, _sending = false;
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
+  // sender_id → display name, seeded by _load and reused by the live stream.
+  final Map<String, String> _names = {};
+  StreamSubscription<List<Map<String, dynamic>>>? _sub;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _subscribe();
   }
 
   @override
   void dispose() {
+    _sub?.cancel();
     _ctrl.dispose();
     _scroll.dispose();
     super.dispose();
@@ -1047,12 +1053,41 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
   Future<void> _load() async {
     final m = await CommunityService.channelMessages(widget.channelId);
     if (!mounted) return;
+    for (final msg in m) {
+      final sid = msg['sender_id'] as String?;
+      if (sid != null) _names[sid] = msg['senderName'] as String? ?? 'Player';
+    }
     setState(() {
       _msgs = m;
       _loading = false;
     });
+    _scrollToBottom(force: true);
+  }
+
+  // Live updates: new posts (from anyone) arrive here without a manual refresh.
+  // Requires community_chat in the supabase_realtime publication; if it isn't,
+  // the stream simply never emits and send()'s _load() keeps things working.
+  void _subscribe() {
+    _sub = CommunityService.channelStream(widget.channelId).listen((rows) async {
+      final decorated =
+          await CommunityService.decorateChannelRows(rows, _names);
+      if (!mounted) return;
+      final grew = decorated.length > _msgs.length;
+      setState(() {
+        _msgs = decorated;
+        _loading = false;
+      });
+      if (grew) _scrollToBottom();
+    });
+  }
+
+  /// Jump to the newest message. [force] always scrolls; otherwise only when the
+  /// user is already near the bottom (don't yank them out of reading history).
+  void _scrollToBottom({bool force = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      if (!_scroll.hasClients) return;
+      final max = _scroll.position.maxScrollExtent;
+      if (force || _scroll.position.pixels >= max - 120) _scroll.jumpTo(max);
     });
   }
 
@@ -1069,6 +1104,8 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
       return;
     }
     _ctrl.clear();
+    // The live stream echoes the new row back; _load() is a fallback for when
+    // realtime isn't enabled yet so the sender still sees their own message.
     await _load();
   }
 

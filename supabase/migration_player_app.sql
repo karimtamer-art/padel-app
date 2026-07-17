@@ -2638,6 +2638,18 @@ do $$ begin
   end if;
 end $$;
 
+-- Realtime for community channel chat so open clients see new posts live
+-- (RLS still scopes delivery to members of the community).
+do $$ begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'community_chat'
+  ) then
+    alter publication supabase_realtime add table public.community_chat;
+  end if;
+end $$;
+
 -- Notify the recipient of a new DM (type 'message'); bump an existing unread
 -- one per conversation rather than flooding the inbox.
 create or replace function public.notify_new_dm()

@@ -297,6 +297,59 @@ class CommunityService {
     }
   }
 
+  /// Live, ordered raw rows for one channel (id, body, created_at, sender_id,
+  /// community_id, channel_id). Enrich with [decorateChannelRows] for display.
+  /// Requires `community_chat` in the supabase_realtime publication.
+  static Stream<List<Map<String, dynamic>>> channelStream(String channelId) {
+    return _db
+        .from('community_chat')
+        .stream(primaryKey: ['id'])
+        .eq('channel_id', channelId)
+        .order('created_at')
+        .map((rows) => List<Map<String, dynamic>>.from(rows));
+  }
+
+  /// Fetch display names for a set of profile ids.
+  static Future<Map<String, String>> memberNames(List<String> ids) async {
+    if (ids.isEmpty) return {};
+    try {
+      final res =
+          await _db.from('profiles').select('id, name').inFilter('id', ids);
+      return {
+        for (final r in (res as List))
+          (r['id'] as String): (r['name'] as String? ?? 'Player')
+      };
+    } catch (e) {
+      debugPrint('[CommunityService] memberNames: $e');
+      return {};
+    }
+  }
+
+  /// Turn raw [channelStream] rows into the display shape used by the chat UI
+  /// ({ id, body, created_at, sender_id, fromMe, senderName }). Resolves sender
+  /// names through [nameCache], fetching any not yet cached (and adding them).
+  static Future<List<Map<String, dynamic>>> decorateChannelRows(
+      List<Map<String, dynamic>> rows, Map<String, String> nameCache) async {
+    final uid = _uid;
+    final missing = <String>{
+      for (final r in rows)
+        if (r['sender_id'] != null && !nameCache.containsKey(r['sender_id']))
+          r['sender_id'] as String
+    };
+    if (missing.isNotEmpty) nameCache.addAll(await memberNames(missing.toList()));
+    return rows.map((r) {
+      final sid = r['sender_id'] as String?;
+      return {
+        'id': r['id'],
+        'body': r['body'],
+        'created_at': r['created_at'],
+        'sender_id': sid,
+        'fromMe': sid == uid,
+        'senderName': nameCache[sid] ?? 'Player',
+      };
+    }).toList();
+  }
+
   /// Post to a channel. Returns null on success, else an error.
   static Future<String?> sendChannelMessage(
       String communityId, String channelId, String body) async {
