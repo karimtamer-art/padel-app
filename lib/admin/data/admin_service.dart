@@ -526,11 +526,13 @@ class AdminService {
     }
   }
 
-  /// Build the first stage of the saved format into real matches.
-  static Future<String?> generateFromFormat(String tournamentId) async {
+  /// Build the first stage of the saved format into real matches. [random]
+  /// shuffles the field instead of seeding by level.
+  static Future<String?> generateFromFormat(String tournamentId,
+      {bool random = false}) async {
     try {
-      final res = await _db
-          .rpc('generate_from_format', params: {'p_tournament_id': tournamentId});
+      final res = await _db.rpc('generate_from_format',
+          params: {'p_tournament_id': tournamentId, 'p_random': random});
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;

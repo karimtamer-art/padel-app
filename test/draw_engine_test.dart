@@ -89,4 +89,70 @@ void main() {
     expect(const DrawPair('x', 'A. Hassan / R. Samir').initials, 'AH');
     expect(const DrawPair('x', 'Karim / Youssef').initials, 'K');
   });
+
+  group('parseRoundRobin', () {
+    test('collects all pairs and fixtures from Round robin rows', () {
+      final rows = [
+        row('m1', 'Round robin', 'a', 'b', winner: 'a'),
+        row('m2', 'Round robin', 'a', 'c'),
+        row('m3', 'Round robin', 'b', 'c'),
+      ];
+      final g = parseRoundRobin(rows)!;
+      expect(g.pairs.map((p) => p.entryId).toSet(), {'a', 'b', 'c'});
+      expect(g.fixtures.length, 3);
+      final st = standingsOf(g);
+      expect(st.first.pair.entryId, 'a');
+    });
+
+    test('null when there are no round-robin rows', () {
+      expect(parseRoundRobin([row('m1', 'Group A', 'a', 'b')]), isNull);
+    });
+  });
+
+  group('parseBracket', () {
+    Map<String, dynamic> ko(String id, String label, int round, int slot,
+            String? e1, String? e2, {String? winner}) =>
+        {
+          'id': id,
+          'bracket': label,
+          'round': round,
+          'slot': slot,
+          'winner_entry': winner,
+          'e1': e1 == null ? null : {'id': e1, 'player_name': e1.toUpperCase()},
+          'e2': e2 == null ? null : {'id': e2, 'player_name': e2.toUpperCase()},
+        };
+
+    test('4-pair bracket has round 1 (2 matches) + a TBD final', () {
+      final rows = [
+        ko('m1', 'Semifinal', 1, 0, 'a', 'b'),
+        ko('m2', 'Semifinal', 1, 1, 'c', 'd'),
+      ];
+      final bd = parseBracket(rows);
+      expect(bd.rounds.length, 2);
+      expect(bd.rounds[0].length, 2);
+      expect(bd.rounds[1].length, 1);
+      expect(bd.rounds[1].first.isTbd, isTrue);
+      expect(bd.champion, isNull);
+    });
+
+    test('a bye slot marks the empty side and is not TBD', () {
+      final rows = [ko('m1', 'Final', 1, 0, 'a', null, winner: 'a')];
+      final bd = parseBracket(rows);
+      final m = bd.rounds.first.first;
+      expect(m.bBye, isTrue);
+      expect(m.isTbd, isFalse);
+      expect(m.decided, isTrue);
+    });
+
+    test('champion resolves when the final is decided', () {
+      final rows = [
+        ko('m1', 'Semifinal', 1, 0, 'a', 'b', winner: 'a'),
+        ko('m2', 'Semifinal', 1, 1, 'c', 'd', winner: 'c'),
+        ko('m3', 'Final', 2, 0, 'a', 'c', winner: 'c'),
+      ];
+      final bd = parseBracket(rows);
+      expect(bd.rounds.length, 2);
+      expect(bd.champion?.entryId, 'c');
+    });
+  });
 }

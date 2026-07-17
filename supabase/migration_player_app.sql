@@ -4568,7 +4568,11 @@ begin
   end loop;
 end $$;
 
-create or replace function public.generate_from_format(p_tournament_id uuid)
+-- p_random added → drop the old 1-arg version first so the named-arg call isn't
+-- ambiguous. p_random true = shuffle the field; false = seed by level (default).
+drop function if exists public.generate_from_format(uuid);
+create or replace function public.generate_from_format(
+  p_tournament_id uuid, p_random boolean default false)
 returns text language plpgsql security definer set search_path = public as $$
 declare
   v_spec jsonb; v_stage jsonb; v_kind text;
@@ -4582,8 +4586,10 @@ begin
   v_stage := v_spec->'stages'->0;
   v_kind := v_stage->>'kind';
 
-  select array_agg(id order by lvl desc) into v_entries from (
-    select te.id, (coalesce(p1.level, 0) + coalesce(p2.level, p1.level, 0)) / 2.0 as lvl
+  select array_agg(id order by (case when p_random then random() else lvl end) desc)
+    into v_entries from (
+    select te.id,
+           ((coalesce(p1.level, 0) + coalesce(p2.level, p1.level, 0)) / 2.0)::float8 as lvl
       from public.tournament_entries te
       join public.profiles p1 on p1.id = te.player_id
       left join public.profiles p2 on p2.id = te.partner_id
@@ -4634,7 +4640,7 @@ begin
     return 'The first stage (' || coalesce(v_kind, '?') || ') is drawn manually for now.';
   end if;
 end $$;
-grant execute on function public.generate_from_format(uuid) to authenticated;
+grant execute on function public.generate_from_format(uuid, boolean) to authenticated;
 
 create or replace function public.advance_stage(p_tournament_id uuid)
 returns text language plpgsql security definer set search_path = public as $$

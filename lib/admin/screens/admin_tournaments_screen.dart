@@ -705,21 +705,25 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     // Registered (non-withdrawn) pairs for this tournament, for the builder.
     final entries = _activeEntries(t);
 
-    // Groups → Knockout draws use the configurable DrawSheet (setup + live
-    // standings board). Detect them by the create-time format, or by a stored
-    // spec whose first stage is groups (format flips to 'custom' after generate).
+    // The configurable DrawSheet drives Groups → Knockout, Single elimination
+    // and Round robin (setup + live boards). Detect by the create-time format,
+    // or by a stored spec whose first stage is one it handles (format flips to
+    // 'custom' after generate). Multi-stage Format-Builder specs (3+ stages,
+    // swiss/consolation, etc.) and double-elim stay on the legacy manager.
     final spec = t['format_spec'];
-    final firstKind = (spec is Map &&
-            spec['stages'] is List &&
-            (spec['stages'] as List).isNotEmpty &&
-            (spec['stages'] as List).first is Map)
-        ? ((spec['stages'] as List).first as Map)['kind']
+    final stages = (spec is Map && spec['stages'] is List) ? spec['stages'] as List : const [];
+    final firstKind = (stages.isNotEmpty && stages.first is Map)
+        ? (stages.first as Map)['kind']
         : null;
-    if (format == 'group_knockout' || firstKind == 'groups') {
+    const drawKinds = {'groups', 'knockout', 'roundRobin'};
+    final simpleSpec = drawKinds.contains(firstKind) && stages.length <= 2;
+    final topLevel = format == 'group_knockout' || format == 'knockout' || format == 'round_robin';
+    if (topLevel || simpleSpec) {
       showDrawSheet(
         context,
         tournamentId: tid,
         tournamentName: (t['name'] as String?) ?? '',
+        format: format ?? '',
         registeredPairs: entries.length,
         formatSpec: spec is Map ? Map<String, dynamic>.from(spec) : null,
       ).then((_) {

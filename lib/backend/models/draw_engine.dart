@@ -133,6 +133,114 @@ List<DrawGroup> parseGroups(List<Map<String, dynamic>> matchRows) {
 bool hasKnockout(List<Map<String, dynamic>> matchRows) =>
     matchRows.any((m) => !((m['bracket'] as String?) ?? '').startsWith('Group '));
 
+/// Parse the round-robin matches (bracket 'Round robin') into a single group
+/// so [standingsOf] can rank the whole field. null if there are none.
+DrawGroup? parseRoundRobin(List<Map<String, dynamic>> matchRows) {
+  final rr = matchRows
+      .where((m) => ((m['bracket'] as String?) ?? '') == 'Round robin')
+      .toList();
+  if (rr.isEmpty) return null;
+  final pairs = <String, DrawPair>{};
+  final fixtures = <DrawFixture>[];
+  for (final m in rr) {
+    final a = pairOf(m['e1']);
+    final b = pairOf(m['e2']);
+    if (a != null) pairs[a.entryId] = a;
+    if (b != null) pairs[b.entryId] = b;
+    if (a != null && b != null) {
+      fixtures.add(DrawFixture(
+          id: m['id'] as String, a: a, b: b, winnerId: m['winner_entry'] as String?));
+    }
+  }
+  return DrawGroup(label: 'Round robin', pairs: pairs.values.toList(), fixtures: fixtures);
+}
+
+/// One knockout-bracket slot. Empty (a==b==null) = a TBD future match; a bye is
+/// a slot whose opposite side is null (the present side auto-advances).
+class BracketMatch {
+  final String? id;
+  final DrawPair? a, b;
+  final String? winnerId;
+  final bool aBye, bBye;
+  const BracketMatch({this.id, this.a, this.b, this.winnerId, this.aBye = false, this.bBye = false});
+  bool get bothKnown => a != null && b != null;
+  bool get decided => winnerId != null;
+  bool get isTbd => a == null && b == null && !aBye && !bBye;
+}
+
+/// A parsed single-elimination bracket: [rounds] holds round 1..N (real matches
+/// where they exist, TBD placeholders for future rounds), and the champion once
+/// the final is decided.
+class BracketData {
+  final List<List<BracketMatch>> rounds;
+  final DrawPair? champion;
+  const BracketData(this.rounds, this.champion);
+  bool get isEmpty => rounds.isEmpty;
+}
+
+int roundsForSize(int drawSize) {
+  var r = 0, n = drawSize;
+  while (n > 1) {
+    n ~/= 2;
+    r++;
+  }
+  return r;
+}
+
+BracketMatch _bracketMatchOf(Map<String, dynamic> m) {
+  final a = pairOf(m['e1']);
+  final b = pairOf(m['e2']);
+  return BracketMatch(
+    id: m['id'] as String?,
+    a: a,
+    b: b,
+    winnerId: m['winner_entry'] as String?,
+    aBye: a == null,
+    bBye: b == null,
+  );
+}
+
+/// Parse knockout matches (any non-group, non-round-robin label) into a full
+/// bracket tree — real rounds plus TBD placeholders for rounds not yet seeded —
+/// so the whole bracket is visible from the start.
+BracketData parseBracket(List<Map<String, dynamic>> matchRows) {
+  final ko = matchRows.where((m) {
+    final l = (m['bracket'] as String?) ?? '';
+    return l.isNotEmpty && !l.startsWith('Group ') && l != 'Round robin';
+  }).toList();
+  if (ko.isEmpty) return const BracketData([], null);
+
+  final byRound = <int, List<Map<String, dynamic>>>{};
+  for (final m in ko) {
+    final r = (m['round'] as num?)?.toInt() ?? 1;
+    byRound.putIfAbsent(r, () => []).add(m);
+  }
+  final minRound = byRound.keys.reduce((a, b) => a < b ? a : b);
+  final firstCount = byRound[minRound]!.length; // matches in the first round
+  final drawSize = firstCount * 2;
+  final total = roundsForSize(drawSize);
+
+  final rounds = <List<BracketMatch>>[];
+  for (var idx = 0; idx < total; idx++) {
+    final roundNo = minRound + idx;
+    final existing = byRound[roundNo];
+    if (existing != null && existing.isNotEmpty) {
+      existing.sort((a, b) => ((a['slot'] as num?) ?? 0).compareTo((b['slot'] as num?) ?? 0));
+      rounds.add([for (final m in existing) _bracketMatchOf(m)]);
+    } else {
+      final count = drawSize ~/ (1 << (idx + 1));
+      rounds.add([for (var i = 0; i < count; i++) const BracketMatch()]);
+    }
+  }
+
+  DrawPair? champ;
+  if (rounds.isNotEmpty && rounds.last.length == 1) {
+    final f = rounds.last.first;
+    if (f.winnerId != null) champ = f.winnerId == f.a?.entryId ? f.a : f.b;
+  }
+  return BracketData(rounds, champ);
+}
+
 /// Build a [DrawPair] from a fetchBracket entry map ({id, player_name,
 /// partner_name}); null if the entry is absent (a bye/empty slot).
 DrawPair? pairOf(dynamic e) {
