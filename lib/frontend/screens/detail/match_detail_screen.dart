@@ -250,13 +250,20 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
       body: Column(children: [
         _header(),
         Expanded(
-          child: RefreshIndicator(
-            color: AppColors.primary,
-            onRefresh: _load,
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.only(top: 26, bottom: 24),
-              child: _view == 0 ? _lobby() : _resultView(),
+          // The Lobby/Submit tab overhangs 26px below the hero (Transform in
+          // _header). Keep that clearance OUTSIDE the scroll viewport so the
+          // viewport starts below the tab — otherwise scrolled content paints
+          // over the tab (it's painted after the hero) and garbles the seam.
+          child: Padding(
+            padding: const EdgeInsets.only(top: 26),
+            child: RefreshIndicator(
+              color: AppColors.primary,
+              onRefresh: _load,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.only(bottom: 24),
+                child: _view == 0 ? _lobby() : _resultView(),
+              ),
             ),
           ),
         ),
