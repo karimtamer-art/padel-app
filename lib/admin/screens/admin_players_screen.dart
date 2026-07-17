@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoPicker;
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
@@ -580,6 +581,8 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
     bool anchor = p['is_anchor'] == true;
 
     final levels = [for (var i = 0; i <= 28; i++) i * 0.25];
+    final wheelCtrl = FixedExtentScrollController(
+        initialItem: (rating / 0.25).round().clamp(0, levels.length - 1));
 
     adminSheet(
       context,
@@ -630,29 +633,35 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Rating', style: AdminText.strong(AdminColors.inkSoft)),
           const SizedBox(height: 7),
+          // Inline scroll wheel — fits inside the sheet (no full-screen dropdown
+          // overlay that overflowed the screen).
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            height: 150,
             decoration: BoxDecoration(
                 color: AdminColors.surfaceAlt,
                 borderRadius: AdminUI.fieldR,
                 border: Border.all(color: AdminColors.line)),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<double>(
-                value: rating,
-                isExpanded: true,
-                dropdownColor: AdminColors.surface,
-                style: AdminText.body(),
-                onChanged: (v) => setSheet(() => rating = v ?? rating),
-                items: [
-                  for (final l in levels)
-                    DropdownMenuItem(
-                      value: l,
-                      child: Text(
-                          'Lv ${l.toStringAsFixed(2)}  ·  Division ${_divLetter(_tierForRating(l))}',
-                          style: AdminText.body()),
-                    ),
-                ],
+            clipBehavior: Clip.antiAlias,
+            child: CupertinoPicker(
+              scrollController: wheelCtrl,
+              itemExtent: 36,
+              squeeze: 1.15,
+              diameterRatio: 1.5,
+              selectionOverlay: Container(
+                decoration: const BoxDecoration(
+                  border: Border.symmetric(
+                      horizontal: BorderSide(color: AdminColors.line)),
+                ),
               ),
+              onSelectedItemChanged: (i) => setSheet(() => rating = levels[i]),
+              children: [
+                for (final l in levels)
+                  Center(
+                    child: Text(
+                        'Lv ${l.toStringAsFixed(2)}  ·  Division ${_divLetter(_tierForRating(l))}',
+                        style: AdminText.body()),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
