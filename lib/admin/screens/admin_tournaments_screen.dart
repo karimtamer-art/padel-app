@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/admin_colors.dart';
 import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
+import 'draw_sheet.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 
 class AdminTournamentsScreen extends StatefulWidget {
@@ -700,9 +701,34 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
   void _bracketSheet(Map<String, dynamic> t) {
     final tid = t['id'] as String;
-    final isCustom = (t['format'] as String?) == 'custom';
+    final format = t['format'] as String?;
     // Registered (non-withdrawn) pairs for this tournament, for the builder.
     final entries = _activeEntries(t);
+
+    // Groups → Knockout draws use the configurable DrawSheet (setup + live
+    // standings board). Detect them by the create-time format, or by a stored
+    // spec whose first stage is groups (format flips to 'custom' after generate).
+    final spec = t['format_spec'];
+    final firstKind = (spec is Map &&
+            spec['stages'] is List &&
+            (spec['stages'] as List).isNotEmpty &&
+            (spec['stages'] as List).first is Map)
+        ? ((spec['stages'] as List).first as Map)['kind']
+        : null;
+    if (format == 'group_knockout' || firstKind == 'groups') {
+      showDrawSheet(
+        context,
+        tournamentId: tid,
+        tournamentName: (t['name'] as String?) ?? '',
+        registeredPairs: entries.length,
+        formatSpec: spec is Map ? Map<String, dynamic>.from(spec) : null,
+      ).then((_) {
+        if (mounted) _load();
+      });
+      return;
+    }
+
+    final isCustom = format == 'custom';
     adminSheet(
       context,
       title: 'Draw — ${t['name'] ?? ''}',
