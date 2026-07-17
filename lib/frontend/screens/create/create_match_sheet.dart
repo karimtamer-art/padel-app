@@ -478,6 +478,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         ),
       const SizedBox(height: 22),
       _label('Court'),
+      _courtsMap(),
       Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
@@ -542,38 +543,101 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         ),
       );
 
+  // Decorative placeholder for the courts map — real pins, distances and
+  // Directions arrive once court locations (lat/lng) are added.
+  Widget _courtsMap() => Container(
+        height: 132,
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.field, AppColors.surface]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(children: [
+          Positioned(top: -22, right: -12, child: _mapBlob(92, AppColors.primary.withValues(alpha: 0.05))),
+          Positioned(bottom: -26, left: -16, child: _mapBlob(84, AppColors.gold.withValues(alpha: 0.06))),
+          Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.location_on_outlined, size: 26, color: AppColors.inkFaint),
+              const SizedBox(height: 6),
+              Text('Map & directions arrive with court locations',
+                  textAlign: TextAlign.center,
+                  style: AppText.small().copyWith(fontSize: 11.5)),
+            ]),
+          ),
+        ]),
+      );
+
+  Widget _mapBlob(double d, Color c) =>
+      Container(width: d, height: d, decoration: BoxDecoration(color: c, shape: BoxShape.circle));
+
   Widget _courtTile(Map<String, dynamic> c) {
     final id = c['id'] as String;
     final on = _courtId == id;
-    final venue = c['venue_name'] as String? ?? '';
-    final name = c['name'] as String? ?? 'Court';
+    final venue = (c['venue_name'] as String?)?.trim() ?? '';
+    final name = (c['name'] as String?)?.trim() ?? '';
+    final area = (c['area'] as String?)?.trim() ?? '';
+    final city = (c['city'] as String?)?.trim() ?? '';
+    final indoor = c['indoor'] == true;
+    // "Gezira Club — Court 2", or just the venue when the court name is generic.
+    final title = venue.isNotEmpty
+        ? (name.isNotEmpty && name.toLowerCase() != 'court' ? '$venue — $name' : venue)
+        : (name.isNotEmpty ? name : 'Court');
+    final place = area.isNotEmpty ? area : city;
+    final sub = [
+      if (place.isNotEmpty) place,
+      indoor ? 'Indoor' : 'Outdoor',
+    ].join('  ·  ');
+    final accent = on ? AppColors.primary : AppColors.inkFaint;
     return GestureDetector(
       onTap: () => setState(() => _courtId = on ? null : id),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         decoration: BoxDecoration(
-          color: on ? AppColors.primary.withValues(alpha: 0.08) : AppColors.field,
-          borderRadius: BorderRadius.circular(13),
+          color: on ? AppColors.primary.withValues(alpha: 0.07) : AppColors.field,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: on ? AppColors.primary : AppColors.line, width: 1.5),
         ),
         child: Row(children: [
           Container(
             width: 38, height: 38, alignment: Alignment.center,
-            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(10)),
-            child: Icon(Icons.place_outlined, size: 20,
-                color: on ? AppColors.primary : AppColors.inkFaint),
+            decoration: BoxDecoration(
+                color: on ? AppColors.primary.withValues(alpha: 0.14) : AppColors.surface,
+                borderRadius: BorderRadius.circular(10)),
+            child: Icon(Icons.location_on_rounded, size: 19, color: accent),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(venue.isNotEmpty ? venue : name,
-                  style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
-              if (venue.isNotEmpty)
-                Text(name, style: AppText.small().copyWith(fontSize: 12)),
+              Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.bodyStrong().copyWith(fontSize: 14.5)),
+              if (sub.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Row(children: [
+                  Icon(indoor ? Icons.home_rounded : Icons.wb_sunny_rounded,
+                      size: 12, color: AppColors.inkFaint),
+                  const SizedBox(width: 5),
+                  Flexible(
+                    child: Text(sub,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.small().copyWith(fontSize: 12)),
+                  ),
+                ]),
+              ],
             ]),
           ),
-          if (on) const Icon(Icons.check_circle_rounded, size: 20, color: AppColors.primary),
+          const SizedBox(width: 8),
+          on
+              ? const Icon(Icons.check_circle_rounded, size: 20, color: AppColors.primary)
+              : const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
         ]),
       ),
     );

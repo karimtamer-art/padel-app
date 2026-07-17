@@ -155,7 +155,7 @@ class MatchService {
     try {
       rows = await _db
           .from('courts')
-          .select('id, name, venue_name, in_maintenance, is_public')
+          .select('id, name, venue_name, area, city, indoor, in_maintenance, is_public')
           .eq('is_public', true)
           .order('venue_name');
     } catch (_) {
