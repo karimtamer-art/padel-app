@@ -583,12 +583,13 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
     final area = (c['area'] as String?)?.trim() ?? '';
     final city = (c['city'] as String?)?.trim() ?? '';
     final indoor = c['indoor'] == true;
-    // "Gezira Club — Court 2", or just the venue when the court name is generic.
-    final title = venue.isNotEmpty
-        ? (name.isNotEmpty && name.toLowerCase() != 'court' ? '$venue — $name' : venue)
-        : (name.isNotEmpty ? name : 'Court');
+    // Headline is the club/venue (big + bold); the court label sits in the
+    // sub-line beside the area and Indoor/Outdoor.
+    final title = venue.isNotEmpty ? venue : (name.isNotEmpty ? name : 'Court');
     final place = area.isNotEmpty ? area : city;
+    final showName = venue.isNotEmpty && name.isNotEmpty && name.toLowerCase() != 'court';
     final sub = [
+      if (showName) name,
       if (place.isNotEmpty) place,
       indoor ? 'Indoor' : 'Outdoor',
     ].join('  ·  ');
@@ -617,7 +618,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
               Text(title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppText.bodyStrong().copyWith(fontSize: 14.5)),
+                  style: AppText.bodyStrong().copyWith(fontSize: 15.5, fontWeight: FontWeight.w800)),
               if (sub.isNotEmpty) ...[
                 const SizedBox(height: 2),
                 Row(children: [
