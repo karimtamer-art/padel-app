@@ -152,18 +152,18 @@ class MatchService {
   /// Falls back to the unfiltered query on pre-migration DBs without is_public.
   static Future<List<Map<String, dynamic>>> fetchCourts() async {
     List rows;
+    // Select * (not a named column list) so a stale PostgREST schema cache
+    // can't 400 the whole query on a newly-added column (area/city/indoor);
+    // the tile reads those fields defensively. Mirrors the admin courts fetch.
     try {
       rows = await _db
           .from('courts')
-          .select('id, name, venue_name, area, city, indoor, in_maintenance, is_public')
+          .select('*')
           .eq('is_public', true)
           .order('venue_name');
     } catch (_) {
       try {
-        rows = await _db
-            .from('courts')
-            .select('id, name, venue_name, in_maintenance')
-            .order('venue_name');
+        rows = await _db.from('courts').select('*').order('venue_name');
       } catch (e) {
         debugPrint('[MatchService] fetchCourts: $e');
         return [];
