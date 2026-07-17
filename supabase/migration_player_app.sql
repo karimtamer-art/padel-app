@@ -3638,6 +3638,10 @@ update public.community_chat cc
   from public.community_channels ch
  where ch.community_id = cc.community_id and ch.name = 'general' and cc.channel_id is null;
 
+-- Superseded twice below (event channels, then can_post). Drop first so a
+-- re-run against a DB that already has the wider shape doesn't error on the
+-- return-type change ("cannot change return type of existing function").
+drop function if exists public.community_channel_list(uuid);
 create or replace function public.community_channel_list(p_community_id uuid)
 returns table(
   id uuid, name text, post text, is_custom boolean, preview text, last_at timestamptz
