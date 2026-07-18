@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -457,8 +458,17 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               _dateRange,
               _startTime ?? (_start != null ? '${_start!.year}' : ''))),
           const SizedBox(width: 10),
-          Expanded(child: _infoCard(Icons.place_outlined, 'WHERE',
-              (_t?['venue_name'] as String?) ?? '—', '')),
+          Expanded(
+            child: GestureDetector(
+              onTap: _openVenueDirections,
+              behavior: HitTestBehavior.opaque,
+              child: _infoCard(Icons.place_outlined, 'WHERE',
+                  (_t?['venue_name'] as String?) ?? '—',
+                  ((_t?['venue_name'] as String?)?.trim().isNotEmpty ?? false)
+                      ? 'Directions →'
+                      : ''),
+            ),
+          ),
         ]),
         const SizedBox(height: 10),
         Row(children: [
@@ -522,6 +532,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               style: AppText.stat(22, highlight ? AppColors.primary : AppColors.ink)),
         ]),
       );
+
+  // Tournaments carry a free-text venue_name (no coords) — open the maps app to
+  // a search on that name.
+  Future<void> _openVenueDirections() async {
+    final v = (_t?['venue_name'] as String?)?.trim();
+    if (v == null || v.isEmpty) return;
+    try {
+      await launchUrl(
+          Uri.parse('https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(v)}'),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) AppToast.show(context, "Couldn't open Maps", kind: ToastKind.error);
+    }
+  }
 
   Widget _infoCard(IconData icon, String label, String value, String sub) =>
       Container(
