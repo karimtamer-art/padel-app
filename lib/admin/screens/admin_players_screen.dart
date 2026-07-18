@@ -509,8 +509,13 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
       ]),
       body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          AdminAvatar(_initials(name), size: 60, color: tierColor,
-              imageUrl: p['avatar_url'] as String?),
+          GestureDetector(
+            onTap: (p['avatar_url'] as String?)?.trim().isNotEmpty == true
+                ? () => showAdminPhoto(context, (p['avatar_url'] as String).trim())
+                : null,
+            child: AdminAvatar(_initials(name), size: 60, color: tierColor,
+                imageUrl: p['avatar_url'] as String?),
+          ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

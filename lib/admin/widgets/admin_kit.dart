@@ -211,6 +211,42 @@ class AdminAvatar extends StatelessWidget {
       );
 }
 
+/// Full-screen, pinch-zoomable photo viewer. Tap anywhere (or the ✕) to close.
+Future<void> showAdminPhoto(BuildContext context, String url) {
+  return showDialog<void>(
+    context: context,
+    barrierColor: Colors.black.withValues(alpha: 0.92),
+    builder: (ctx) => GestureDetector(
+      onTap: () => Navigator.pop(ctx),
+      child: Stack(children: [
+        Center(
+          child: InteractiveViewer(
+            minScale: 0.8,
+            maxScale: 4,
+            child: Image.network(
+              url,
+              fit: BoxFit.contain,
+              loadingBuilder: (_, child, progress) => progress == null
+                  ? child
+                  : const SizedBox(
+                      width: 40, height: 40,
+                      child: Center(child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2))),
+              errorBuilder: (_, __, ___) =>
+                  const Icon(Icons.broken_image_outlined, color: Colors.white54, size: 48),
+            ),
+          ),
+        ),
+        Positioned(
+          top: MediaQuery.of(ctx).padding.top + 6, right: 6,
+          child: IconButton(
+              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 26),
+              onPressed: () => Navigator.pop(ctx)),
+        ),
+      ]),
+    ),
+  );
+}
+
 enum AdminBtn { primary, ghost, soft, danger, success }
 
 class AdminButton extends StatelessWidget {
