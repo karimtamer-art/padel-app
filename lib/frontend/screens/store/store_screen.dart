@@ -5,6 +5,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/frontend/widgets/skeleton.dart';
@@ -494,6 +495,18 @@ class _StoreScreenState extends State<StoreScreen> {
               const Spacer(),
               const Icon(Icons.swap_horiz_rounded, size: 40, color: AppColors.primary),
             ]),
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: _openRepair,
+              behavior: HitTestBehavior.opaque,
+              child: Row(children: [
+                const Icon(Icons.build_outlined, size: 15, color: AppColors.heroFaint),
+                const SizedBox(width: 7),
+                Text('Racket needs fixing? Request a repair →',
+                    style: AppText.small(AppColors.heroFaint)
+                        .copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
+              ]),
+            ),
           ]),
         ),
       );
@@ -715,6 +728,129 @@ class _StoreScreenState extends State<StoreScreen> {
       builder: (_) => _TradeInSheet(rackets: rackets),
     );
   }
+
+  void _openRepair() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _RepairSheet(),
+    );
+  }
+}
+
+// Player submits a racket repair — lands in the admin repair queue (which had
+// no way to be populated before). RLS scopes the insert to the caller.
+class _RepairSheet extends StatefulWidget {
+  const _RepairSheet();
+  @override
+  State<_RepairSheet> createState() => _RepairSheetState();
+}
+
+class _RepairSheetState extends State<_RepairSheet> {
+  final _racket = TextEditingController();
+  final _issue = TextEditingController();
+  bool _busy = false, _done = false;
+  String _ref = '';
+
+  @override
+  void dispose() {
+    _racket.dispose();
+    _issue.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    final issue = _issue.text.trim();
+    if (uid == null || issue.isEmpty || _busy) {
+      if (issue.isEmpty) AppToast.show(context, 'Describe the issue first', kind: ToastKind.error);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final row = await Supabase.instance.client
+          .from('repair_requests')
+          .insert({
+            'player_id': uid,
+            'racket_desc': _racket.text.trim().isEmpty ? 'Racket' : _racket.text.trim(),
+            'issue': issue,
+            'status': 'pending',
+          })
+          .select('id')
+          .single();
+      if (!mounted) return;
+      final id = (row['id'] as String?) ?? '';
+      setState(() {
+        _busy = false;
+        _done = true;
+        _ref = id.isNotEmpty ? 'RP-${id.substring(0, 6).toUpperCase()}' : 'RP-PENDING';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      AppToast.show(context, 'Could not submit — try again', kind: ToastKind.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: AppColors.bg,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 40, height: 4,
+              decoration: BoxDecoration(color: AppColors.line, borderRadius: BorderRadius.circular(4))),
+          const SizedBox(height: 16),
+          if (_done) ...[
+            const Icon(Icons.check_circle_rounded, size: 44, color: AppColors.success),
+            const SizedBox(height: 12),
+            Text('Repair requested', style: AppText.cardTitle().copyWith(fontSize: 18)),
+            const SizedBox(height: 6),
+            Text('Reference $_ref — our team will reach out with a quote.',
+                textAlign: TextAlign.center, style: AppText.small().copyWith(fontSize: 12.5, height: 1.4)),
+            const SizedBox(height: 18),
+            AppButton('Done', full: true, height: 50, onPressed: () => Navigator.pop(context)),
+          ] else ...[
+            Align(alignment: Alignment.centerLeft,
+                child: Text('Racket repair', style: AppText.cardTitle().copyWith(fontSize: 18))),
+            const SizedBox(height: 4),
+            Align(alignment: Alignment.centerLeft,
+                child: Text('Tell us what needs fixing — we\'ll quote you.',
+                    style: AppText.small().copyWith(fontSize: 12.5))),
+            const SizedBox(height: 16),
+            _field(_racket, 'Racket (brand / model) — optional'),
+            const SizedBox(height: 10),
+            _field(_issue, 'What\'s wrong? e.g. cracked frame, grommet, grip', lines: 3),
+            const SizedBox(height: 16),
+            AppButton(_busy ? 'Submitting…' : 'Request repair',
+                full: true, height: 52, icon: Icons.build_rounded,
+                onPressed: _busy ? null : _submit),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  Widget _field(TextEditingController c, String hint, {int lines = 1}) => TextField(
+        controller: c,
+        maxLines: lines,
+        style: AppText.body().copyWith(fontSize: 14),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: AppText.small(AppColors.inkFaint),
+          filled: true,
+          fillColor: AppColors.field,
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        ),
+      );
 }
 
 class _SkeletonCard extends StatelessWidget {

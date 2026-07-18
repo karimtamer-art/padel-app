@@ -150,6 +150,8 @@ declare
   v_team_b     int;
   v_team       text;
   v_need       int;
+  v_hw         numeric;
+  v_partner_rating numeric;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
   if p_partner_id = v_uid then p_partner_id := null; end if;
@@ -194,9 +196,18 @@ begin
     if not (v_my_plac and v_cr_plac) then
       return 'This match is outside your matchmaking pool.';
     end if;
-  elsif abs(v_my_rating - v_center)
-        > public.mm_band_halfwidth(extract(epoch from (now() - v_created_at)) / 60.0) then
-    return 'This match is outside your rating band.';
+  else
+    v_hw := public.mm_band_halfwidth(extract(epoch from (now() - v_created_at)) / 60.0);
+    if abs(v_my_rating - v_center) > v_hw then
+      return 'This match is outside your rating band.';
+    end if;
+    if p_partner_id is not null then
+      select coalesce(rating, level, 2.0) into v_partner_rating
+        from profiles where id = p_partner_id;
+      if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
+        return 'Your partner is outside this match''s rating band.';
+      end if;
+    end if;
   end if;
 
   select count(*) filter (where team = 'a'), count(*) filter (where team = 'b')

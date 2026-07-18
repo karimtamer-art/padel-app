@@ -1966,6 +1966,24 @@ do $$ begin
   end if;
 end $$;
 
+-- Repair requests: players submit their own; admins read/update the queue.
+-- (Table created earlier alongside broadcasts; policies live here, after
+-- _is_admin is defined.)
+alter table public.repair_requests enable row level security;
+do $$ begin
+  create policy "repair: read own or admin" on public.repair_requests
+    for select using (player_id = auth.uid() or public._is_admin());
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "repair: insert own" on public.repair_requests
+    for insert with check (auth.uid() = player_id);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "repair: admin update" on public.repair_requests
+    for update using (public._is_admin());
+exception when duplicate_object then null; end $$;
+grant select, insert, update on public.repair_requests to authenticated;
+
 -- Key/value app settings (admin-editable). The InstaPay merchant handle
 -- lives here so the receiving account can change without a rebuild.
 create table if not exists public.app_settings (
@@ -2251,6 +2269,8 @@ declare
   v_team_b     int;
   v_team       text;
   v_need       int;
+  v_hw         numeric;
+  v_partner_rating numeric;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
   if p_partner_id = v_uid then p_partner_id := null; end if;
@@ -2266,8 +2286,8 @@ begin
     return null;
   end if;
 
-  -- Bringing a partner: they must exist and not already be in the match. The
-  -- partner is a friend you chose, so we do NOT band-check them.
+  -- Bringing a partner: they must exist and not already be in the match. Their
+  -- rating is band-checked below (in the placed branch) so the pair stays fair.
   if p_partner_id is not null then
     if v_created_by = p_partner_id then
       return 'That player created this match.';
@@ -2297,9 +2317,20 @@ begin
     if not (v_my_plac and v_cr_plac) then
       return 'This match is outside your matchmaking pool.';
     end if;
-  elsif abs(v_my_rating - v_center)
-        > public.mm_band_halfwidth(extract(epoch from (now() - v_created_at)) / 60.0) then
-    return 'This match is outside your rating band.';
+  else
+    v_hw := public.mm_band_halfwidth(extract(epoch from (now() - v_created_at)) / 60.0);
+    if abs(v_my_rating - v_center) > v_hw then
+      return 'This match is outside your rating band.';
+    end if;
+    -- Keep the pair fair: a brought partner must be in-band too, so a friend of
+    -- a very different rating can't be dragged in to skew the settled average.
+    if p_partner_id is not null then
+      select coalesce(rating, level, 2.0) into v_partner_rating
+        from profiles where id = p_partner_id;
+      if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
+        return 'Your partner is outside this match''s rating band.';
+      end if;
+    end if;
   end if;
 
   select count(*) filter (where team = 'a'), count(*) filter (where team = 'b')
