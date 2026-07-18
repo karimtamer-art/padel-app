@@ -324,6 +324,32 @@ class ProfileService {
     }
   }
 
+  /// Uploads a new avatar to the public `avatars` bucket (overwriting the
+  /// user's slot) and saves the URL to profiles.avatar_url. Returns the new URL
+  /// (with a cache-busting suffix so the changed image actually refreshes), or
+  /// null on failure.
+  static Future<String?> uploadAvatar(Uint8List bytes, String ext) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return null;
+    try {
+      final e = ext.toLowerCase() == 'jpeg' ? 'jpg' : (ext.isEmpty ? 'jpg' : ext.toLowerCase());
+      final path = '$uid/avatar.$e';
+      await _db.storage.from('avatars').uploadBinary(
+            path,
+            bytes,
+            fileOptions: FileOptions(
+                upsert: true, contentType: 'image/${e == 'jpg' ? 'jpeg' : e}'),
+          );
+      final base = _db.storage.from('avatars').getPublicUrl(path);
+      final url = '$base?v=${DateTime.now().millisecondsSinceEpoch}';
+      await _db.from('profiles').update({'avatar_url': url}).eq('id', uid);
+      return url;
+    } catch (e) {
+      debugPrint('[ProfileService] uploadAvatar: $e');
+      return null;
+    }
+  }
+
   static Future<void> ensureProfile(User user) async {
     final meta = user.userMetadata ?? {};
     final name = ((meta['name'] as String?) ?? (meta['full_name'] as String?) ?? '').trim();

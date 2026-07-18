@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
@@ -21,6 +22,8 @@ class EditProfileScreen extends StatefulWidget {
 class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _loading = true;
   bool _saving = false;
+  String? _avatarUrl;
+  bool _savingAvatar = false;
 
   Map<String, dynamic> _original = {};
 
@@ -73,8 +76,35 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _loading = false);
   }
 
+  Future<void> _pickAvatar() async {
+    try {
+      final f = await ImagePicker().pickImage(
+          source: ImageSource.gallery, maxWidth: 800, maxHeight: 800, imageQuality: 82);
+      if (f == null) return;
+      final bytes = await f.readAsBytes();
+      final dot = f.name.lastIndexOf('.');
+      final ext = dot >= 0 ? f.name.substring(dot + 1) : 'jpg';
+      if (!mounted) return;
+      setState(() => _savingAvatar = true);
+      final url = await ProfileService.uploadAvatar(bytes, ext);
+      if (!mounted) return;
+      setState(() {
+        _savingAvatar = false;
+        if (url != null) _avatarUrl = url;
+      });
+      if (url == null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Could not update your photo — try again.')));
+      }
+    } catch (_) {
+      if (mounted) setState(() => _savingAvatar = false);
+    }
+  }
+
   void _fill(Map<String, dynamic> data) {
     _original = Map.from(data);
+    _avatarUrl = (data['avatar_url'] as String?)?.trim();
+    if (_avatarUrl != null && _avatarUrl!.isEmpty) _avatarUrl = null;
     _nameCtrl.text  = data['name']  as String? ?? '';
     _usernameCtrl.text = data['username'] as String? ?? '';
     _phoneCtrl.text = data['phone'] as String? ?? '';
@@ -245,24 +275,47 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               children: [
                 // ── Avatar ──
                 Center(
-                  child: SizedBox(
-                    width: 104, height: 104,
-                    child: Stack(clipBehavior: Clip.none, children: [
-                      AppAvatar(_initials, size: 104, ring: 2.5),
-                      Positioned(
-                        right: 0, bottom: 0,
-                        child: Container(
-                          width: 34, height: 34,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.bg, width: 3),
+                  child: GestureDetector(
+                    onTap: _savingAvatar ? null : _pickAvatar,
+                    child: SizedBox(
+                      width: 104, height: 104,
+                      child: Stack(clipBehavior: Clip.none, children: [
+                        if (_avatarUrl != null)
+                          ClipOval(
+                            child: Image.network(_avatarUrl!,
+                                width: 104, height: 104, fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => AppAvatar(_initials, size: 104, ring: 2.5)),
+                          )
+                        else
+                          AppAvatar(_initials, size: 104, ring: 2.5),
+                        if (_savingAvatar)
+                          const Positioned.fill(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                  shape: BoxShape.circle, color: Color(0x66000000)),
+                              child: Center(
+                                child: SizedBox(
+                                    width: 22, height: 22,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2.4, color: Colors.white)),
+                              ),
+                            ),
                           ),
-                          child: const Icon(Icons.photo_camera_outlined,
-                              size: 16, color: AppColors.primaryInk),
+                        Positioned(
+                          right: 0, bottom: 0,
+                          child: Container(
+                            width: 34, height: 34,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: AppColors.bg, width: 3),
+                            ),
+                            child: const Icon(Icons.photo_camera_outlined,
+                                size: 16, color: AppColors.primaryInk),
+                          ),
                         ),
-                      ),
-                    ]),
+                      ]),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),
