@@ -3,7 +3,9 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
+import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/frontend/screens/store/checkout_flow_screen.dart';
 
 /// Full-screen cart: line items, quantity steppers, promo, order summary,
@@ -18,6 +20,7 @@ class CartScreen extends StatefulWidget {
 
 class _CartScreenState extends State<CartScreen> {
   bool _applied = false;
+  int _promoPercent = 0; // server-validated
   final _promo = TextEditingController();
 
   void _checkout() {
@@ -57,7 +60,20 @@ class _CartScreenState extends State<CartScreen> {
   int get _count => widget.cart.fold(0, (n, l) => n + l.qty);
   int get _subtotal => widget.cart.fold(0, (n, l) => n + l.lineTotal);
   int get _shipping => (_subtotal > 5000 || _subtotal == 0) ? 0 : 75;
-  int get _discount => _applied ? (_subtotal * 0.1).round() : 0;
+  int get _discount => _applied ? (_subtotal * _promoPercent / 100).round() : 0;
+
+  Future<void> _applyPromo() async {
+    final code = _promo.text.trim();
+    final d = await OrderService.applyPromo(code, _subtotal);
+    if (!mounted) return;
+    setState(() {
+      _applied = d > 0;
+      _promoPercent = (_applied && _subtotal > 0) ? (d * 100 / _subtotal).round() : 0;
+    });
+    if (!_applied && code.isNotEmpty) {
+      AppToast.show(context, 'That code isn\'t valid', kind: ToastKind.error);
+    }
+  }
   int get _total => _subtotal + _shipping - _discount;
 
   void _setQty(CartLine l, int q) {
@@ -214,7 +230,7 @@ class _CartScreenState extends State<CartScreen> {
           ),
           const SizedBox(width: 8),
           SizedBox(width: 84, child: AppButton('Apply', variant: AppBtnVariant.ghost,
-              onPressed: () => setState(() => _applied = _promo.text.trim().toUpperCase() == 'PADEL10'))),
+              onPressed: _applyPromo)),
         ]),
         if (_applied)
           Padding(
@@ -222,7 +238,8 @@ class _CartScreenState extends State<CartScreen> {
             child: Row(children: [
               const Icon(Icons.check_circle_outline_rounded, size: 14, color: AppColors.success),
               const SizedBox(width: 5),
-              Text('PADEL10 applied — 10% off', style: AppText.bodyStrong(AppColors.success).copyWith(fontSize: 11.5)),
+              Text('${_promo.text.trim().toUpperCase()} applied — $_promoPercent% off',
+                  style: AppText.bodyStrong(AppColors.success).copyWith(fontSize: 11.5)),
             ]),
           ),
       ]);
@@ -231,7 +248,7 @@ class _CartScreenState extends State<CartScreen> {
         child: Column(children: [
           _sumRow('Subtotal', MockData.egp(_subtotal)),
           _sumRow('Shipping', _shipping == 0 ? 'Free' : MockData.egp(_shipping)),
-          if (_discount > 0) _sumRow('Promo (PADEL10)', '– ${MockData.egp(_discount)}'),
+          if (_discount > 0) _sumRow('Promo (${_promo.text.trim().toUpperCase()})', '– ${MockData.egp(_discount)}'),
           const Padding(padding: EdgeInsets.only(top: 10), child: Divider(height: 1, color: AppColors.line)),
           Padding(
             padding: const EdgeInsets.only(top: 12),

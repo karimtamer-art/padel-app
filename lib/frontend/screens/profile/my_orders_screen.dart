@@ -171,7 +171,7 @@ class OrderDetailsScreen extends StatelessWidget {
         Product(
           (m['brand'] as String?) ?? '',
           (m['name'] as String?) ?? 'Item',
-          '',
+          (m['category'] as String?) ?? '',
           (m['unit_price'] as num?)?.toInt() ?? 0,
           0, 0,
           id: (m['product_id'] as String?) ?? '',

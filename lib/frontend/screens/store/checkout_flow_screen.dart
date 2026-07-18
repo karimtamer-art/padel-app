@@ -175,6 +175,15 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
     String? proofPath;
     if (_method == 'instapay' && _proofBytes != null) {
       proofPath = await OrderService.uploadPaymentProof(_proofBytes!, _proofExt);
+      // The buyer attached a screenshot but it failed to upload — don't place a
+      // proof-less order that looks like they skipped it. Let them retry.
+      if (proofPath == null) {
+        if (!mounted) return;
+        setState(() => _placing = false);
+        _toast("Couldn't upload your payment screenshot — check your connection and try again.",
+            error: true);
+        return;
+      }
     }
     final (err, orderId) = await OrderService.placeOrder(
       cart: widget.cart,

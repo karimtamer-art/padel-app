@@ -52,6 +52,19 @@ class OrderService {
     }
   }
 
+  /// Server-validated promo: the discount (currency units) a code yields for a
+  /// subtotal, or 0 if invalid/inactive. The order-insert trigger recomputes it
+  /// too, so a forged client discount is ignored.
+  static Future<int> applyPromo(String code, int subtotal) async {
+    try {
+      final res = await _db.rpc('apply_promo',
+          params: {'p_code': code, 'p_subtotal': subtotal});
+      return (res as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   /// The current user's orders, newest first (for the profile "My orders").
   /// RLS ("own orders read") scopes this to the signed-in player.
   static Future<List<Map<String, dynamic>>> fetchMyOrders() async {
@@ -96,6 +109,7 @@ class OrderService {
                   'product_id': l.product.id,
                   'name': l.product.name,
                   'brand': l.product.brand,
+                  'category': l.product.cat,
                   'qty': l.qty,
                   'unit_price': l.product.discounted,
                 }
