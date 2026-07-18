@@ -16,7 +16,7 @@ class MatchService {
       'id, status, match_type, scheduled_at, winner_team, score_team_a, '
       'score_team_b, created_by, court_id, min_elo, is_private, invite_code, '
       'result_submitted_by, '
-      'courts(name, venue_name), '
+      'courts(name, venue_name, lat, lng, address), '
       'match_players(player_id, team, elo_before, elo_after, '
       '  profiles(id, name, elo, level, tier, phone, username))';
 

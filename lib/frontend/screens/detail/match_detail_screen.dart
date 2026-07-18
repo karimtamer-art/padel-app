@@ -456,7 +456,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         AppCard(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Column(children: [
-            _infoRow(Icons.place_outlined, 'Court', courtName),
+            _infoRow(Icons.place_outlined, 'Court', courtName, trailing: _directionsBtn()),
             const Divider(color: AppColors.line),
             _infoRow(Icons.schedule_rounded, 'When', _fmtWhen()),
             const Divider(color: AppColors.line),
@@ -752,7 +752,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         ]),
       );
 
-  Widget _infoRow(IconData icon, String label, String value) => Padding(
+  Widget _infoRow(IconData icon, String label, String value, {Widget? trailing}) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 13),
         child: Row(children: [
           Container(
@@ -767,8 +767,42 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
               Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppText.bodyStrong()),
             ]),
           ),
+          if (trailing != null) ...[const SizedBox(width: 8), trailing],
         ]),
       );
+
+  Future<void> _openDirections(double? lat, double? lng, String? address) async {
+    final dest = (lat != null && lng != null)
+        ? '$lat,$lng'
+        : (address != null && address.trim().isNotEmpty
+            ? Uri.encodeComponent(address.trim())
+            : null);
+    if (dest == null) return;
+    try {
+      await launchUrl(Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$dest'),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) _snack("Couldn't open Maps", color: AppColors.danger);
+    }
+  }
+
+  Widget? _directionsBtn() {
+    final court = _match?['courts'] as Map?;
+    final lat = (court?['lat'] as num?)?.toDouble();
+    final lng = (court?['lng'] as num?)?.toDouble();
+    final address = (court?['address'] as String?)?.trim();
+    final hasLoc = (lat != null && lng != null) || (address != null && address.isNotEmpty);
+    if (!hasLoc) return null;
+    return GestureDetector(
+      onTap: () => _openDirections(lat, lng, address),
+      behavior: HitTestBehavior.opaque,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.directions_rounded, size: 18, color: AppColors.primary),
+        const SizedBox(width: 4),
+        Text('Directions', style: AppText.tag(AppColors.primary).copyWith(fontSize: 11)),
+      ]),
+    );
+  }
 
   // ── Result tab ─────────────────────────────────────────────────────────
 
