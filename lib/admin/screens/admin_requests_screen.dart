@@ -280,39 +280,48 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
       title: r['racket_desc'] as String? ?? '—',
       sub: '${_shortId(r['id'] as String?)} · ${_playerName(r)}',
       heightFactor: 0.74,
-      footer: status == 'pending'
-          ? AdminButton('Send quote', full: true, height: 50,
-              icon: Icons.check_rounded, onPressed: () async {
-              Navigator.pop(context);
-              await AdminService.updateRepair(r['id'] as String, {
-                'status': 'quoted',
-                'quote_amount': int.tryParse(quoteC.text) ?? 0,
-              });
-              await _load();
-              if (mounted) adminToast(context, 'Quote sent to ${_playerName(r)}');
-            })
-          : next != null && next != 'collected'
-              ? AdminButton(advanceLabel[next]!, full: true, height: 50,
-                  icon: Icons.check_rounded, onPressed: () async {
-                  Navigator.pop(context);
-                  await AdminService.updateRepair(
-                      r['id'] as String, {'status': next});
-                  await _load();
-                  if (mounted) {
-                    adminToast(context,
-                        '${_shortId(r['id'] as String?)} → ${_repairLabel[next]}');
-                  }
-                })
-              : next == 'collected'
-                  ? AdminButton('Mark collected', full: true, height: 50,
-                      variant: AdminBtn.success, onPressed: () async {
-                      Navigator.pop(context);
-                      await AdminService.updateRepair(
-                          r['id'] as String, {'status': 'collected'});
-                      await _load();
-                      if (mounted) adminToast(context, 'Repair complete');
-                    })
-                  : null,
+      footer: Column(mainAxisSize: MainAxisSize.min, children: [
+        (status == 'pending'
+            ? AdminButton('Send quote', full: true, height: 50,
+                icon: Icons.check_rounded, onPressed: () async {
+                Navigator.pop(context);
+                await AdminService.updateRepair(r['id'] as String, {
+                  'status': 'quoted',
+                  'quote_amount': int.tryParse(quoteC.text) ?? 0,
+                });
+                await _load();
+                if (mounted) adminToast(context, 'Quote sent to ${_playerName(r)}');
+              })
+            : next != null && next != 'collected'
+                // Label the CURRENT step's action (keyed by `status`), not the
+                // destination — `advanceLabel[next]` was one step ahead.
+                ? AdminButton(advanceLabel[status]!, full: true, height: 50,
+                    icon: Icons.check_rounded, onPressed: () async {
+                    Navigator.pop(context);
+                    await AdminService.updateRepair(
+                        r['id'] as String, {'status': next});
+                    await _load();
+                    if (mounted) {
+                      adminToast(context,
+                          '${_shortId(r['id'] as String?)} → ${_repairLabel[next]}');
+                    }
+                  })
+                : next == 'collected'
+                    ? AdminButton('Mark collected', full: true, height: 50,
+                        variant: AdminBtn.success, onPressed: () async {
+                        Navigator.pop(context);
+                        await AdminService.updateRepair(
+                            r['id'] as String, {'status': 'collected'});
+                        await _load();
+                        if (mounted) adminToast(context, 'Repair complete');
+                      })
+                    : const SizedBox.shrink()),
+        if (status != 'collected' && status != 'rejected') ...[
+          const SizedBox(height: 8),
+          AdminButton('Decline request', full: true, height: 44,
+              variant: AdminBtn.danger, onPressed: () => _declineRepair(r)),
+        ],
+      ]),
       body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           for (int i = 0; i < _repairFlow.length; i++)
@@ -520,27 +529,38 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
       title: t['racket_desc'] as String? ?? '—',
       sub: '${_shortId(t['id'] as String?)} · ${_playerName(t)}',
       heightFactor: 0.68,
-      footer: status == 'pending'
-          ? AdminButton('Send offer', full: true, height: 50,
-              icon: Icons.check_rounded, onPressed: () async {
-              Navigator.pop(context);
-              await AdminService.updateTrade(t['id'] as String, {
-                'status': 'offer_made',
-                'offer_credit': int.tryParse(offerC.text) ?? 0,
-              });
-              await _load();
-              if (mounted) adminToast(context, 'Offer sent to ${_playerName(t)}');
-            })
-          : status == 'offer_made'
-              ? AdminButton('Mark accepted', full: true, height: 50,
-                  variant: AdminBtn.success, onPressed: () async {
-                  Navigator.pop(context);
-                  await AdminService.updateTrade(
-                      t['id'] as String, {'status': 'accepted'});
-                  await _load();
-                  if (mounted) adminToast(context, 'Trade accepted — credit issued');
-                })
-              : null,
+      footer: Column(mainAxisSize: MainAxisSize.min, children: [
+        (status == 'pending'
+            ? AdminButton('Send offer', full: true, height: 50,
+                icon: Icons.check_rounded, onPressed: () async {
+                Navigator.pop(context);
+                await AdminService.updateTrade(t['id'] as String, {
+                  'status': 'offer_made',
+                  'offer_credit': int.tryParse(offerC.text) ?? 0,
+                });
+                await _load();
+                if (mounted) adminToast(context, 'Offer sent to ${_playerName(t)}');
+              })
+            : status == 'offer_made'
+                ? AdminButton('Mark accepted', full: true, height: 50,
+                    variant: AdminBtn.success, onPressed: () async {
+                    Navigator.pop(context);
+                    await AdminService.updateTrade(
+                        t['id'] as String, {'status': 'accepted'});
+                    await _load();
+                    // No wallet/store-credit ledger exists yet, so credit is
+                    // arranged manually — don't claim it was auto-issued.
+                    if (mounted) {
+                      adminToast(context, 'Trade accepted — arrange store credit');
+                    }
+                  })
+                : const SizedBox.shrink()),
+        if (status == 'pending' || status == 'offer_made') ...[
+          const SizedBox(height: 8),
+          AdminButton('Decline trade-in', full: true, height: 44,
+              variant: AdminBtn.danger, onPressed: () => _declineTrade(t)),
+        ],
+      ]),
       body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           _kv('Condition', t['condition'] as String? ?? '—'),
@@ -593,6 +613,20 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
         ],
       ]),
     );
+  }
+
+  Future<void> _declineRepair(Map<String, dynamic> r) async {
+    Navigator.pop(context);
+    await AdminService.updateRepair(r['id'] as String, {'status': 'rejected'});
+    await _load();
+    if (mounted) adminToast(context, 'Repair request declined');
+  }
+
+  Future<void> _declineTrade(Map<String, dynamic> t) async {
+    Navigator.pop(context);
+    await AdminService.updateTrade(t['id'] as String, {'status': 'rejected'});
+    await _load();
+    if (mounted) adminToast(context, 'Trade-in declined');
   }
 
   Widget _kv(String k, String v) => Expanded(

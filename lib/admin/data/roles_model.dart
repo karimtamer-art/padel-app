@@ -100,8 +100,11 @@ const Map<RoleId, RoleDef> kRoles = {
       AdminColors.gold,
       'Runs tournaments and reaches the community — no store or platform payments.',
       // Organizers get a Broadcasts section scoped to their OWN broadcasts
-      // (community + event entrants), not the platform-wide feed.
-      ['tournaments', 'formats', 'matches', 'courts', 'broadcasts']),
+      // (community + event entrants), not the platform-wide feed. No 'matches':
+      // the global match/dispute console is Support's remit, and the shared
+      // admin_matches_console is scoped to real staff, not org-owned data — so
+      // an organizer's Matches tab could only ever be empty.
+      ['tournaments', 'formats', 'courts', 'broadcasts']),
   RoleId.support: RoleDef(
       RoleId.support,
       'Support · Moderator',

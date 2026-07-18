@@ -652,6 +652,10 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                 'is_anchor': anchor,
                 'is_provisional': false,
                 'competitive_matches': 10,
+                // Server bumps placement_played to >=5 (ranked); mirror it so
+                // the row leaves the 'Unranked' bucket immediately, not on the
+                // next refresh (_isUnranked reads placement_played).
+                'placement_played': 5,
               };
               _all.sort((a, b) => _ratingOf(b).compareTo(_ratingOf(a)));
             });
@@ -742,15 +746,17 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
   }
 
   Future<void> _setStatus(String id, String status) async {
-    try {
-      await AdminService.setPlayerStatus(id, status);
-      final idx = _all.indexWhere((x) => x['id'] == id);
-      if (idx != -1 && mounted) {
-        setState(() => _all[idx] = {..._all[idx], 'status': status});
-      }
-    } catch (e) {
-      if (mounted) adminToast(context, 'Update failed', ok: false);
+    final err = await AdminService.setPlayerStatus(id, status);
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err, ok: false);
+      return;
     }
+    final idx = _all.indexWhere((x) => x['id'] == id);
+    if (idx != -1) {
+      setState(() => _all[idx] = {..._all[idx], 'status': status});
+    }
+    adminToast(context, status == 'banned' ? 'Player banned' : 'Player reinstated');
   }
 }
 

@@ -59,8 +59,16 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
   }
 
   // ── derived buckets ──
+  // Active/ongoing matches: open + full lobbies, plus matches whose time has
+  // passed and are awaiting result confirmation (pending_confirm / in_progress).
+  // Without these two, a match that filled and played was in NO tab — invisible
+  // to the admin until it completed or was disputed.
+  static const _awaiting = {'pending_confirm', 'in_progress'};
   List<Map<String, dynamic>> get _lobbies =>
-      _matches.where((m) => m['status'] == 'open' || m['status'] == 'full').toList();
+      _matches.where((m) =>
+          m['status'] == 'open' ||
+          m['status'] == 'full' ||
+          _awaiting.contains(m['status'])).toList();
   List<Map<String, dynamic>> get _completed =>
       _matches.where((m) => m['status'] == 'completed').toList();
   List<Map<String, dynamic>> get _disputes =>
@@ -526,15 +534,17 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
     switch (_filter) {
       case 'open': items = items.where((m) => m['status'] == 'open').toList(); break;
       case 'full': items = items.where((m) => m['status'] == 'full').toList(); break;
+      case 'awaiting': items = items.where((m) => _awaiting.contains(m['status'])).toList(); break;
       case 'competitive': items = items.where(_isCompetitive).toList(); break;
       case 'casual': items = items.where((m) => !_isCompetitive(m)).toList(); break;
     }
     return [
-      _chips(const ['all', 'open', 'full', 'competitive', 'casual'],
-          const ['All', 'Open', 'Full', 'Competitive', 'Casual']),
+      _chips(const ['all', 'open', 'full', 'awaiting', 'competitive', 'casual'],
+          const ['All', 'Open', 'Full', 'Awaiting result', 'Competitive', 'Casual']),
       const SizedBox(height: 12),
       if (items.isEmpty)
-        _empty(Icons.sports_tennis_rounded, 'No lobbies', 'Open and full lobbies appear here.')
+        _empty(Icons.sports_tennis_rounded, 'No lobbies',
+            'Open, full and awaiting-result matches appear here.')
       else
         for (final m in items) _lobbyCard(m),
     ];
@@ -542,19 +552,23 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
 
   Widget _lobbyCard(Map<String, dynamic> m) {
     final players = (m['player_count'] as num?)?.toInt() ?? 0;
+    final awaiting = _awaiting.contains(m['status']);
     final full = m['status'] == 'full' || players >= 4;
     final minElo = (m['min_elo'] as num?)?.toInt() ?? 0;
     final host = m['host'] as String?;
     final faulty = players == 0;
     return _accentCard(
-      accent: faulty ? AdminColors.danger : (full ? AdminColors.warn : AdminColors.success),
+      accent: faulty
+          ? AdminColors.danger
+          : (awaiting ? AdminColors.info : (full ? AdminColors.warn : AdminColors.success)),
       onTap: () => _detail(m, 'lobby'),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Expanded(child: Text(_court(m), style: AdminText.strong(), maxLines: 1, overflow: TextOverflow.ellipsis)),
           if (faulty) ...[_pill('Faulty', AdminColors.danger), const SizedBox(width: 6)]
-          else if (_isToday(m)) ...[_pill('Soon', AdminColors.warn), const SizedBox(width: 6)],
-          _pill(full ? 'Full' : 'Open', full ? AdminColors.warn : AdminColors.success),
+          else if (!awaiting && _isToday(m)) ...[_pill('Soon', AdminColors.warn), const SizedBox(width: 6)],
+          _pill(awaiting ? 'Awaiting result' : (full ? 'Full' : 'Open'),
+              awaiting ? AdminColors.info : (full ? AdminColors.warn : AdminColors.success)),
         ]),
         const SizedBox(height: 4),
         Text('${_when(m)}${host != null ? '  ·  $host' : ''}', style: AdminText.small()),

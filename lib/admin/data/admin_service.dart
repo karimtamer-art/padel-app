@@ -46,8 +46,20 @@ class AdminService {
     }
   }
 
-  static Future<void> setPlayerStatus(String id, String status) async {
-    await _db.from('profiles').update({'status': status}).eq('id', id);
+  /// Ban / unban / flag a player. profiles.status is service-role-only, so a
+  /// direct client update was a silent no-op (RLS matched 0 rows) — this goes
+  /// through the SECURITY DEFINER `admin_set_status` RPC. Returns an error
+  /// string or null.
+  static Future<String?> setPlayerStatus(String id, String status) async {
+    try {
+      final res = await _db.rpc('admin_set_status',
+          params: {'p_player_id': id, 'p_status': status});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   /// Seeds/overrides a player's rating via the server RPC (keeps ELO writes in
@@ -341,8 +353,16 @@ class AdminService {
   /// Rich console read: matches with court, host, players (name+team), score,
   /// winner, ELO delta. Admin-gated server-side.
   static Future<List<Map<String, dynamic>>> matchesConsole({int limit = 200}) async {
-    final res = await _db.rpc('admin_matches_console', params: {'p_limit': limit});
-    return List<Map<String, dynamic>>.from(res as List);
+    // Graceful fallback: a transient error (or a pre-migration DB missing the
+    // RPC) returns an empty list rather than throwing the whole Matches tab
+    // into a red error state. Mirrors playersConsole's resilience.
+    try {
+      final res = await _db.rpc('admin_matches_console', params: {'p_limit': limit});
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] matchesConsole: $e');
+      return [];
+    }
   }
 
   /// Admin-only: resolve a disputed match — finalize winner + score, recalc ELO,

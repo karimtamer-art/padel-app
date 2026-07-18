@@ -350,7 +350,7 @@ returns text
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_old text;
 begin
-  if not public._is_admin() then return 'Admins only.'; end if;
+  if not public._can_moderate() then return 'Not authorised.'; end if;
   select status into v_old from public.matches where id = p_match_id;
   if not found then return 'Match not found.'; end if;
   update public.matches set status = 'cancelled' where id = p_match_id;
@@ -369,7 +369,7 @@ create or replace function public.admin_matches_console(p_limit int default 200)
 returns json
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if not public._is_admin() then return '[]'::json; end if;
+  if not public._is_staff() then return '[]'::json; end if;
   return (
     select coalesce(json_agg(x order by x.scheduled_at desc nulls last), '[]'::json)
     from (
@@ -404,7 +404,7 @@ create or replace function public.admin_players_console()
 returns json
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if not public._is_admin() then return '[]'::json; end if;
+  if not public._is_staff() then return '[]'::json; end if;
   return (
     select coalesce(json_agg(row_to_json(x) order by x.rating desc nulls last), '[]'::json)
     from (
@@ -458,7 +458,7 @@ create or replace function public.admin_resolve_match(
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_status text;
 begin
-  if not public._is_admin() then return 'Admins only.'; end if;
+  if not public._can_moderate() then return 'Not authorised.'; end if;
   if p_winner not in ('a','b') then return 'Pick the winning team.'; end if;
   select status into v_status from public.matches where id = p_match_id for update;
   if not found then return 'Match not found.'; end if;
@@ -724,6 +724,31 @@ returns boolean language sql stable security definer set search_path = public as
   select coalesce((select is_admin from profiles where id = auth.uid()), false);
 $$;
 
+-- Staff gate (RBAC, 2026-07-18). Only super_admin has is_admin=true; organizer/
+-- support/analyst are is_admin=false but DO hold a console role. The shared
+-- read consoles (players/matches/dashboard) must let any staffer see data —
+-- gating them on _is_admin() left support's and analyst's tabs permanently
+-- empty. Nav access is enforced client-side (roles_model); these read RPCs just
+-- stop blocking staff. Write/moderation actions use _can_moderate() below.
+create or replace function public._is_staff()
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select is_admin or admin_role is not null from profiles where id = auth.uid()),
+    false);
+$$;
+grant execute on function public._is_staff() to authenticated;
+
+-- Player/match moderation gate: super admins + the Support · Moderator role
+-- ("keeps play fair — players, disputes and service requests"). Organizers and
+-- the read-only Analyst are excluded.
+create or replace function public._can_moderate()
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select is_admin or admin_role = 'support' from profiles where id = auth.uid()),
+    false);
+$$;
+grant execute on function public._can_moderate() to authenticated;
+
 -- Admin read on matches (OR'd with the participant policy above). Defined here
 -- because it needs _is_admin(); the participant policy earlier deliberately
 -- avoids referencing it so it can be created before this function exists.
@@ -743,7 +768,7 @@ create or replace function public.admin_dashboard_counts()
 returns json
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if not public._is_admin() then
+  if not public._is_staff() then
     return json_build_object('error', 'admins_only');
   end if;
   return json_build_object(
@@ -1078,19 +1103,23 @@ declare
 begin
   if not public.owns_tournament(p_tournament_id) then return 'Not authorised.'; end if;
 
-  -- seed: best pairs first (pair level = avg of player + partner if known)
+  -- seed: best pairs first (pair level = avg of player + partner if known).
+  -- Eligible = confirmed roster: free events land on 'registered', paid events
+  -- on 'paid' once verified (never 'registered'), so both must count or paid
+  -- tournaments draw from 0 pairs. LEFT JOIN profiles so guest entries
+  -- (player_id NULL) are kept — they seed at level 0, drawn but unrated.
   select array_agg(id order by lvl desc) into v_entries from (
     select te.id,
            ( coalesce(p1.level, 0) + coalesce(p2.level, p1.level, 0) ) / 2.0 as lvl
       from tournament_entries te
-      join profiles p1 on p1.id = te.player_id
+      left join profiles p1 on p1.id = te.player_id
       left join profiles p2 on p2.id = te.partner_id
      where te.tournament_id = p_tournament_id
-       and te.status = 'registered'
+       and te.status in ('registered', 'paid', 'confirmed')
   ) s;
 
   v_n := coalesce(array_length(v_entries, 1), 0);
-  if v_n < 2 then return 'Need at least 2 registered pairs.'; end if;
+  if v_n < 2 then return 'Need at least 2 confirmed pairs.'; end if;
 
   while v_size < v_n loop v_size := v_size * 2; end loop;
   v_slots := v_size / 2;
@@ -2713,6 +2742,37 @@ drop trigger if exists trg_decrement_stock on public.orders;
 create trigger trg_decrement_stock after insert on public.orders
   for each row execute function public.decrement_stock_on_order();
 
+-- Restore stock + stamp who/when when an order is voided (2026-07-18). The
+-- decrement above fires once at insert; without this, cancelling or refunding
+-- an order permanently burned that inventory (the catalog could never recover
+-- oversold-looking stock). BEFORE UPDATE so it can stamp the row, and guarded
+-- to the single transition INTO a void state so re-saving 'refunded' can't
+-- double-credit. auth.uid() records the acting admin — the refund/cancel audit.
+alter table public.orders add column if not exists voided_at timestamptz;
+alter table public.orders
+  add column if not exists voided_by uuid references public.profiles(id) on delete set null;
+
+create or replace function public.restock_on_void()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare it jsonb;
+begin
+  if new.status in ('cancelled', 'refunded')
+     and old.status not in ('cancelled', 'refunded') then
+    for it in select * from jsonb_array_elements(coalesce(new.items, '[]'::jsonb)) loop
+      update public.products
+         set stock = coalesce(stock, 0) + coalesce((it->>'qty')::int, 0)
+       where id = nullif(it->>'product_id', '')::uuid;
+    end loop;
+    new.voided_at := now();
+    new.voided_by := auth.uid();
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_restock_on_void on public.orders;
+create trigger trg_restock_on_void before update on public.orders
+  for each row when (old.status is distinct from new.status)
+  execute function public.restock_on_void();
+
 create table if not exists public.promo_codes (
   code         text primary key,
   percent      int  not null default 0,
@@ -3554,6 +3614,34 @@ begin
   return null;
 end $$;
 grant execute on function public.admin_set_rating(uuid, numeric, numeric, boolean, text) to authenticated;
+
+-- Ban / unban / flag a player (RBAC, 2026-07-18). profiles.status is service-
+-- role-only (the profiles_update_own policy + column grant let a player touch
+-- only their own id/username), so the console's direct `update profiles set
+-- status` matched 0 rows and silently failed. This SECURITY DEFINER RPC does
+-- the write, refuses to touch an admin account, and logs to audit_log.
+-- Gated to super admins + Support · Moderator (_can_moderate()).
+create or replace function public.admin_set_status(p_player_id uuid, p_status text)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_old text; v_target_admin boolean;
+begin
+  if not public._can_moderate() then return 'Not authorised.'; end if;
+  if p_status not in ('active','banned','flagged') then return 'Invalid status.'; end if;
+  select coalesce(status, 'active'), coalesce(is_admin, false)
+    into v_old, v_target_admin
+    from public.profiles where id = p_player_id;
+  if not found then return 'Player not found.'; end if;
+  if v_target_admin then return 'Cannot change an admin account.'; end if;
+  update public.profiles set status = p_status where id = p_player_id;
+  insert into public.audit_log
+    (admin_id, action, target_type, target_id, old_value, new_value, notes)
+  values (v_uid, 'set_player_status', 'profile', p_player_id,
+          jsonb_build_object('status', v_old),
+          jsonb_build_object('status', p_status), null);
+  return null;
+end $$;
+grant execute on function public.admin_set_status(uuid, text) to authenticated;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- RBAC — role-based console access (Phase 1 of Roles/Organizer/Community).
@@ -4997,17 +5085,20 @@ begin
   v_stage := v_spec->'stages'->0;
   v_kind := v_stage->>'kind';
 
+  -- Eligible = confirmed roster (registered | paid | confirmed); LEFT JOIN so
+  -- guest entries (player_id NULL) are drawn too. See generate_draw for why.
   select array_agg(id order by (case when p_random then random() else lvl end) desc)
     into v_entries from (
     select te.id,
            ((coalesce(p1.level, 0) + coalesce(p2.level, p1.level, 0)) / 2.0)::float8 as lvl
       from public.tournament_entries te
-      join public.profiles p1 on p1.id = te.player_id
+      left join public.profiles p1 on p1.id = te.player_id
       left join public.profiles p2 on p2.id = te.partner_id
-     where te.tournament_id = p_tournament_id and te.status = 'registered'
+     where te.tournament_id = p_tournament_id
+       and te.status in ('registered', 'paid', 'confirmed')
   ) s;
   v_n := coalesce(array_length(v_entries, 1), 0);
-  if v_n < 2 then return 'Need at least 2 registered pairs.'; end if;
+  if v_n < 2 then return 'Need at least 2 confirmed pairs.'; end if;
 
   delete from public.tournament_matches where tournament_id = p_tournament_id;
 
