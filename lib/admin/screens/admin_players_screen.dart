@@ -509,7 +509,8 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
       ]),
       body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          AdminAvatar(_initials(name), size: 60, color: tierColor),
+          AdminAvatar(_initials(name), size: 60, color: tierColor,
+              imageUrl: p['avatar_url'] as String?),
           const SizedBox(width: 14),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -804,7 +805,8 @@ class _PlayerCard extends StatelessWidget {
                               style: AdminText.mono(12, FontWeight.w500, AdminColors.inkFaint)),
                         ),
                         const SizedBox(width: 12),
-                        AdminAvatar(_AdminPlayersScreenState._initials(name), size: 40, color: c),
+                        AdminAvatar(_AdminPlayersScreenState._initials(name), size: 40, color: c,
+                            imageUrl: p['avatar_url'] as String?),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

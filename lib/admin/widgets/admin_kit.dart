@@ -185,16 +185,30 @@ class AdminAvatar extends StatelessWidget {
   final String initials;
   final double size;
   final Color color;
-  const AdminAvatar(this.initials, {super.key, this.size = 32, this.color = AdminColors.green});
+  final String? imageUrl;
+  const AdminAvatar(this.initials,
+      {super.key, this.size = 32, this.color = AdminColors.green, this.imageUrl});
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: size, height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: AdminColors.wash(color, 0.16)),
-      child: Text(initials, style: AdminText.sans(size * 0.36, FontWeight.w800, color)),
-    );
+    final url = imageUrl?.trim();
+    if (url != null && url.isNotEmpty) {
+      return ClipOval(
+        child: Image.network(
+          url,
+          width: size, height: size, fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _initialsCircle(),
+        ),
+      );
+    }
+    return _initialsCircle();
   }
+
+  Widget _initialsCircle() => Container(
+        width: size, height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: AdminColors.wash(color, 0.16)),
+        child: Text(initials, style: AdminText.sans(size * 0.36, FontWeight.w800, color)),
+      );
 }
 
 enum AdminBtn { primary, ghost, soft, danger, success }
