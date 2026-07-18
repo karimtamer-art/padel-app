@@ -11,6 +11,7 @@ import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
+import 'match_result_sheet.dart';
 
 /// Tournament detail — Clay Court prototype parity:
 /// Overview (prize/entry, about, where & when, eligibility, partner picker)
@@ -897,10 +898,21 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     ]);
   }
 
+  String? _teamOf(Map<String, dynamic>? e1, Map<String, dynamic>? e2, String? uid) {
+    bool inE(Map<String, dynamic>? e) =>
+        e != null && uid != null && (e['player_id'] == uid || e['partner_id'] == uid);
+    return inE(e1) ? 'a' : (inE(e2) ? 'b' : null);
+  }
+
+  bool _amInMatch(Map<String, dynamic>? e1, Map<String, dynamic>? e2) =>
+      _teamOf(e1, e2, _uid) != null;
+
   Widget _bracketMatch(Map<String, dynamic> m) {
     final e1 = m['e1'] as Map<String, dynamic>?;
     final e2 = m['e2'] as Map<String, dynamic>?;
     final winner = m['winner_entry'] as String?;
+    // A participant can enter / confirm / view the result once both pairs are set.
+    final actionable = e1 != null && e2 != null && _amInMatch(e1, e2);
     final myEntryIds = _entries
         .where((e) => e['player_id'] == _uid)
         .map((e) => e['id'])
@@ -937,28 +949,67 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       );
     }
 
-    return Container(
-      width: 220,
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.line),
-        boxShadow: kCardShadow,
+    // Action hint for a participant on an undecided match.
+    String? actionLabel;
+    Color actionColor = AppColors.primary;
+    if (actionable && winner == null) {
+      final status = (m['result_status'] as String?) ?? 'open';
+      if (status == 'pending') {
+        final mine = _teamOf(e1, e2, _uid);
+        final sub = _teamOf(e1, e2, m['submitted_by'] as String?);
+        actionLabel = sub == mine ? 'Awaiting confirm' : 'Confirm result';
+        actionColor = AppColors.gold;
+      } else if (status == 'disputed') {
+        actionLabel = 'Disputed · re-enter';
+        actionColor = AppColors.danger;
+      } else {
+        actionLabel = 'Enter result';
+      }
+    }
+
+    return GestureDetector(
+      onTap: actionable
+          ? () => showTournamentMatchResult(context,
+              match: m, uid: _uid, onChanged: _load)
+          : null,
+      child: Container(
+        width: 220,
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.line),
+          boxShadow: kCardShadow,
+        ),
+        child: Column(children: [
+          pairRow(e1, true),
+          pairRow(e2, false),
+          if (m['score'] != null && (m['score'] as String).isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: AppColors.lineSoft))),
+              child: Text(m['score'] as String,
+                  style: AppText.tag(AppColors.inkSoft).copyWith(fontSize: 11)),
+            ),
+          if (actionLabel != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: actionColor.withValues(alpha: 0.10),
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.edit_outlined, size: 12, color: actionColor),
+                const SizedBox(width: 5),
+                Text(actionLabel,
+                    style: AppText.tag(actionColor).copyWith(fontSize: 10.5, fontWeight: FontWeight.w800)),
+              ]),
+            ),
+        ]),
       ),
-      child: Column(children: [
-        pairRow(e1, true),
-        pairRow(e2, false),
-        if (m['score'] != null && (m['score'] as String).isNotEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: AppColors.lineSoft))),
-            child: Text(m['score'] as String,
-                style: AppText.tag(AppColors.inkSoft).copyWith(fontSize: 11)),
-          ),
-      ]),
     );
   }
 

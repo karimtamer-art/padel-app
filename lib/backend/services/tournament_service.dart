@@ -132,16 +132,64 @@ class TournamentService {
       final rows = await _db
           .from('tournament_matches')
           .select('id, bracket, round, slot, winner_entry, score, '
-              'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_name, partner_name), '
-              'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_name, partner_name)')
+              'result_status, submitted_winner, submitted_by, '
+              'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_id, partner_id, player_name, partner_name), '
+              'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_id, partner_id, player_name, partner_name)')
           .eq('tournament_id', tournamentId)
           .order('bracket')
           .order('round')
           .order('slot');
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (e) {
-      debugPrint('[TournamentService] fetchBracket: $e');
-      return [];
+      debugPrint('[TournamentService] fetchBracket: $e — retrying without result fields');
+      try {
+        // Pre-migration DBs without the result columns.
+        final rows = await _db
+            .from('tournament_matches')
+            .select('id, bracket, round, slot, winner_entry, score, '
+                'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_id, partner_id, player_name, partner_name), '
+                'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_id, partner_id, player_name, partner_name)')
+            .eq('tournament_id', tournamentId)
+            .order('bracket')
+            .order('round')
+            .order('slot');
+        return List<Map<String, dynamic>>.from(rows as List);
+      } catch (e2) {
+        debugPrint('[TournamentService] fetchBracket fallback: $e2');
+        return [];
+      }
+    }
+  }
+
+  /// A player in the match submits a winner (+ optional score). The other team
+  /// then confirms or disputes. Returns an error message or null.
+  static Future<String?> submitResult(String matchId, String winnerEntry,
+      {String? score}) async {
+    try {
+      final res = await _db.rpc('submit_tournament_result', params: {
+        'p_match_id': matchId,
+        'p_winner_entry': winnerEntry,
+        'p_score': score,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// The other team confirms ([confirm] true) or disputes ([confirm] false) a
+  /// submitted tournament result.
+  static Future<String?> confirmResult(String matchId, bool confirm) async {
+    try {
+      final res = await _db.rpc('confirm_tournament_result',
+          params: {'p_match_id': matchId, 'p_confirm': confirm});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
     }
   }
 
