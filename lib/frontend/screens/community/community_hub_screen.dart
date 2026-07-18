@@ -1190,27 +1190,40 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
             ]),
           ),
         ),
-        // Thread.
+        // Thread — subtle accent tint anchored top-right.
         Expanded(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-              : ListView(
-                  controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-                  children: [
-                    if (_eventBanner() != null) ...[_eventBanner()!, const SizedBox(height: 12)],
-                    if (_msgs.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
-                        child: Center(
-                          child: Text('No messages yet. Say hello!',
-                              style: AppText.small(), textAlign: TextAlign.center),
-                        ),
-                      )
-                    else
-                      ..._msgs.map(_bubble),
-                  ],
-                ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(0.7, -1),
+                radius: 0.9,
+                colors: [
+                  (widget.kind == 'match' ? AppColors.primary : AppColors.gold)
+                      .withValues(alpha: 0.05),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                : ListView(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+                    children: [
+                      if (_eventBanner() != null) ...[_eventBanner()!, const SizedBox(height: 12)],
+                      if (_msgs.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 24),
+                          child: Center(
+                            child: Text('No messages yet. Say hello!',
+                                style: AppText.small(), textAlign: TextAlign.center),
+                          ),
+                        )
+                      else
+                        for (var i = 0; i < _msgs.length; i++) _groupedBubble(i),
+                    ],
+                  ),
+          ),
         ),
         // Composer.
         _composer(),
@@ -1240,49 +1253,88 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
     return '${parts.first} ${parts.last[0]}.';
   }
 
-  Widget _bubble(Map<String, dynamic> m) {
+  bool _sameAuthor(Map<String, dynamic>? a, Map<String, dynamic>? b) =>
+      a != null && b != null &&
+      (a['fromMe'] == true) == (b['fromMe'] == true) &&
+      a['sender_id'] == b['sender_id'];
+
+  // Grouped messaging bubble: consecutive messages from one author tuck together
+  // — name once (first bubble), avatar + timestamp once (last bubble), inner
+  // corners tightened.
+  Widget _groupedBubble(int i) {
+    final m = _msgs[i];
     final me = m['fromMe'] == true;
+    final first = !_sameAuthor(i > 0 ? _msgs[i - 1] : null, m);
+    final last = !_sameAuthor(i + 1 < _msgs.length ? _msgs[i + 1] : null, m);
     final full = m['senderName'] as String? ?? 'Player';
     final body = m['body'] as String? ?? '';
     final time = _time(m['created_at']);
-    final avatar = AppAvatar(_msgInitials(full), size: 30, ring: 1.5,
-        color: me ? AppColors.gold : _avatarColor(m['sender_id'] as String? ?? full));
 
-    final header = Row(mainAxisSize: MainAxisSize.min, children: me
-        ? [
-            Text(time, style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
-            const SizedBox(width: 6),
-            Text('You', style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
-          ]
-        : [
-            Flexible(
-              child: Text(_msgName(full),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
-            ),
-            const SizedBox(width: 6),
-            Text(time, style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
-          ]);
+    const r = Radius.circular(18);
+    const tight = Radius.circular(6);
+    // Outer edge always round; the side nearest the avatar tightens mid-run.
+    final radius = me
+        ? BorderRadius.only(
+            topLeft: r, bottomLeft: r,
+            topRight: first ? r : tight, bottomRight: last ? r : tight)
+        : BorderRadius.only(
+            topRight: r, bottomRight: r,
+            topLeft: first ? r : tight, bottomLeft: last ? r : tight);
 
-    final content = Column(
+    final bubble = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+      decoration: BoxDecoration(
+        color: me ? AppColors.primary : AppColors.surface,
+        borderRadius: radius,
+        border: me ? null : Border.all(color: AppColors.lineSoft),
+        boxShadow: me
+            ? null
+            : const [BoxShadow(color: Color.fromRGBO(40, 30, 15, 0.05), blurRadius: 2, offset: Offset(0, 1))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(body,
+            style: AppText.body(me ? AppColors.primaryInk : AppColors.ink)
+                .copyWith(fontSize: 14, height: 1.35)),
+        if (last) ...[
+          const SizedBox(height: 2),
+          Text(time,
+              style: AppText.small(me ? AppColors.primaryInk.withValues(alpha: 0.7) : AppColors.inkFaint)
+                  .copyWith(fontSize: 10)),
+        ],
+      ]),
+    );
+
+    // Fixed 30px slot keeps the column aligned; avatar only on the last bubble.
+    final avatarSlot = SizedBox(
+      width: 30,
+      child: last
+          ? AppAvatar(_msgInitials(full), size: 30, ring: 1.5,
+              color: me ? AppColors.gold : _avatarColor(m['sender_id'] as String? ?? full))
+          : null,
+    );
+
+    final column = Column(
       crossAxisAlignment: me ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
-        header,
-        const SizedBox(height: 3),
-        Text(body,
-            textAlign: me ? TextAlign.right : TextAlign.left,
-            style: AppText.body().copyWith(fontSize: 14, height: 1.35)),
+        if (first)
+          Padding(
+            padding: const EdgeInsets.only(left: 4, right: 4, bottom: 3),
+            child: Text(me ? 'You' : _msgName(full),
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: AppText.bodyStrong().copyWith(fontSize: 12)),
+          ),
+        bubble,
       ],
     );
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: EdgeInsets.only(top: first ? 9 : 3),
       child: Row(
         mainAxisAlignment: me ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: me
-            ? [Flexible(child: content), const SizedBox(width: 9), avatar]
-            : [avatar, const SizedBox(width: 9), Flexible(child: content)],
+            ? [Flexible(child: column), const SizedBox(width: 7), avatarSlot]
+            : [avatarSlot, const SizedBox(width: 7), Flexible(child: column)],
       ),
     );
   }
