@@ -278,9 +278,11 @@ class CommunityService {
           .from('community_chat')
           .select('id, body, created_at, sender_id, profiles(name)')
           .eq('channel_id', channelId)
-          .order('created_at')
+          // Newest 200, then reversed to oldest-first for the chat (the list
+          // renders top-to-bottom). `.order()` defaults to DESCENDING.
+          .order('created_at', ascending: false)
           .limit(200);
-      return (res as List).map((r) {
+      final list = (res as List).map((r) {
         final m = Map<String, dynamic>.from(r as Map);
         return {
           'id': m['id'],
@@ -291,6 +293,7 @@ class CommunityService {
           'senderName': (m['profiles'] as Map?)?['name'] as String? ?? 'Player',
         };
       }).toList();
+      return list.reversed.toList();
     } catch (e) {
       debugPrint('[CommunityService] channelMessages: $e');
       return [];
@@ -305,7 +308,7 @@ class CommunityService {
         .from('community_chat')
         .stream(primaryKey: ['id'])
         .eq('channel_id', channelId)
-        .order('created_at')
+        .order('created_at', ascending: true) // oldest → newest for the chat
         .map((rows) => List<Map<String, dynamic>>.from(rows));
   }
 
