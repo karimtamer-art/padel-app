@@ -4,6 +4,7 @@ import '../theme/admin_colors.dart';
 import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
 import 'draw_sheet.dart';
+import 'tournament_entries_sheet.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 
 class AdminTournamentsScreen extends StatefulWidget {
@@ -374,6 +375,21 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             onPressed: () {
               Navigator.pop(context);
               _bracketSheet(t);
+            }),
+        const SizedBox(height: 10),
+        AdminButton('Manage entries',
+            full: true,
+            height: 46,
+            variant: AdminBtn.ghost,
+            icon: Icons.group_add_outlined,
+            onPressed: () {
+              Navigator.pop(context);
+              showTournamentEntries(
+                context,
+                tournamentId: t['id'] as String,
+                tournamentName: (t['name'] as String?) ?? '',
+                onChanged: _load,
+              );
             }),
         const SizedBox(height: 10),
         if (t['rating_applied'] == true)

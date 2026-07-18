@@ -415,6 +415,72 @@ class AdminService {
     }
   }
 
+  /// Organizer adds a pair — a real player ([playerId]) or a guest (name only).
+  static Future<String?> addTournamentEntry(
+    String tournamentId, {
+    String? playerId,
+    String? playerName,
+    String? partnerId,
+    String? partnerName,
+  }) async {
+    try {
+      final res = await _db.rpc('organizer_add_entry', params: {
+        'p_tournament_id': tournamentId,
+        'p_player_id': playerId,
+        'p_player_name': playerName,
+        'p_partner_id': partnerId,
+        'p_partner_name': partnerName,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Organizer removes an entry (hard-delete pre-draw, else soft-withdraw).
+  static Future<String?> removeTournamentEntry(String entryId) async {
+    try {
+      final res = await _db
+          .rpc('organizer_remove_entry', params: {'p_entry_id': entryId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Active (non-withdrawn) entries for a tournament, for the entry manager.
+  static Future<List<Map<String, dynamic>>> tournamentEntries(String tid) async {
+    try {
+      final rows = await _db
+          .from('tournament_entries')
+          .select('id, player_id, player_name, partner_id, partner_name, status')
+          .eq('tournament_id', tid)
+          .order('created_at');
+      return List<Map<String, dynamic>>.from(rows as List)
+          .where((e) => e['status'] != 'withdrawn')
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Search real players by @username (for linking an app player to an entry).
+  static Future<List<Map<String, dynamic>>> searchPlayers(String query) async {
+    try {
+      var q = _db.from('profiles').select('id, name, username').eq('is_admin', false);
+      final term = query.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+      if (term.isNotEmpty) q = q.ilike('username', '%$term%');
+      final rows = await q.limit(15);
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (_) {
+      return [];
+    }
+  }
+
   static Future<String?> upsertTournament(Map<String, dynamic> data) async {
     try {
       await _db.from('tournaments').upsert(data, onConflict: 'id');
