@@ -1218,36 +1218,71 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
     );
   }
 
+  static const _avatarPalette = [
+    Color(0xFF3F7896), Color(0xFFB07E22), Color(0xFF2F6B57),
+    Color(0xFF8A4B2B), Color(0xFF6E5AA0), Color(0xFF907A52),
+  ];
+  Color _avatarColor(String seed) =>
+      _avatarPalette[seed.hashCode.abs() % _avatarPalette.length];
+
+  String _msgInitials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+
+  // "Yara A." — first name + last initial.
+  String _msgName(String full) {
+    final parts = full.trim().split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+    if (parts.isEmpty) return 'Player';
+    if (parts.length == 1) return parts.first;
+    return '${parts.first} ${parts.last[0]}.';
+  }
+
   Widget _bubble(Map<String, dynamic> m) {
     final me = m['fromMe'] == true;
-    final name = (m['senderName'] as String? ?? 'Player').split(' ').first;
+    final full = m['senderName'] as String? ?? 'Player';
     final body = m['body'] as String? ?? '';
     final time = _time(m['created_at']);
-    return Align(
-      alignment: me ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-        child: Column(
-            crossAxisAlignment: me ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(left: 2, right: 2, bottom: 3),
-                child: Text(me ? time : '$name · $time',
-                    style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10.5, letterSpacing: 0)),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-                decoration: BoxDecoration(
-                  color: me ? AppColors.primary : AppColors.surface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: me ? null : Border.all(color: AppColors.lineSoft),
-                ),
-                child: Text(body,
-                    style: AppText.body(me ? AppColors.primaryInk : AppColors.ink)
-                        .copyWith(fontSize: 14, height: 1.35)),
-              ),
-            ]),
+    final avatar = AppAvatar(_msgInitials(full), size: 30, ring: 1.5,
+        color: me ? AppColors.gold : _avatarColor(m['sender_id'] as String? ?? full));
+
+    final header = Row(mainAxisSize: MainAxisSize.min, children: me
+        ? [
+            Text(time, style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
+            const SizedBox(width: 6),
+            Text('You', style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
+          ]
+        : [
+            Flexible(
+              child: Text(_msgName(full),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
+            ),
+            const SizedBox(width: 6),
+            Text(time, style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
+          ]);
+
+    final content = Column(
+      crossAxisAlignment: me ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        header,
+        const SizedBox(height: 3),
+        Text(body,
+            textAlign: me ? TextAlign.right : TextAlign.left,
+            style: AppText.body().copyWith(fontSize: 14, height: 1.35)),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        mainAxisAlignment: me ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: me
+            ? [Flexible(child: content), const SizedBox(width: 9), avatar]
+            : [avatar, const SizedBox(width: 9), Flexible(child: content)],
       ),
     );
   }
