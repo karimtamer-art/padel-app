@@ -238,7 +238,7 @@ class CommunityService {
           .select('sender_role, body, created_at')
           .eq('community_id', communityId)
           .eq('member_id', memberId)
-          .order('created_at');
+          .order('created_at', ascending: true); // oldest first (default is DESC)
       return (res as List)
           .map((r) => CommunityMessage.fromRow(
               Map<String, dynamic>.from(r as Map),
