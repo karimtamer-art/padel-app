@@ -412,7 +412,7 @@ class OrderUi {
         const OrderStatusSpec(AppColors.warn, 'Awaiting payment', 'Awaiting payment confirmation', Icons.schedule_rounded),
       'pending' =>
         const OrderStatusSpec(AppColors.warn, 'Order placed', 'Order placed — being confirmed', Icons.schedule_rounded),
-      'paid' =>
+      'paid' || 'confirmed' =>
         const OrderStatusSpec(AppColors.accent, 'Confirmed', 'Confirmed — preparing your order', Icons.inventory_2_outlined),
       'shipped' =>
         const OrderStatusSpec(AppColors.primary, 'Out for delivery', 'On its way to you', Icons.local_shipping_outlined),

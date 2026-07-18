@@ -328,6 +328,7 @@ class ProfileService {
     final meta = user.userMetadata ?? {};
     final name = ((meta['name'] as String?) ?? (meta['full_name'] as String?) ?? '').trim();
     try {
+      // Start UNRANKED — no seeded elo/level/tier (matches handle_new_user).
       await _db.from('profiles').upsert(
         {
           'id': user.id,
@@ -335,11 +336,7 @@ class ProfileService {
           'avatar_url': meta['avatar_url'] as String?,
           'preferred_hand': 'right',
           'preferred_court_side': 'both',
-          'elo': 1000,
-          'level': 1.0,
           'placement_played': 0,
-          'tier': 'bronze',
-          'division_pts': 0,
         },
         onConflict: 'id',
         ignoreDuplicates: true,

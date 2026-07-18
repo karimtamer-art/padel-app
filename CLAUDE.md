@@ -92,7 +92,9 @@ before changing anything.
   themselves.
 - Losers-bracket pairing is arrival-order, not strict seeded DE crossing.
 - Decay job needs the pg_cron extension enabled in Supabase to auto-run.
-- Notifications screen reads admin `broadcasts`; there is no push (FCM) yet.
+- Notifications screen reads admin `broadcasts`. Push IS live: FCM on Android +
+  APNs on iOS via `PushService`, driven off `notifications` inserts and honouring
+  `profiles.notify_*` prefs.
 - `division_demo_screen.dart` is a demo/dev screen; ignore it.
 
 ## When unsure
