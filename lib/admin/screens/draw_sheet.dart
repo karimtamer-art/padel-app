@@ -314,11 +314,116 @@ class _DrawSheetState extends State<DrawSheet> {
             ),
           const Spacer(),
           IconButton(
+              tooltip: 'Enter scores',
+              icon: const Icon(Icons.scoreboard_outlined, size: 20, color: AdminColors.inkSoft),
+              onPressed: _openScores),
+          IconButton(
               tooltip: 'Reconfigure',
               icon: const Icon(Icons.settings_outlined, size: 20, color: AdminColors.inkSoft),
               onPressed: () => setState(() => _forceSetup = true)),
         ]),
       );
+
+  // Optional per-match scores for decided matches — feeds margin-of-victory
+  // into the rating engine at finalize (winners alone settle on win/loss).
+  void _openScores() {
+    final decided = _matches.where((m) {
+      return m['winner_entry'] != null && m['e1'] != null && m['e2'] != null;
+    }).toList();
+    if (decided.isEmpty) {
+      adminToast(context, 'No decided matches yet', ok: false);
+      return;
+    }
+    final ctrls = {
+      for (final m in decided)
+        m['id'] as String: TextEditingController(text: (m['score'] as String?) ?? '')
+    };
+    var saving = false;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => StatefulBuilder(builder: (sheetCtx, setSheet) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
+          child: Container(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(sheetCtx).size.height * 0.82),
+            decoration: const BoxDecoration(
+              color: AdminColors.bg,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+            ),
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 22),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('Match scores', style: AdminText.sans(17, FontWeight.w800, AdminColors.ink)),
+              const SizedBox(height: 3),
+              Text('Optional — adds margin-of-victory to ratings. e.g. 6-4, 6-3',
+                  style: AdminText.small(AdminColors.inkFaint)),
+              const SizedBox(height: 14),
+              Flexible(
+                child: ListView(children: [
+                  for (final m in decided) _scoreRow(m, ctrls[m['id'] as String]!),
+                ]),
+              ),
+              const SizedBox(height: 12),
+              AdminButton(saving ? 'Saving…' : 'Save scores',
+                  full: true, height: 48, icon: Icons.check_rounded,
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          setSheet(() => saving = true);
+                          for (final m in decided) {
+                            final id = m['id'] as String;
+                            final score = ctrls[id]!.text.trim();
+                            if (score == ((m['score'] as String?) ?? '').trim()) continue;
+                            await AdminService.setMatchWinner(
+                                id, m['winner_entry'] as String,
+                                score: score.isEmpty ? null : score);
+                          }
+                          if (sheetCtx.mounted) Navigator.pop(sheetCtx);
+                          await _load();
+                          if (mounted) adminToast(context, 'Scores saved');
+                        }),
+            ]),
+          ),
+        );
+      }),
+    ).whenComplete(() {
+      for (final c in ctrls.values) {
+        c.dispose();
+      }
+    });
+  }
+
+  Widget _scoreRow(Map<String, dynamic> m, TextEditingController ctrl) {
+    final a = pairOf(m['e1']);
+    final b = pairOf(m['e2']);
+    final winner = m['winner_entry'] as String?;
+    String side(DrawPair? p, String? id) =>
+        (p?.lead ?? 'Bye') + (winner != null && winner == id ? ' ✓' : '');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('${side(a, m['e1']?['id'] as String?)}  vs  ${side(b, m['e2']?['id'] as String?)}',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: AdminText.sans(12.5, FontWeight.w700, AdminColors.ink)),
+        const SizedBox(height: 5),
+        TextField(
+          controller: ctrl,
+          style: AdminText.body(),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: 'Score (optional)',
+            hintStyle: AdminText.small(AdminColors.inkFaint),
+            filled: true,
+            fillColor: AdminColors.surfaceAlt,
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          ),
+        ),
+      ]),
+    );
+  }
 
   Widget _segToggle() {
     Widget seg(String label, IconData ic, int i) {
