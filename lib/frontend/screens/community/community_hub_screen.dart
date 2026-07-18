@@ -82,6 +82,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
           state: ch['state'] as String? ?? 'active',
           post: ch['post'] as String? ?? 'all',
           canPost: ch['can_post'] == true,
+          organizerId: c.organizerId,
         ),
       ),
     );
@@ -1008,6 +1009,7 @@ class CommunityChannelScreen extends StatefulWidget {
   final String state; // active | grace | archived
   final String post; // all | registered | org
   final bool canPost; // server-computed for this viewer
+  final String? organizerId; // to flag the organizer's messages
   const CommunityChannelScreen({
     super.key,
     required this.communityId,
@@ -1017,6 +1019,7 @@ class CommunityChannelScreen extends StatefulWidget {
     this.state = 'active',
     this.post = 'all',
     required this.canPost,
+    this.organizerId,
   });
 
   bool get isEvent => kind != 'community';
@@ -1264,6 +1267,7 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
   Widget _groupedBubble(int i) {
     final m = _msgs[i];
     final me = m['fromMe'] == true;
+    final org = !me && widget.organizerId != null && m['sender_id'] == widget.organizerId;
     final first = !_sameAuthor(i > 0 ? _msgs[i - 1] : null, m);
     final last = !_sameAuthor(i + 1 < _msgs.length ? _msgs[i + 1] : null, m);
     final full = m['senderName'] as String? ?? 'Player';
@@ -1284,9 +1288,13 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
     final bubble = Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
       decoration: BoxDecoration(
-        color: me ? AppColors.primary : AppColors.surface,
+        color: me
+            ? AppColors.primary
+            : (org ? AppColors.gold.withValues(alpha: 0.12) : AppColors.surface),
         borderRadius: radius,
-        border: me ? null : Border.all(color: AppColors.lineSoft),
+        border: me
+            ? null
+            : Border.all(color: org ? AppColors.gold.withValues(alpha: 0.30) : AppColors.lineSoft),
         boxShadow: me
             ? null
             : const [BoxShadow(color: Color.fromRGBO(40, 30, 15, 0.05), blurRadius: 2, offset: Offset(0, 1))],
@@ -1319,9 +1327,24 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
         if (first)
           Padding(
             padding: const EdgeInsets.only(left: 4, right: 4, bottom: 3),
-            child: Text(me ? 'You' : _msgName(full),
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: AppText.bodyStrong().copyWith(fontSize: 12)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Flexible(
+                child: Text(me ? 'You' : _msgName(full),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: AppText.bodyStrong().copyWith(fontSize: 12)),
+              ),
+              if (org) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: AppColors.gold.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(999)),
+                  child: Text('ORGANIZER',
+                      style: AppText.tag(AppColors.gold).copyWith(fontSize: 8.5, letterSpacing: 0.4)),
+                ),
+              ],
+            ]),
           ),
         bubble,
       ],

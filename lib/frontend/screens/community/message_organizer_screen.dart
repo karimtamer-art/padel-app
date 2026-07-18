@@ -95,16 +95,28 @@ class _MessageOrganizerScreenState extends State<MessageOrganizerScreen> {
       ),
       body: Column(children: [
         Expanded(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-              : _messages.isEmpty
-                  ? _empty()
-                  : ListView.builder(
-                      controller: _scroll,
-                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                      itemCount: _messages.length,
-                      itemBuilder: (_, i) => _bubble(_messages[i]),
-                    ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(-0.7, -1),
+                radius: 0.9,
+                colors: [AppColors.primary.withValues(alpha: 0.05), Colors.transparent],
+              ),
+            ),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                : _messages.isEmpty
+                    ? _empty()
+                    : ListView(
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                        children: [
+                          _introPill(),
+                          const SizedBox(height: 14),
+                          for (var i = 0; i < _messages.length; i++) _bubble(i),
+                        ],
+                      ),
+          ),
         ),
         _composer(),
       ]),
@@ -126,26 +138,72 @@ class _MessageOrganizerScreenState extends State<MessageOrganizerScreen> {
         ),
       );
 
-  Widget _bubble(CommunityMessage m) {
-    final mine = m.fromMe;
-    return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.74),
-        decoration: BoxDecoration(
-          color: mine ? AppColors.primary : AppColors.surface,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(14),
-            topRight: const Radius.circular(14),
-            bottomLeft: Radius.circular(mine ? 14 : 4),
-            bottomRight: Radius.circular(mine ? 4 : 14),
-          ),
-          border: mine ? null : Border.all(color: AppColors.line),
+  Widget _introPill() => Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+              color: AppColors.field,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: AppColors.lineSoft)),
+          child: Text('Chatting with ${widget.organizerName}, the organizer',
+              style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
         ),
-        child: Text(m.body,
-            style: AppText.body(mine ? AppColors.primaryInk : AppColors.ink)),
+      );
+
+  static String _fmt(DateTime? at) {
+    if (at == null) return '';
+    final t = at.toLocal();
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return '$h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  // Grouped bubbles by side (me vs organizer): tighten inner corners mid-run,
+  // timestamp on the last bubble only.
+  Widget _bubble(int i) {
+    final m = _messages[i];
+    final me = m.fromMe;
+    bool same(CommunityMessage? a, CommunityMessage? b) => a != null && b != null && a.fromMe == b.fromMe;
+    final first = !same(i > 0 ? _messages[i - 1] : null, m);
+    final last = !same(i + 1 < _messages.length ? _messages[i + 1] : null, m);
+
+    const r = Radius.circular(18);
+    const tight = Radius.circular(6);
+    final radius = me
+        ? BorderRadius.only(
+            topLeft: r, bottomLeft: r,
+            topRight: first ? r : tight, bottomRight: last ? r : tight)
+        : BorderRadius.only(
+            topRight: r, bottomRight: r,
+            topLeft: first ? r : tight, bottomLeft: last ? r : tight);
+    final time = _fmt(m.at);
+
+    return Padding(
+      padding: EdgeInsets.only(top: first ? 9 : 3),
+      child: Align(
+        alignment: me ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
+          decoration: BoxDecoration(
+            color: me ? AppColors.primary : AppColors.surface,
+            borderRadius: radius,
+            border: me ? null : Border.all(color: AppColors.lineSoft),
+            boxShadow: me
+                ? null
+                : const [BoxShadow(color: Color.fromRGBO(40, 30, 15, 0.05), blurRadius: 2, offset: Offset(0, 1))],
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(m.body,
+                style: AppText.body(me ? AppColors.primaryInk : AppColors.ink)
+                    .copyWith(height: 1.35)),
+            if (last && time.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(time,
+                  style: AppText.small(me ? AppColors.primaryInk.withValues(alpha: 0.7) : AppColors.inkFaint)
+                      .copyWith(fontSize: 10)),
+            ],
+          ]),
+        ),
       ),
     );
   }
