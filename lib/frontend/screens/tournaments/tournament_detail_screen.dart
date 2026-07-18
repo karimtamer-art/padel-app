@@ -650,6 +650,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   Widget _playerTile(Map<String, dynamic> p, {bool selected = false}) {
     final name = p['name'] as String? ?? 'Player';
     final username = p['username'] as String?;
+    final ranked = p['level'] != null || p['elo'] != null;
     final elo = (p['elo'] as num?)?.toInt() ?? 1000;
     final lv = (p['level'] as num?)?.toDouble() ?? RankingScale.levelFromElo(elo);
     final initials = name.trim().isEmpty
@@ -657,7 +658,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         : name.trim().split(RegExp(r'\s+')).take(2).map((w) => w[0]).join().toUpperCase();
     final subtitle = (username != null && username.isNotEmpty)
         ? '@$username'
-        : RankingScale.levelTag(lv);
+        : (ranked ? RankingScale.levelTag(lv) : 'Unranked');
     return GestureDetector(
       onTap: () => setState(() => _partner = selected ? null : p),
       child: Container(
@@ -911,8 +912,10 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     final e1 = m['e1'] as Map<String, dynamic>?;
     final e2 = m['e2'] as Map<String, dynamic>?;
     final winner = m['winner_entry'] as String?;
-    // A participant can enter / confirm / view the result once both pairs are set.
-    final actionable = e1 != null && e2 != null && _amInMatch(e1, e2);
+    // A participant can enter / confirm / view the result once both pairs are set
+    // — except legacy wb/lb/gf draws, which the organizer records.
+    final legacy = const {'wb', 'lb', 'gf'}.contains(m['bracket'] as String?);
+    final actionable = e1 != null && e2 != null && !legacy && _amInMatch(e1, e2);
     final myEntryIds = _entries
         .where((e) => e['player_id'] == _uid)
         .map((e) => e['id'])

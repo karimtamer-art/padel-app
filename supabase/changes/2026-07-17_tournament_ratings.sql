@@ -28,7 +28,7 @@ declare
   m record; v_wteam text; v_mid uuid; v_n int := 0;
 begin
   if not public.owns_tournament(p_tournament_id) then return 'Not authorised.'; end if;
-  select rated, coalesce(rating_applied, false), created_by
+  select rated, coalesce(rating_applied, false), organizer_id
     into v_rated, v_applied, v_owner
     from public.tournaments where id = p_tournament_id;
   if not found then return 'Tournament not found.'; end if;
@@ -60,7 +60,7 @@ begin
        and tm.winner_entry is not null
   loop
     -- Rate only clean 2v2s of four distinct real profiles.
-    if m.a2 is null or m.b2 is null then continue; end if;
+    if m.a1 is null or m.a2 is null or m.b1 is null or m.b2 is null then continue; end if;
     if m.a1 = m.a2 or m.b1 = m.b2 then continue; end if;
     if m.a1 in (m.b1, m.b2) or m.a2 in (m.b1, m.b2) then continue; end if;
     if exists (select 1 from public.matches where tournament_match_id = m.id) then continue; end if;

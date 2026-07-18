@@ -147,19 +147,19 @@ class _HomeScreenState extends State<HomeScreen> {
       final ids = (joined as List).map((r) => r['match_id'] as String).toList();
       if (ids.isEmpty) return;
 
-      // Step 2: my upcoming matches + recent ones that still need action
-      // (score submission, confirmation, or dispute resolution).
-      final weekAgo =
-          DateTime.now().subtract(const Duration(days: 7)).toIso8601String();
+      // Step 2: my active matches — upcoming plus any still needing action
+      // (score submission, confirmation, dispute). No age filter: a match stuck
+      // in pending_confirm/disputed must always keep an entry point here (the
+      // status filter already excludes completed/cancelled, so the list stays
+      // small, and stale 'open' ones are auto-cancelled by the sweep).
       final rows = await _db
           .from('matches')
           .select('id, status, match_type, scheduled_at, courts(name, venue_name), match_players(player_id)')
           .inFilter('id', ids)
           .inFilter('status',
               ['open', 'full', 'in_progress', 'pending_confirm', 'disputed'])
-          .gte('scheduled_at', weekAgo)
           .order('scheduled_at')
-          .limit(5);
+          .limit(8);
 
       if (mounted) _myMatches = List<Map<String, dynamic>>.from(rows as List);
     } catch (_) {}

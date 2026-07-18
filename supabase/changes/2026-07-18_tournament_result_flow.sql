@@ -49,6 +49,9 @@ begin
     join public.tournament_entries e2 on e2.id = tm.entry2
    where tm.id = p_match_id for update;
   if not found then return 'Match not found.'; end if;
+  if m.bracket in ('wb', 'lb', 'gf') then
+    return 'The organizer records results for this draw.';
+  end if;
   if m.entry1 is null or m.entry2 is null then return 'This match isn''t ready.'; end if;
   if m.result_status = 'confirmed' or m.winner_entry is not null then
     return 'A result is already recorded.';

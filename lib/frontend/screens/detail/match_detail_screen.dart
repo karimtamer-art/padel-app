@@ -379,6 +379,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         ? 'waiting for players'
         : team.map((p) {
             final prof = p['profiles'] as Map?;
+            if (prof?['level'] == null && prof?['elo'] == null) return 'Unranked';
             final lv = (prof?['level'] as num?)?.toDouble() ??
                 RankingScale.levelFromElo((prof?['elo'] as num?)?.toInt() ?? 1000);
             return RankingScale.fmtLevel(lv);
@@ -492,9 +493,11 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
     final isMe = p['player_id'] == _uid;
     final isHost = p['player_id'] == _match?['created_by'];
     final prof = p['profiles'] as Map?;
+    final ranked = prof?['level'] != null || prof?['elo'] != null;
     final elo = (prof?['elo'] as num?)?.toInt() ?? 1000;
     final lv = (prof?['level'] as num?)?.toDouble() ??
         RankingScale.levelFromElo(elo);
+    final rankTag = ranked ? RankingScale.levelTag(lv) : 'Unranked';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(children: [
@@ -504,7 +507,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(isMe ? 'You' : _name(p), style: AppText.bodyStrong()),
-            Text('${RankingScale.levelTag(lv)} · Team ${(p['team'] as String? ?? 'a').toUpperCase()}',
+            Text('$rankTag · Team ${(p['team'] as String? ?? 'a').toUpperCase()}',
                 style: AppText.small().copyWith(fontSize: 11)),
           ]),
         ),

@@ -39,6 +39,20 @@ begin
       from public.match_players mp where mp.match_id = r.id;
     v_n := v_n + 1;
   end loop;
+
+  -- Auto-settle ranked matches stuck in pending_confirm for 48h+ (the other team
+  -- never confirmed) — the submitted result stands. Idempotent.
+  for r in
+    select id from public.matches
+     where status = 'pending_confirm'
+       and result_submitted_at is not null
+       and result_submitted_at < now() - interval '48 hours'
+  loop
+    update public.matches set status = 'completed' where id = r.id;
+    perform public._settle_rating(r.id);
+    v_n := v_n + 1;
+  end loop;
+
   return v_n;
 end $$;
 grant execute on function public.expire_stale_matches() to authenticated;

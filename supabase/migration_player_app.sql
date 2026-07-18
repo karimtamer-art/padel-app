@@ -543,6 +543,31 @@ exception when duplicate_object then null; end $$;
 -- NOTE: admin read/update policies + table GRANT live further down, after
 -- public._is_admin() is defined (search "Trade-in access").
 
+-- Base admin/commerce tables (also defined in migrations/0003; created here so
+-- this canonical file is self-contained and re-runs top-to-bottom on a fresh DB
+-- before the RLS/triggers/selects below reference them).
+create table if not exists public.broadcasts (
+  id          uuid    primary key default gen_random_uuid(),
+  admin_id    uuid    not null references auth.users(id),
+  title       text    not null,
+  body        text    not null,
+  segment     text    not null default 'all',
+  player_ids  uuid[],
+  sent_at     timestamptz,
+  created_at  timestamptz not null default now()
+);
+create table if not exists public.repair_requests (
+  id            uuid        primary key default gen_random_uuid(),
+  player_id     uuid        not null references auth.users(id),
+  racket_desc   text        not null,
+  issue         text        not null,
+  status        text        not null default 'pending',
+  quote_amount  numeric(10,2),
+  notes         text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
 -- ── broadcasts readable by players (admin console writes them) ──
 alter table public.broadcasts enable row level security;
 do $$ begin
@@ -1267,6 +1292,11 @@ begin
     join public.tournament_entries e2 on e2.id = tm.entry2
    where tm.id = p_match_id for update;
   if not found then return 'Match not found.'; end if;
+  -- Legacy single/double-elim draws (wb/lb/gf) are advanced by the organizer via
+  -- record_bracket_winner; a player result would set winner_entry and stall it.
+  if m.bracket in ('wb', 'lb', 'gf') then
+    return 'The organizer records results for this draw.';
+  end if;
   if m.entry1 is null or m.entry2 is null then return 'This match isn''t ready.'; end if;
   if m.result_status = 'confirmed' or m.winner_entry is not null then
     return 'A result is already recorded.';
@@ -1470,6 +1500,10 @@ grant execute on function
 -- can't be rated (finalize skips non-profile pairs) and can't self-report.
 -- ============================================================================
 alter table public.tournament_entries alter column player_id drop not null;
+-- registered_at exists in migrations/0003; add it here too so the admin list
+-- (which orders by it) works on a DB built from this canonical file alone.
+alter table public.tournament_entries
+  add column if not exists registered_at timestamptz not null default now();
 
 -- Organizer adds a pair — a real player (p_player_id) or a guest (name only).
 create or replace function public.organizer_add_entry(
@@ -2042,6 +2076,21 @@ begin
       from public.match_players mp where mp.match_id = r.id;
     v_n := v_n + 1;
   end loop;
+
+  -- Auto-settle ranked matches stuck in pending_confirm for 48h+ (the other team
+  -- never confirmed or disputed) — the submitted result stands. Idempotent via
+  -- _settle_rating's rating_applied guard.
+  for r in
+    select id from public.matches
+     where status = 'pending_confirm'
+       and result_submitted_at is not null
+       and result_submitted_at < now() - interval '48 hours'
+  loop
+    update public.matches set status = 'completed' where id = r.id;
+    perform public._settle_rating(r.id);
+    v_n := v_n + 1;
+  end loop;
+
   return v_n;
 end $$;
 grant execute on function public.expire_stale_matches() to authenticated;
@@ -2898,17 +2947,9 @@ do $$ begin
   end if;
 end $$;
 
--- Realtime for community channel chat so open clients see new posts live
--- (RLS still scopes delivery to members of the community).
-do $$ begin
-  if not exists (
-    select 1 from pg_publication_tables
-    where pubname = 'supabase_realtime'
-      and schemaname = 'public' and tablename = 'community_chat'
-  ) then
-    alter publication supabase_realtime add table public.community_chat;
-  end if;
-end $$;
+-- (community_chat's realtime publication is added right after that table is
+-- created, further down — a fresh top-to-bottom run can't add a table to the
+-- publication before the table exists.)
 
 -- Notify the recipient of a new DM (type 'message'); bump an existing unread
 -- one per conversation rather than flooding the inbox.
@@ -3824,6 +3865,17 @@ create table if not exists public.community_chat (
 );
 create index if not exists idx_community_chat
   on public.community_chat (community_id, created_at);
+-- Realtime so open clients see new channel posts live (RLS still scopes
+-- delivery to community members). Placed here — after the table exists.
+do $$ begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'community_chat'
+  ) then
+    alter publication supabase_realtime add table public.community_chat;
+  end if;
+end $$;
 alter table public.community_chat enable row level security;
 do $$ begin
   create policy "community_chat: member read" on public.community_chat for select
@@ -4989,7 +5041,7 @@ declare
   m record; v_wteam text; v_mid uuid; v_n int := 0;
 begin
   if not public.owns_tournament(p_tournament_id) then return 'Not authorised.'; end if;
-  select rated, coalesce(rating_applied, false), created_by
+  select rated, coalesce(rating_applied, false), organizer_id
     into v_rated, v_applied, v_owner
     from public.tournaments where id = p_tournament_id;
   if not found then return 'Tournament not found.'; end if;
@@ -5019,7 +5071,8 @@ begin
      where tm.tournament_id = p_tournament_id
        and tm.winner_entry is not null
   loop
-    if m.a2 is null or m.b2 is null then continue; end if;
+    -- Rate only clean 2v2s of four real profiles (skip guests — no profile).
+    if m.a1 is null or m.a2 is null or m.b1 is null or m.b2 is null then continue; end if;
     if m.a1 = m.a2 or m.b1 = m.b2 then continue; end if;
     if m.a1 in (m.b1, m.b2) or m.a2 in (m.b1, m.b2) then continue; end if;
     if exists (select 1 from public.matches where tournament_match_id = m.id) then continue; end if;

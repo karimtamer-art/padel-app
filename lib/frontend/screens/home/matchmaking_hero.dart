@@ -327,6 +327,7 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
     final name = (c['creator_name'] as String?)?.trim().isNotEmpty == true
         ? c['creator_name'] as String
         : 'Player';
+    final ranked = c['creator_level'] != null;
     final level = (c['creator_level'] as num?)?.toDouble() ?? 2.0;
     final div = RankingScale.divisionFor(level);
     final pct = (c['level_match_pct'] as num?)?.toInt() ?? 0;
@@ -376,12 +377,15 @@ class _MatchmakingHeroState extends State<MatchmakingHero> {
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
                       color: AppColors.primary, borderRadius: BorderRadius.circular(6)),
-                  child: Text('DIV ${div.key}',
+                  child: Text(ranked ? 'DIV ${div.key}' : 'UNRANKED',
                       style: AppText.tag(AppColors.primaryInk).copyWith(fontSize: 9.5)),
                 ),
               ]),
               const SizedBox(height: 3),
-              Text('Lv ${RankingScale.fmtQuarter(level)} · $pct% level match',
+              Text(
+                  ranked
+                      ? 'Lv ${RankingScale.fmtQuarter(level)} · $pct% level match'
+                      : 'Unranked · $pct% level match',
                   style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 11.5)),
               const SizedBox(height: 6),
               ClipRRect(
