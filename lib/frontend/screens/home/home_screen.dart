@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
@@ -154,7 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // small, and stale 'open' ones are auto-cancelled by the sweep).
       final rows = await _db
           .from('matches')
-          .select('id, status, match_type, scheduled_at, courts(name, venue_name), match_players(player_id)')
+          .select('id, status, match_type, scheduled_at, courts(name, venue_name, lat, lng, address), match_players(player_id)')
           .inFilter('id', ids)
           .inFilter('status',
               ['open', 'full', 'in_progress', 'pending_confirm', 'disputed'])
@@ -1049,6 +1050,10 @@ class _UpcomingMatchCard extends StatelessWidget {
     final court = match['courts'] as Map?;
     final players = (match['match_players'] as List?)?.length ?? 0;
     final filled = players.clamp(0, 4);
+    final lat = (court?['lat'] as num?)?.toDouble();
+    final lng = (court?['lng'] as num?)?.toDouble();
+    final address = (court?['address'] as String?)?.trim();
+    final hasLoc = (lat != null && lng != null) || (address != null && address.isNotEmpty);
 
     return Container(
       width: 262,
@@ -1091,10 +1096,47 @@ class _UpcomingMatchCard extends StatelessWidget {
           const SizedBox(height: 12),
           // These cards are always matches the player is already in, so the
           // action opens the match — never "Join".
-          AppButton('View Match', full: true, height: 44, onPressed: onOpen),
+          Row(children: [
+            Expanded(child: AppButton('View Match', full: true, height: 44, onPressed: onOpen)),
+            if (hasLoc) ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _openDirections(context, lat, lng, address),
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  width: 44, height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.30)),
+                  ),
+                  child: const Icon(Icons.directions_rounded, size: 20, color: AppColors.primary),
+                ),
+              ),
+            ],
+          ]),
         ]),
       ),
     );
+  }
+
+  Future<void> _openDirections(
+      BuildContext context, double? lat, double? lng, String? address) async {
+    final dest = (lat != null && lng != null)
+        ? '$lat,$lng'
+        : (address != null && address.trim().isNotEmpty
+            ? Uri.encodeComponent(address.trim())
+            : null);
+    if (dest == null) return;
+    try {
+      await launchUrl(Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$dest'),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (context.mounted) {
+        AppToast.show(context, "Couldn't open Maps", kind: ToastKind.error);
+      }
+    }
   }
 
   Widget _avatarDot(bool filled) => Container(
