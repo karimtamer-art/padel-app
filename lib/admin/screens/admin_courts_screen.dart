@@ -324,6 +324,11 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     final cityCt = TextEditingController(text: row?['city'] ?? '');
     final priceCt =
         TextEditingController(text: row?['price_per_hour']?.toString() ?? '');
+    final addressCt = TextEditingController(text: row?['address'] ?? '');
+    final locCt = TextEditingController(
+        text: (row?['lat'] != null && row?['lng'] != null)
+            ? '${row!['lat']}, ${row['lng']}'
+            : '');
     final indoor = ValueNotifier<bool>(row?['indoor'] == true);
 
     adminSheet(
@@ -345,6 +350,8 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
           onPressed: () async {
             if (venueCt.text.trim().isEmpty) return;
             Navigator.pop(context);
+            final ll = _parseLatLng(locCt.text);
+            final addr = addressCt.text.trim().isEmpty ? null : addressCt.text.trim();
             String? err;
             if (_isOrganizer) {
               // Organizers write via a SECURITY DEFINER RPC (RLS blocks direct
@@ -357,6 +364,9 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 city: cityCt.text.trim(),
                 price: num.tryParse(priceCt.text),
                 indoor: v,
+                lat: ll?.$1,
+                lng: ll?.$2,
+                address: addr,
               );
             } else if (isNew) {
               try {
@@ -367,6 +377,9 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
+                  'lat': ll?.$1,
+                  'lng': ll?.$2,
+                  'address': addr,
                   'is_active': true, // new courts are shown; hide via the card
                   'in_maintenance': false,
                 });
@@ -382,6 +395,9 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
                   'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
+                  'lat': ll?.$1,
+                  'lng': ll?.$2,
+                  'address': addr,
                   // is_active is left untouched on edit — the card's Hide/Show
                   // venue toggle controls it.
                 }).eq('id', row['id'] as String);
@@ -409,6 +425,16 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
             const SizedBox(height: 14),
             _field('City', cityCt, hint: 'e.g. Cairo'),
             const SizedBox(height: 14),
+            _field('Address', addressCt, hint: 'Street / building (optional)'),
+            const SizedBox(height: 14),
+            _field('Map location', locCt,
+                hint: 'Paste a Google Maps link, or "lat, lng"'),
+            const SizedBox(height: 6),
+            Text(
+                'Powers the player "Directions" button. On Google Maps: long-press the '
+                'spot → copy the coordinates, or share → copy link, then paste here.',
+                style: AdminText.small(AdminColors.inkFaint)),
+            const SizedBox(height: 16),
             _field('Price / hour', priceCt, prefix: 'EGP'),
             const SizedBox(height: 16),
             _check('Indoor court', v, () => indoor.value = !v),
@@ -416,6 +442,30 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
         ),
       ),
     );
+  }
+
+  // Pull (lat, lng) out of a pasted Google Maps link or a plain "lat, lng".
+  static (double, double)? _parseLatLng(String input) {
+    final s = input.trim();
+    if (s.isEmpty) return null;
+    final patterns = [
+      RegExp(r'@(-?\d+\.\d+),(-?\d+\.\d+)'),
+      RegExp(r'[?&](?:q|ll|query|destination)=(-?\d+\.\d+),\s*(-?\d+\.\d+)'),
+      RegExp(r'!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)'),
+      RegExp(r'^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$'),
+    ];
+    for (final p in patterns) {
+      final m = p.firstMatch(s);
+      if (m != null) {
+        final lat = double.tryParse(m.group(1)!);
+        final lng = double.tryParse(m.group(2)!);
+        if (lat != null && lng != null &&
+            lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+          return (lat, lng);
+        }
+      }
+    }
+    return null;
   }
 
   Widget _check(String label, bool on, VoidCallback onTap) => GestureDetector(

@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
@@ -543,8 +545,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         ),
       );
 
-  // Decorative placeholder for the courts map — real pins, distances and
-  // Directions arrive once court locations (lat/lng) are added.
+  // Decorative header — Directions on each card open the court in the maps app.
   Widget _courtsMap() => Container(
         height: 132,
         margin: const EdgeInsets.only(bottom: 14),
@@ -564,7 +565,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.location_on_outlined, size: 26, color: AppColors.inkFaint),
               const SizedBox(height: 6),
-              Text('Map & directions arrive with court locations',
+              Text('Tap Directions on a court to open it in Maps',
                   textAlign: TextAlign.center,
                   style: AppText.small().copyWith(fontSize: 11.5)),
             ]),
@@ -583,6 +584,10 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
     final area = (c['area'] as String?)?.trim() ?? '';
     final city = (c['city'] as String?)?.trim() ?? '';
     final indoor = c['indoor'] == true;
+    final lat = (c['lat'] as num?)?.toDouble();
+    final lng = (c['lng'] as num?)?.toDouble();
+    final address = (c['address'] as String?)?.trim();
+    final hasLoc = (lat != null && lng != null) || (address != null && address.isNotEmpty);
     // Headline is the club/venue (big + bold); the court label sits in the
     // sub-line beside the area and Indoor/Outdoor.
     final title = venue.isNotEmpty ? venue : (name.isNotEmpty ? name : 'Court');
@@ -636,12 +641,41 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
             ]),
           ),
           const SizedBox(width: 8),
-          on
-              ? const Icon(Icons.check_circle_rounded, size: 20, color: AppColors.primary)
-              : const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
+          if (hasLoc)
+            GestureDetector(
+              onTap: () => _openDirections(lat, lng, address),
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.directions_rounded, size: 20, color: AppColors.primary),
+                  const SizedBox(height: 1),
+                  Text('Directions',
+                      style: AppText.tag(AppColors.primary).copyWith(fontSize: 8.5)),
+                ]),
+              ),
+            )
+          else if (on)
+            const Icon(Icons.check_circle_rounded, size: 20, color: AppColors.primary)
+          else
+            const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
         ]),
       ),
     );
+  }
+
+  // Opens the maps app with a route to the court (coords preferred, else address).
+  Future<void> _openDirections(double? lat, double? lng, String? address) async {
+    final dest = (lat != null && lng != null)
+        ? '$lat,$lng'
+        : (address != null && address.isNotEmpty ? Uri.encodeComponent(address) : null);
+    if (dest == null) return;
+    final uri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$dest');
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) AppToast.show(context, "Couldn't open Maps", kind: ToastKind.error);
+    }
   }
 
   // ── Step 2: team ──

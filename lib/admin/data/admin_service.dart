@@ -233,6 +233,9 @@ class AdminService {
     String? city,
     num? price,
     required bool indoor,
+    num? lat,
+    num? lng,
+    String? address,
   }) async {
     try {
       await _db.rpc('organizer_save_court', params: {
@@ -243,6 +246,9 @@ class AdminService {
         'p_city': city,
         'p_price': price,
         'p_indoor': indoor,
+        'p_lat': lat,
+        'p_lng': lng,
+        'p_address': address,
       });
       return null;
     } on PostgrestException catch (e) {
