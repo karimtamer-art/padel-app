@@ -78,6 +78,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   }
 
   bool get _ended => _when != null && _when!.isBefore(DateTime.now());
+  bool get _full => _players.length >= 4;
+  bool get _isHost => _uid != null && _match?['created_by'] == _uid;
 
   bool get _iSubmitted {
     final by = _match?['result_submitted_by'] as String?;
@@ -174,6 +176,33 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
     if (err != null) {
       _snack(err, color: AppColors.danger);
     } else {
+      Navigator.pop(context, true);
+    }
+  }
+
+  Future<void> _cancel() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Cancel this match?', style: AppText.cardTitle().copyWith(fontSize: 17)),
+        content: Text('Everyone who joined is notified and the match is called off.',
+            style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 14)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep it')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Cancel match')),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    setState(() => _busy = true);
+    final err = await MatchService.cancelMatch(widget.matchId);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      _snack(err, color: AppColors.danger);
+    } else {
+      _snack('Match cancelled');
       Navigator.pop(context, true);
     }
   }
@@ -752,7 +781,12 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (_status == 'open' || _status == 'full' || _status == 'in_progress')
-          (!_ended) ? _lockedCard() : _scoreEntry(),
+          (!_ended)
+              ? _lockedCard()
+              // Score entry only makes sense for a full 2v2. An under-filled
+              // match that ran out of time couldn't be played — show that
+              // instead (it auto-cancels shortly).
+              : (_full ? _scoreEntry() : _didNotFillCard()),
 
         if (_status == 'disputed') ...[
           _banner('danger', Icons.info_outline_rounded, 'Result disputed',
@@ -800,6 +834,24 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
           Text('Score entry opens after the match', style: AppText.cardTitle().copyWith(fontSize: 15)),
           const SizedBox(height: 6),
           Text("You'll be able to submit the final score once ${_fmtWhen()} has passed.",
+              textAlign: TextAlign.center, style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
+        ]),
+      );
+
+  // Past-time but never reached 4 players — it couldn't be played and will be
+  // auto-cancelled (within the grace window sweep).
+  Widget _didNotFillCard() => AppCard(
+        child: Column(children: [
+          Container(
+            width: 52, height: 52,
+            decoration: BoxDecoration(color: AppColors.field, borderRadius: BorderRadius.circular(14)),
+            child: const Icon(Icons.group_off_rounded, size: 24, color: AppColors.inkSoft),
+          ),
+          const SizedBox(height: 14),
+          Text("This match didn't fill up", style: AppText.cardTitle().copyWith(fontSize: 15)),
+          const SizedBox(height: 6),
+          Text('Only ${_players.length}/4 players joined by the start time, so it can’t be '
+              'played. It’ll be cancelled automatically${_isHost ? ' — or cancel it now below' : ''}.',
               textAlign: TextAlign.center, style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
         ]),
       );
@@ -1067,7 +1119,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
       content = AppButton(_busy ? 'Joining…' : 'Join Match',
           full: true, height: 52, icon: Icons.sports_tennis_rounded,
           onPressed: _busy ? null : _join);
-    } else if (_view == 1 && _inMatch) {
+    } else if (_view == 1 && _inMatch && _full) {
+      // Score/confirm only for a full 2v2.
       if ((_status == 'open' || _status == 'full' || _status == 'in_progress') && _ended) {
         content = AppButton(_busy ? 'Submitting…' : 'Submit Score',
             full: true, height: 52, icon: Icons.check_rounded,
@@ -1092,6 +1145,14 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         content = AppButton('Awaiting $_oppFirst', full: true, height: 52,
             icon: Icons.schedule_rounded, onPressed: null);
       }
+    } else if (_isHost &&
+        (_status == 'open' || _status == 'full') &&
+        (!_ended || !_full)) {
+      // Host can call off their own match — before the start, or after the
+      // start if it never filled. (A full, started match goes to scoring.)
+      content = AppButton(_busy ? 'Cancelling…' : 'Cancel match',
+          full: true, height: 52, variant: AppBtnVariant.ghost,
+          icon: Icons.close_rounded, onPressed: _busy ? null : _cancel);
     } else if (_inMatch &&
         (_status == 'open' || _status == 'full') &&
         !_ended) {

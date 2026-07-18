@@ -1829,6 +1829,79 @@ update public.matches m
  where m.mm_center_rating is null
    and m.created_by is not null;
 
+-- ============================================================================
+-- Match lifecycle: grace window + auto-expire (2026-07-18). An under-filled
+-- 'open' match stays fillable for a grace window PAST scheduled_at; if it's
+-- still short of 4 after that, expire_stale_matches cancels it and notifies the
+-- joined players (it then drops off every player-facing query, which all filter
+-- to active statuses). cancel_match lets the host kill their own match anytime.
+-- ============================================================================
+-- Grace window (minutes) — how long past scheduled_at a match may still fill.
+create or replace function public.mm_grace()
+returns interval language sql stable set search_path = public as $$
+  select coalesce((select value::numeric from public.app_settings
+                    where key = 'mm_grace_minutes'), 30) * interval '1 minute';
+$$;
+
+-- Cancel every open match that's past its grace window and still under 4, and
+-- notify everyone who had joined. Idempotent; safe for anyone to invoke (only
+-- touches genuinely-stale matches).
+create or replace function public.expire_stale_matches()
+returns int language plpgsql security definer set search_path = public as $$
+declare v_n int := 0; r record;
+begin
+  for r in
+    select mt.id from public.matches mt
+     where mt.status = 'open'
+       and mt.scheduled_at < now() - public.mm_grace()
+       and (select count(*) from public.match_players mp where mp.match_id = mt.id) < 4
+  loop
+    update public.matches set status = 'cancelled' where id = r.id;
+    insert into public.notifications (user_id, type, title, body, data)
+    select mp.player_id, 'match', 'Match cancelled',
+           'Your match didn''t fill up in time, so it was cancelled.',
+           jsonb_build_object('match_id', r.id)
+      from public.match_players mp where mp.match_id = r.id;
+    v_n := v_n + 1;
+  end loop;
+  return v_n;
+end $$;
+grant execute on function public.expire_stale_matches() to authenticated;
+
+-- Host (or admin) cancels their own match; notifies the other joined players.
+create or replace function public.cancel_match(p_match_id uuid)
+returns text language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_creator uuid; v_status text;
+begin
+  if v_uid is null then return 'Not signed in.'; end if;
+  select created_by, status into v_creator, v_status
+    from public.matches where id = p_match_id for update;
+  if not found then return 'Match not found.'; end if;
+  if v_creator <> v_uid and not public._is_admin() then
+    return 'Only the host can cancel this match.';
+  end if;
+  if v_status in ('completed', 'cancelled') then
+    return 'This match is already ' || v_status || '.';
+  end if;
+  update public.matches set status = 'cancelled' where id = p_match_id;
+  insert into public.notifications (user_id, type, title, body, data)
+  select mp.player_id, 'match', 'Match cancelled',
+         'The host cancelled this match.', jsonb_build_object('match_id', p_match_id)
+    from public.match_players mp
+   where mp.match_id = p_match_id and mp.player_id <> v_uid;
+  return null;
+end $$;
+grant execute on function public.cancel_match(uuid) to authenticated;
+
+-- Run the sweep every 10 minutes if pg_cron is available (the client also calls
+-- expire_stale_matches on Home load as a fallback).
+do $$ begin
+  perform cron.schedule('padel-expire-matches', '*/10 * * * *',
+    'select public.expire_stale_matches()');
+exception when others then
+  raise notice 'pg_cron not available — expire_stale_matches runs via the client fallback.';
+end $$;
+
 -- The ONE way to discover a match you're not in: band-gatekept, SECURITY DEFINER
 -- so it can scan the pool to filter it, but only ever returns rows in the
 -- caller's band + city + time window. p_limit null = all (for counting).
@@ -1891,7 +1964,7 @@ begin
     left join public.courts c on c.id = m.court_id
    where m.status = 'open'
      and m.created_by <> v_uid
-     and m.scheduled_at > now()
+     and m.scheduled_at > now() - public.mm_grace()  -- still fillable during grace
      -- Time window: explicit [p_from, p_to] when given, else the rolling window.
      and (
        case when p_from is null and p_to is null
@@ -2130,7 +2203,7 @@ begin
     into v_status, v_cby, v_center, v_created, v_sched, v_court
     from public.matches m where m.id = p_match;
   if not found or v_status <> 'open' or v_cby = p_player then return false; end if;
-  if v_sched <= now() then return false; end if;
+  if v_sched <= now() - public.mm_grace() then return false; end if;  -- past grace
 
   v_window := coalesce((select value::numeric from public.app_settings where key = 'mm_time_window_hours'), 12);
   if v_sched >= now() + (v_window * interval '1 hour') then return false; end if;

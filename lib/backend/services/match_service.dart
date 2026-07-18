@@ -261,6 +261,26 @@ class MatchService {
     }
   }
 
+  /// Host (or admin) cancels their own match. Returns an error or null.
+  static Future<String?> cancelMatch(String matchId) async {
+    try {
+      final res = await _db.rpc('cancel_match', params: {'p_match_id': matchId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Fire-and-forget sweep: cancels open matches that never filled past their
+  /// grace window (fallback for when pg_cron isn't scheduling the server sweep).
+  static Future<void> expireStaleMatches() async {
+    try {
+      await _db.rpc('expire_stale_matches');
+    } catch (_) {/* best-effort */}
+  }
+
   static Future<String?> leaveMatch(String matchId) async {
     try {
       final res = await _db.rpc('leave_match', params: {'p_match_id': matchId});

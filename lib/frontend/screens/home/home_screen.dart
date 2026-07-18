@@ -135,6 +135,10 @@ class _HomeScreenState extends State<HomeScreen> {
       final uid = _db.auth.currentUser?.id;
       if (uid == null) return;
 
+      // Sweep under-filled matches that ran past their grace window so they
+      // drop off Home (fallback for when pg_cron isn't running the server job).
+      await MatchService.expireStaleMatches();
+
       // Step 1: match IDs the player is part of
       final joined = await _db
           .from('match_players')
