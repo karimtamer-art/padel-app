@@ -6,6 +6,7 @@ import '../widgets/admin_kit.dart';
 import 'draw_sheet.dart';
 import 'tournament_entries_sheet.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
+import 'package:padel_clay/backend/services/community_service.dart';
 
 class AdminTournamentsScreen extends StatefulWidget {
   /// When set (organizer console), the list is scoped to this organizer's own
@@ -20,12 +21,22 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
   List<Map<String, dynamic>> _list = [];
   List<Map<String, dynamic>> _courts = []; // venue picker options
   bool _loading = true;
+  bool _hasCommunity = true; // organizers must have one before publishing
 
   @override
   void initState() {
     super.initState();
     _load();
     _loadCourts();
+    _loadCommunityGate();
+  }
+
+  // An organizer must create their community before publishing a tournament
+  // (also enforced server-side in set_tournament_organizer). Super admins skip.
+  Future<void> _loadCommunityGate() async {
+    if (widget.organizerId == null) return;
+    final c = await CommunityService.myCommunity();
+    if (mounted) setState(() => _hasCommunity = c != null);
   }
 
   Future<void> _load() async {
@@ -614,11 +625,18 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final status = e['status'] as String? ?? '';
     final pending = status == 'pending';
     final refundDue = e['refund_status'] == 'due';
+    final feePer = (t['entry_fee'] as num?)?.toInt() ?? 0;
+    final split = (e['fee_mode'] as String?) == 'split';
+    final payerPaid = e['payer_paid'] == true;
+    final partnerPaid = e['partner_paid'] == true;
     final sender = e['instapay_sender'] as String?;
     final proof = e['instapay_proof_url'] as String?;
-    final amount = (e['paid_amount'] as num?)?.toInt() ??
-        (t['entry_fee'] as num?)?.toInt() ??
-        0;
+    final pSender = e['partner_instapay_sender'] as String?;
+    final pProof = e['partner_instapay_proof_url'] as String?;
+    final partnerSubmitted = pSender != null && pSender.isNotEmpty;
+    final regName = (e['player_name'] as String?)?.split(' ').first ?? 'Registrant';
+    final partName = (e['partner_name'] as String?)?.split(' ').first ?? 'Partner';
+    final amount = (e['paid_amount'] as num?)?.toInt() ?? feePer;
 
     Future<void> act(Future<String?> Function() fn, String okMsg) async {
       final err = await fn();
@@ -630,7 +648,41 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     }
 
     Widget? footer;
-    if (pending) {
+    if (pending && split) {
+      final btns = <Widget>[
+        if (!payerPaid)
+          AdminButton("Confirm $regName's share",
+              full: true,
+              height: 46,
+              variant: AdminBtn.success,
+              icon: Icons.check_rounded,
+              onPressed: () => act(
+                  () => AdminService.verifyTournamentEntry(e['id'] as String),
+                  "$regName's share confirmed")),
+        if (partnerSubmitted && !partnerPaid)
+          AdminButton("Confirm $partName's share",
+              full: true,
+              height: 46,
+              variant: AdminBtn.success,
+              icon: Icons.check_rounded,
+              onPressed: () => act(
+                  () => AdminService.verifyPartnerShare(e['id'] as String),
+                  "$partName's share confirmed")),
+        AdminButton('Reject entry',
+            full: true,
+            height: 46,
+            variant: AdminBtn.danger,
+            onPressed: () => act(
+                () => AdminService.rejectTournamentEntry(e['id'] as String),
+                'Entry rejected')),
+      ];
+      footer = Column(mainAxisSize: MainAxisSize.min, children: [
+        for (var i = 0; i < btns.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          btns[i],
+        ],
+      ]);
+    } else if (pending) {
       footer = Row(children: [
         Expanded(
           child: AdminButton('Confirm payment',
@@ -665,46 +717,104 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       context,
       title: _pairLabel(e),
       sub: pending
-          ? 'Verify InstaPay transfer'
+          ? (split ? 'Split payment — confirm each share' : 'Verify InstaPay transfer')
           : refundDue
               ? 'Process refund'
               : 'Entry',
-      heightFactor: 0.72,
+      heightFactor: 0.82,
       footer: footer,
-      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _matchRow('Amount', _egp(amount)),
-        const SizedBox(height: 8),
-        _matchRow(
-            'Sender username', (sender == null || sender.isEmpty) ? '—' : sender),
-        const SizedBox(height: 14),
-        Text('TRANSFER SCREENSHOT', style: AdminText.kicker()),
-        const SizedBox(height: 8),
-        if (proof == null || proof.isEmpty)
-          Text('No screenshot attached.', style: AdminText.small())
-        else
-          FutureBuilder<String?>(
-            future: AdminService.signProofUrl(proof),
-            builder: (ctx, snap) {
-              if (snap.connectionState != ConnectionState.done) {
-                return const SizedBox(
-                    height: 80,
-                    child: Center(
-                        child: CircularProgressIndicator(
-                            color: AdminColors.primary)));
-              }
-              final url = snap.data;
-              if (url == null) {
-                return Text('Could not load screenshot.',
-                    style: AdminText.small());
-              }
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.network(url,
-                    width: double.infinity, height: 220, fit: BoxFit.cover),
-              );
-            },
+      body: split
+          ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _shareBlock("$regName's share", feePer, sender, proof, payerPaid,
+                  submitted: true),
+              const SizedBox(height: 16),
+              _shareBlock("$partName's share", feePer, pSender, pProof, partnerPaid,
+                  submitted: partnerSubmitted),
+            ])
+          : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _matchRow('Amount', _egp(amount)),
+              const SizedBox(height: 8),
+              _matchRow('Sender username',
+                  (sender == null || sender.isEmpty) ? '—' : sender),
+              const SizedBox(height: 14),
+              Text('TRANSFER SCREENSHOT', style: AdminText.kicker()),
+              const SizedBox(height: 8),
+              _proofImage(proof),
+            ]),
+    );
+  }
+
+  // One player's half of a split entry: amount, sender, paid badge, proof.
+  Widget _shareBlock(String title, int amount, String? sender, String? proof,
+      bool paid,
+      {required bool submitted}) {
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AdminColors.lineSoft)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text(title, style: AdminText.strong())),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: (paid
+                      ? AdminColors.green
+                      : submitted
+                          ? AdminColors.warn
+                          : AdminColors.inkFaint)
+                  .withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+                paid ? 'Confirmed' : submitted ? 'Awaiting confirm' : 'Not paid yet',
+                style: AdminText.sans(
+                    10.5,
+                    FontWeight.w700,
+                    paid
+                        ? AdminColors.green
+                        : submitted
+                            ? AdminColors.warn
+                            : AdminColors.inkFaint)),
           ),
+        ]),
+        const SizedBox(height: 8),
+        _matchRow('Amount', _egp(amount)),
+        const SizedBox(height: 6),
+        _matchRow('Sender username', (sender == null || sender.isEmpty) ? '—' : sender),
+        if (submitted) ...[
+          const SizedBox(height: 10),
+          _proofImage(proof, height: 150),
+        ],
       ]),
+    );
+  }
+
+  Widget _proofImage(String? proof, {double height = 220}) {
+    if (proof == null || proof.isEmpty) {
+      return Text('No screenshot attached.', style: AdminText.small());
+    }
+    return FutureBuilder<String?>(
+      future: AdminService.signProofUrl(proof),
+      builder: (ctx, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const SizedBox(
+              height: 80,
+              child: Center(
+                  child: CircularProgressIndicator(color: AdminColors.primary)));
+        }
+        final url = snap.data;
+        if (url == null) {
+          return Text('Could not load screenshot.', style: AdminText.small());
+        }
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(url,
+              width: double.infinity, height: height, fit: BoxFit.cover),
+        );
+      },
     );
   }
 
@@ -771,7 +881,17 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     adminToast(context, res ?? 'Tournament finalized', ok: !blocked);
   }
 
-  void _create() => _form(null);
+  void _create() {
+    if (widget.organizerId != null && !_hasCommunity) {
+      adminToast(
+          context,
+          'Create your community first — players join it, then you can publish events.',
+          ok: false);
+      return;
+    }
+    _form(null);
+  }
+
   void _edit(Map<String, dynamic> t) => _form(t);
 
   // ── Draw & results management ─────────────────────────────────
@@ -923,7 +1043,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         _field('Prize pool', prizeC, prefix: 'EGP'),
         const SizedBox(height: 14),
         Row(children: [
-          Expanded(child: _field('Entry fee', feeC, prefix: 'EGP')),
+          Expanded(child: _field('Entry fee / player', feeC, prefix: 'EGP')),
           const SizedBox(width: 12),
           Expanded(child: _field('Capacity', capC, suffix: 'pairs')),
         ]),

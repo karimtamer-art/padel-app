@@ -442,9 +442,37 @@ class CommunityService {
     required String title,
     String? body,
     bool pinned = false,
+    String? imageUrl,
   }) =>
-      _rpc('post_announcement',
-          {'p_title': title, 'p_body': body, 'p_pinned': pinned});
+      _rpc('post_announcement', {
+        'p_title': title,
+        'p_body': body,
+        'p_pinned': pinned,
+        'p_image_url': imageUrl,
+      });
+
+  /// Uploads a post image to the public `community-media` bucket (under the
+  /// caller's own folder) and returns its public URL, or null on failure.
+  static Future<String?> uploadPostImage(Uint8List bytes, String ext) async {
+    final uid = _uid;
+    if (uid == null) return null;
+    try {
+      final e = ext.toLowerCase() == 'jpeg'
+          ? 'jpg'
+          : (ext.isEmpty ? 'jpg' : ext.toLowerCase());
+      final path = '$uid/${DateTime.now().millisecondsSinceEpoch}.$e';
+      await _db.storage.from('community-media').uploadBinary(
+            path,
+            bytes,
+            fileOptions:
+                FileOptions(contentType: 'image/${e == 'jpg' ? 'jpeg' : e}'),
+          );
+      return _db.storage.from('community-media').getPublicUrl(path);
+    } catch (err) {
+      debugPrint('[CommunityService] uploadPostImage: $err');
+      return null;
+    }
+  }
 
   static Future<String?> reply(String memberId, String body) =>
       _rpc('reply_community_message', {'p_member_id': memberId, 'p_body': body});
@@ -568,6 +596,7 @@ class CommunityEvent {
 class Announcement {
   final String id, title;
   final String? body;
+  final String? imageUrl;
   final bool pinned, iGoing, iLiked;
   final int going, likes, comments;
   final DateTime? createdAt;
@@ -575,6 +604,7 @@ class Announcement {
     required this.id,
     required this.title,
     this.body,
+    this.imageUrl,
     this.pinned = false,
     this.iGoing = false,
     this.iLiked = false,
@@ -588,6 +618,9 @@ class Announcement {
         id: r['id'] as String,
         title: (r['title'] as String?) ?? '',
         body: r['body'] as String?,
+        imageUrl: (r['image_url'] as String?)?.trim().isEmpty ?? true
+            ? null
+            : (r['image_url'] as String?)?.trim(),
         pinned: r['pinned'] == true,
         iGoing: r['i_going'] == true,
         iLiked: r['i_liked'] == true,
@@ -602,6 +635,7 @@ class Announcement {
         id: id,
         title: title,
         body: body,
+        imageUrl: imageUrl,
         pinned: pinned,
         iGoing: iGoing ?? this.iGoing,
         iLiked: iLiked ?? this.iLiked,

@@ -4,11 +4,14 @@
 // hub, and a broadcast composer that messages their participants (push +
 // in-app) via organizer_broadcast. All data is server-scoped to the caller.
 // ============================================================================
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../data/admin_service.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
+import '../widgets/organizer_payout_card.dart';
 import '../../backend/services/community_service.dart';
 
 class OrganizerOverviewScreen extends StatefulWidget {
@@ -146,7 +149,7 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
                   icon: Icons.add,
                   variant: AdminBtn.primary,
                   color: AdminColors.gold,
-                  onPressed: _n('reach') > 0 ? () => _composer() : null),
+                  onPressed: () => _composer()),
             ]),
             const SizedBox(height: 6),
             if (_n('reach') == 0)
@@ -169,6 +172,7 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
           ]),
         ),
         const SizedBox(height: 16),
+        const OrganizerPayoutCard(),
         _entryPaymentsCard(),
         // your tournaments
         AdminCard(
@@ -395,9 +399,8 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
         AdminButton('Message',
             icon: Icons.notifications_outlined,
             variant: AdminBtn.ghost,
-            onPressed: entrants > 0
-                ? () => _composer(tournamentId: t['id'] as String?, tournamentName: name)
-                : null),
+            onPressed: () =>
+                _composer(tournamentId: t['id'] as String?, tournamentName: name)),
       ]),
     );
   }
@@ -433,6 +436,8 @@ class _BroadcastSheetState extends State<_BroadcastSheet> {
   final _title = TextEditingController();
   final _body = TextEditingController();
   bool _busy = false;
+  Uint8List? _imgBytes;
+  String _imgExt = 'jpg';
 
   @override
   void dispose() {
@@ -441,13 +446,35 @@ class _BroadcastSheetState extends State<_BroadcastSheet> {
     super.dispose();
   }
 
+  Future<void> _pickImage() async {
+    final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (f == null) return;
+    final b = await f.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      _imgBytes = b;
+      _imgExt = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';
+    });
+  }
+
   Future<void> _send() async {
     if (_title.text.trim().isEmpty) return;
     setState(() => _busy = true);
+    String? imageUrl;
+    if (_imgBytes != null) {
+      imageUrl = await CommunityService.uploadPostImage(_imgBytes!, _imgExt);
+      if (imageUrl == null) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        adminToast(context, "Couldn't upload the photo — try again", ok: false);
+        return;
+      }
+    }
     final err = await AdminService.organizerBroadcast(
       title: _title.text.trim(),
       body: _body.text.trim(),
       tournamentId: widget.tournamentId,
+      imageUrl: imageUrl,
     );
     if (!mounted) return;
     setState(() => _busy = false);
@@ -456,7 +483,7 @@ class _BroadcastSheetState extends State<_BroadcastSheet> {
       return;
     }
     Navigator.pop(context);
-    adminToast(context, 'Broadcast sent to your community');
+    adminToast(context, 'Posted to your community');
     widget.onSent();
   }
 
@@ -480,8 +507,9 @@ class _BroadcastSheetState extends State<_BroadcastSheet> {
                   color: AdminColors.line, borderRadius: BorderRadius.circular(2)),
             ),
           ),
-          Text('Broadcast to your community', style: AdminText.h2()),
-          Text('Reaches participants by push + in-app', style: AdminText.small()),
+          Text('Post to your community', style: AdminText.h2()),
+          Text('Push + a likeable post in your members\' feed',
+              style: AdminText.small()),
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(11),
@@ -503,13 +531,59 @@ class _BroadcastSheetState extends State<_BroadcastSheet> {
           Text('Message', style: AdminText.strong(AdminColors.inkSoft)),
           const SizedBox(height: 6),
           _field(_body, 'Add the details players need…', lines: 3),
+          const SizedBox(height: 12),
+          Text('Photo (optional)', style: AdminText.strong(AdminColors.inkSoft)),
+          const SizedBox(height: 6),
+          _photoBox(),
           const SizedBox(height: 16),
-          AdminButton(_busy ? 'Sending…' : 'Send broadcast',
+          AdminButton(_busy ? 'Posting…' : 'Post',
               icon: Icons.send,
               variant: AdminBtn.primary,
               color: AdminColors.gold,
               full: true,
               onPressed: _busy ? null : _send),
+        ]),
+      ),
+    );
+  }
+
+  Widget _photoBox() {
+    if (_imgBytes != null) {
+      return Stack(children: [
+        ClipRRect(
+          borderRadius: AdminUI.fieldR,
+          child: Image.memory(_imgBytes!,
+              width: double.infinity, height: 160, fit: BoxFit.cover),
+        ),
+        Positioned(
+          top: 8,
+          right: 8,
+          child: GestureDetector(
+            onTap: () => setState(() => _imgBytes = null),
+            child: Container(
+              padding: const EdgeInsets.all(5),
+              decoration:
+                  const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+              child: const Icon(Icons.close_rounded, size: 18, color: Colors.white),
+            ),
+          ),
+        ),
+      ]);
+    }
+    return GestureDetector(
+      onTap: _pickImage,
+      child: Container(
+        height: 88,
+        decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: AdminUI.fieldR,
+          border: Border.all(color: AdminColors.line),
+        ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.add_photo_alternate_outlined,
+              size: 24, color: AdminColors.inkSoft),
+          const SizedBox(height: 5),
+          Text('Add a photo', style: AdminText.small()),
         ]),
       ),
     );

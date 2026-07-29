@@ -1,8 +1,11 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
+import '../../backend/services/community_service.dart';
 
 class AdminBroadcastsScreen extends StatefulWidget {
   /// When set (organizer console), the screen shows ONLY this organizer's own
@@ -114,6 +117,19 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
               style: AdminText.small(),
               maxLines: 2,
               overflow: TextOverflow.ellipsis),
+          if ((b['image_url'] as String?)?.isNotEmpty ?? false) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.network(
+                b['image_url'] as String,
+                width: double.infinity,
+                height: 150,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+          ],
         ]),
       ),
     );
@@ -195,13 +211,15 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
   void _composeOrganizer() {
     final titleC = TextEditingController();
     final bodyC = TextEditingController();
+    Uint8List? imgBytes;
+    String imgExt = 'jpg';
     adminSheet(
       context,
-      title: 'Broadcast to your community',
-      sub: 'Push + in-app to your members & event entrants',
-      heightFactor: 0.66,
+      title: 'Post to your community',
+      sub: 'Pushes to members & entrants + a likeable post in their feed',
+      heightFactor: 0.82,
       footer: AdminButton(
-        'Send broadcast',
+        'Post',
         full: true,
         height: 50,
         icon: Icons.send_rounded,
@@ -209,40 +227,118 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
         onPressed: () async {
           if (titleC.text.trim().isEmpty) return;
           Navigator.pop(context);
+          String? imageUrl;
+          if (imgBytes != null) {
+            imageUrl = await CommunityService.uploadPostImage(imgBytes!, imgExt);
+            if (imageUrl == null) {
+              if (mounted) {
+                adminToast(context, "Couldn't upload the photo — try again",
+                    ok: false);
+              }
+              return;
+            }
+          }
           final err = await AdminService.organizerBroadcast(
-              title: titleC.text.trim(), body: bodyC.text.trim());
+              title: titleC.text.trim(),
+              body: bodyC.text.trim(),
+              imageUrl: imageUrl);
           if (!mounted) return;
           if (err != null) {
             adminToast(context, err, ok: false);
             return;
           }
           await _load();
-          if (mounted) adminToast(context, 'Broadcast sent to your community');
+          if (mounted) adminToast(context, 'Posted to your community');
         },
       ),
-      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          padding: const EdgeInsets.all(11),
-          decoration: BoxDecoration(
-              color: AdminColors.wash(AdminColors.gold, 0.12),
-              borderRadius: AdminUI.fieldR),
-          child: Row(children: [
-            const Icon(Icons.groups_outlined, size: 17, color: AdminColors.gold),
-            const SizedBox(width: 9),
-            Expanded(
-                child: Text('Reaches your community members and event entrants',
-                    style: AdminText.small(AdminColors.ink))),
-          ]),
+      body: StatefulBuilder(builder: (c, setSheet) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+                color: AdminColors.wash(AdminColors.gold, 0.12),
+                borderRadius: AdminUI.fieldR),
+            child: Row(children: [
+              const Icon(Icons.groups_outlined, size: 17, color: AdminColors.gold),
+              const SizedBox(width: 9),
+              Expanded(
+                  child: Text(
+                      'Notifies members & event entrants, and appears in your '
+                      'community feed where members like & comment',
+                      style: AdminText.small(AdminColors.ink))),
+            ]),
+          ),
+          const SizedBox(height: 14),
+          Text('Title', style: AdminText.strong(AdminColors.inkSoft)),
+          const SizedBox(height: 7),
+          _field(titleC, hint: 'e.g. New tournament this weekend'),
+          const SizedBox(height: 14),
+          Text('Message', style: AdminText.strong(AdminColors.inkSoft)),
+          const SizedBox(height: 7),
+          _field(bodyC, hint: 'What do you want them to know?', maxLines: 4),
+          const SizedBox(height: 14),
+          Text('Photo (optional)', style: AdminText.strong(AdminColors.inkSoft)),
+          const SizedBox(height: 7),
+          _photoBox(
+            imgBytes,
+            onPick: () async {
+              final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+              if (f == null) return;
+              final b = await f.readAsBytes();
+              setSheet(() {
+                imgBytes = b;
+                imgExt = f.name.contains('.')
+                    ? f.name.split('.').last.toLowerCase()
+                    : 'jpg';
+              });
+            },
+            onClear: () => setSheet(() => imgBytes = null),
+          ),
+        ]);
+      }),
+    );
+  }
+
+  Widget _photoBox(Uint8List? bytes,
+      {required VoidCallback onPick, required VoidCallback onClear}) {
+    if (bytes != null) {
+      return Stack(children: [
+        ClipRRect(
+          borderRadius: AdminUI.fieldR,
+          child: Image.memory(bytes,
+              width: double.infinity, height: 170, fit: BoxFit.cover),
         ),
-        const SizedBox(height: 14),
-        Text('Title', style: AdminText.strong(AdminColors.inkSoft)),
-        const SizedBox(height: 7),
-        _field(titleC, hint: 'e.g. New tournament this weekend'),
-        const SizedBox(height: 14),
-        Text('Message', style: AdminText.strong(AdminColors.inkSoft)),
-        const SizedBox(height: 7),
-        _field(bodyC, hint: 'What do you want them to know?', maxLines: 4),
-      ]),
+        Positioned(
+          top: 8,
+          right: 8,
+          child: GestureDetector(
+            onTap: onClear,
+            child: Container(
+              padding: const EdgeInsets.all(5),
+              decoration:
+                  const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+              child: const Icon(Icons.close_rounded, size: 18, color: Colors.white),
+            ),
+          ),
+        ),
+      ]);
+    }
+    return GestureDetector(
+      onTap: onPick,
+      child: Container(
+        height: 92,
+        decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: AdminUI.fieldR,
+          border: Border.all(color: AdminColors.line),
+        ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.add_photo_alternate_outlined,
+              size: 24, color: AdminColors.inkSoft),
+          const SizedBox(height: 5),
+          Text('Add a photo', style: AdminText.small()),
+        ]),
+      ),
     );
   }
 

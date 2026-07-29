@@ -1429,40 +1429,39 @@ grant execute on function public.delete_tournament_match(uuid) to authenticated;
 -- Returns null on success, or a human-readable error message.
 -- ============================================================
 -- Drop the old 3-arg overload so only the payment-aware version exists.
+-- Per-player (split) entry payment: fee is PER PLAYER; a pair pays 2×. The
+-- registrant pays 'both' (2×) or 'split' (own share). Per-share tracking on the
+-- pair row. Full notes: supabase/changes/2026-07-29_split_entry_payment.sql
+alter table public.tournament_entries add column if not exists fee_mode text;               -- 'both' | 'split'
+alter table public.tournament_entries add column if not exists payer_paid   boolean not null default false;
+alter table public.tournament_entries add column if not exists partner_paid boolean not null default false;
+alter table public.tournament_entries add column if not exists partner_instapay_sender    text;
+alter table public.tournament_entries add column if not exists partner_instapay_proof_url text;
+
 drop function if exists public.register_for_tournament(uuid, uuid, text);
+drop function if exists public.register_for_tournament(uuid, uuid, text, text, text);
 
 create or replace function public.register_for_tournament(
   p_tournament_id      uuid,
   p_partner_id         uuid default null,
   p_partner_name       text default null,
   p_instapay_sender    text default null,
-  p_instapay_proof_url text default null)
+  p_instapay_proof_url text default null,
+  p_fee_mode           text default 'both')
 returns text
 language plpgsql security definer set search_path = public as $$
 declare
-  v_uid      uuid := auth.uid();
-  v_status   text;
-  v_start    date;
-  v_cap      int;
-  v_min      int;
-  v_max      int;
-  v_fee      int;
-  v_count    int;
-  v_my_elo   int;
-  v_my_name  text;
-  v_new      text;
+  v_uid    uuid := auth.uid();
+  v_status text; v_start date; v_cap int; v_min int; v_max int; v_fee int;
+  v_count  int; v_my_elo int; v_my_name text; v_new text;
+  v_mode   text; v_pay int; v_tname text; v_eid uuid;
 begin
-  if v_uid is null then
-    return 'Not signed in.';
-  end if;
+  if v_uid is null then return 'Not signed in.'; end if;
 
-  select status, start_date, capacity, min_elo, max_elo, entry_fee
-    into v_status, v_start, v_cap, v_min, v_max, v_fee
+  select status, start_date, capacity, min_elo, max_elo, entry_fee, name
+    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname
   from public.tournaments where id = p_tournament_id;
-
-  if not found then
-    return 'Tournament not found.';
-  end if;
+  if not found then return 'Tournament not found.'; end if;
   if v_status = 'cancelled' then
     return 'Registration is closed — this tournament has been cancelled.';
   end if;
@@ -1473,12 +1472,8 @@ begin
   -- capacity (ignore withdrawn; an existing row for this user is a re-register)
   select count(*) into v_count
   from public.tournament_entries
-  where tournament_id = p_tournament_id
-    and status <> 'withdrawn'
-    and player_id <> v_uid;
-  if v_cap > 0 and v_count >= v_cap then
-    return 'This tournament is full.';
-  end if;
+  where tournament_id = p_tournament_id and status <> 'withdrawn' and player_id <> v_uid;
+  if v_cap > 0 and v_count >= v_cap then return 'This tournament is full.'; end if;
 
   -- eligibility
   if v_min > 0 or (v_max is not null and v_max > 0) then
@@ -1492,17 +1487,26 @@ begin
   end if;
 
   select name into v_my_name from public.profiles where id = v_uid;
-  -- Paid event -> 'pending' (holds the spot until an admin verifies the
-  -- transfer); free event -> 'registered' straight away.
+
+  -- No partner to collect from → registrant covers the whole entry.
+  v_mode := case when p_partner_id is null then 'both'
+                 else coalesce(nullif(p_fee_mode, ''), 'both') end;
+  if v_mode not in ('both', 'split') then v_mode := 'both'; end if;
+
   v_new := case when coalesce(v_fee, 0) > 0 then 'pending' else 'registered' end;
+  v_pay := case when coalesce(v_fee, 0) <= 0 then null
+                when v_mode = 'split' then v_fee
+                else v_fee * 2 end;
 
   insert into public.tournament_entries
     (tournament_id, player_id, player_name, partner_id, partner_name, status,
-     paid_amount, payment_method, instapay_sender, instapay_proof_url, refund_status)
+     paid_amount, payment_method, instapay_sender, instapay_proof_url, refund_status,
+     fee_mode, payer_paid, partner_paid, partner_instapay_sender, partner_instapay_proof_url)
   values (p_tournament_id, v_uid, v_my_name, p_partner_id, p_partner_name, v_new,
-     case when coalesce(v_fee, 0) > 0 then v_fee else null end,
-     case when coalesce(v_fee, 0) > 0 then 'instapay' else null end,
-     p_instapay_sender, p_instapay_proof_url, 'none')
+     v_pay, case when coalesce(v_fee, 0) > 0 then 'instapay' else null end,
+     p_instapay_sender, p_instapay_proof_url, 'none',
+     case when coalesce(v_fee, 0) > 0 then v_mode else null end,
+     false, false, null, null)
   on conflict (tournament_id, player_id) do update
     set player_name        = excluded.player_name,
         partner_id         = excluded.partner_id,
@@ -1512,14 +1516,129 @@ begin
         payment_method     = excluded.payment_method,
         instapay_sender    = excluded.instapay_sender,
         instapay_proof_url = excluded.instapay_proof_url,
-        refund_status      = 'none';
+        refund_status      = 'none',
+        fee_mode           = excluded.fee_mode,
+        payer_paid         = false,
+        partner_paid       = false,
+        partner_instapay_sender    = null,
+        partner_instapay_proof_url = null
+  returning id into v_eid;
+
+  -- Tailored partner notification for PAID events.
+  if coalesce(v_fee, 0) > 0 and p_partner_id is not null and p_partner_id <> v_uid then
+    if v_mode = 'split' then
+      insert into public.notifications (user_id, type, title, body, data)
+      values (p_partner_id, 'tournament', 'Pay your share to lock your spot',
+              coalesce(v_my_name, 'Your partner') || ' registered you for ' ||
+                coalesce(v_tname, 'a tournament') || '. Pay your EGP ' || v_fee ||
+                ' share to confirm your spot.',
+              jsonb_build_object('tournament_id', p_tournament_id, 'entry_id', v_eid,
+                                 'action', 'pay_share'));
+    else
+      insert into public.notifications (user_id, type, title, body, data)
+      values (p_partner_id, 'tournament', 'You''re in — your entry is paid',
+              coalesce(v_my_name, 'Your partner') || ' paid your entry for ' ||
+                coalesce(v_tname, 'a tournament') || '. You''re registered together!',
+              jsonb_build_object('tournament_id', p_tournament_id, 'entry_id', v_eid));
+    end if;
+  end if;
+
   return null;
 exception when others then
   return sqlerrm;
 end $$;
-
 grant execute on function
-  public.register_for_tournament(uuid, uuid, text, text, text) to authenticated;
+  public.register_for_tournament(uuid, uuid, text, text, text, text) to authenticated;
+
+-- The PARTNER submits their own share (split mode).
+create or replace function public.pay_partner_share(
+  p_entry_id uuid, p_instapay_sender text, p_instapay_proof_url text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_tid uuid; v_player uuid; v_partner uuid; v_mode text; v_status text;
+  v_fee int; v_tname text; v_pname text; v_org uuid;
+begin
+  if v_uid is null then return 'Not signed in.'; end if;
+  select e.tournament_id, e.player_id, e.partner_id, e.fee_mode, e.status,
+         coalesce(t.entry_fee, 0), t.name, t.organizer_id
+    into v_tid, v_player, v_partner, v_mode, v_status, v_fee, v_tname, v_org
+    from public.tournament_entries e
+    join public.tournaments t on t.id = e.tournament_id
+   where e.id = p_entry_id;
+  if not found then return 'Registration not found.'; end if;
+  if v_partner is null or v_partner <> v_uid then
+    return 'This isn''t your registration to pay for.';
+  end if;
+  if v_status in ('withdrawn', 'cancelled') then
+    return 'This registration is no longer active.';
+  end if;
+  if v_fee <= 0 then return 'This is a free event.'; end if;
+  if coalesce(v_mode, 'both') <> 'split' then
+    return 'Your partner already covered the full entry — nothing to pay.';
+  end if;
+
+  update public.tournament_entries
+     set partner_instapay_sender    = p_instapay_sender,
+         partner_instapay_proof_url = p_instapay_proof_url,
+         status = case when status = 'withdrawn' then status else 'pending' end
+   where id = p_entry_id;
+
+  select name into v_pname from public.profiles where id = v_uid;
+  insert into public.notifications (user_id, type, title, body, data)
+  values (v_player, 'tournament', 'Your partner paid their share',
+          coalesce(v_pname, 'Your partner') || ' paid their share for ' ||
+            coalesce(v_tname, 'the tournament') || '. Waiting on the organizer to confirm.',
+          jsonb_build_object('tournament_id', v_tid, 'entry_id', p_entry_id));
+
+  -- Tell the organizer (+ admins) a partner share landed and needs verifying.
+  insert into public.notifications (user_id, type, title, body, data)
+  select uid, 'admin_tournament', 'Partner share paid — verify',
+         coalesce(v_pname, 'A partner') || ' paid their EGP ' || v_fee ||
+           ' share for ' || coalesce(v_tname, 'a tournament') || '.',
+         jsonb_build_object('tournament_id', v_tid, 'entry_id', p_entry_id, 'admin', true)
+  from (select v_org as uid where v_org is not null
+        union select p.id from public.profiles p where p.is_admin = true) r
+  where uid is not null;
+  return null;
+end $$;
+grant execute on function public.pay_partner_share(uuid, text, text) to authenticated;
+
+-- Organizer/admin verifies ONE share; the entry flips to 'paid' only when the
+-- pair is fully covered.
+create or replace function public.verify_entry_share(p_entry_id uuid, p_which text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_tid uuid; v_mode text; v_partner uuid;
+  v_payer boolean; v_partnerpaid boolean; v_full boolean;
+begin
+  select tournament_id, fee_mode, partner_id, payer_paid, partner_paid
+    into v_tid, v_mode, v_partner, v_payer, v_partnerpaid
+    from public.tournament_entries where id = p_entry_id;
+  if not found then return 'Entry not found.'; end if;
+  if not public.owns_tournament(v_tid) then return 'Not your tournament.'; end if;
+
+  if p_which = 'payer' then
+    v_payer := true;
+    if coalesce(v_mode, 'both') <> 'split' then v_partnerpaid := true; end if;
+  elsif p_which = 'partner' then
+    v_partnerpaid := true;
+  else
+    return 'Unknown payment share.';
+  end if;
+
+  v_full := v_payer and (v_partnerpaid
+                         or coalesce(v_mode, 'both') <> 'split'
+                         or v_partner is null);
+
+  update public.tournament_entries
+     set payer_paid   = v_payer,
+         partner_paid = v_partnerpaid,
+         status       = case when v_full then 'paid' else 'pending' end
+   where id = p_entry_id;
+  return null;
+end $$;
+grant execute on function public.verify_entry_share(uuid, text) to authenticated;
 
 -- ============================================================================
 -- Guest entries + organizer entry manager (2026-07-18). Not everyone in an
@@ -1631,6 +1750,12 @@ begin
     values (new.player_id, 'tournament', 'Tournament payment confirmed',
             'You''re confirmed in ' || coalesce(v_name, 'the tournament') || '.',
             jsonb_build_object('tournament_id', new.tournament_id, 'entry_id', new.id));
+    if new.partner_id is not null and new.partner_id <> new.player_id then
+      insert into public.notifications (user_id, type, title, body, data)
+      values (new.partner_id, 'tournament', 'Tournament payment confirmed',
+              'You''re confirmed in ' || coalesce(v_name, 'the tournament') || '.',
+              jsonb_build_object('tournament_id', new.tournament_id, 'entry_id', new.id));
+    end if;
   end if;
   if new.refund_status = 'refunded' and old.refund_status is distinct from 'refunded' then
     select name into v_name from public.tournaments where id = new.tournament_id;
@@ -2851,11 +2976,17 @@ returns trigger language plpgsql security definer
 set search_path = public as $$
 declare
   v_name text;
+  v_fee  int;
 begin
   if new.partner_id is null or new.partner_id = new.player_id then
     return new;
   end if;
-  select name into v_name from public.tournaments where id = new.tournament_id;
+  select name, coalesce(entry_fee, 0) into v_name, v_fee
+    from public.tournaments where id = new.tournament_id;
+  -- Paid events: register_for_tournament sends the tailored pay/you're-in message.
+  if coalesce(v_fee, 0) > 0 then
+    return new;
+  end if;
   insert into public.notifications (user_id, type, title, body, data)
   values (new.partner_id,
           'tournament',
@@ -2972,28 +3103,37 @@ create trigger trg_notify_admins_new_repair
 -- 4. New InstaPay tournament entry awaiting verification → alert every admin.
 -- Only fires for entries that actually need a manual check (pending + instapay);
 -- free/cash entries don't generate noise.
+-- New-entry payment alert goes to the OWNING ORGANIZER (+ admins) and states
+-- which option the registrant chose (own share vs the full pair).
 create or replace function public.notify_admins_tournament_payment()
 returns trigger language plpgsql security definer
 set search_path = public as $$
-declare
-  v_name text;
+declare v_name text; v_org uuid; v_body text; v_partner text;
 begin
   if new.status <> 'pending'
      or coalesce(new.payment_method, '') <> 'instapay' then
     return new;
   end if;
-  select name into v_name from public.tournaments where id = new.tournament_id;
+  select name, organizer_id into v_name, v_org
+    from public.tournaments where id = new.tournament_id;
+  v_partner := coalesce(nullif(btrim(new.partner_name), ''), 'their partner');
+  if coalesce(new.fee_mode, 'both') = 'split' then
+    v_body := coalesce(new.player_name, 'A player') || ' paid their EGP ' ||
+              coalesce(new.paid_amount, 0)::text || ' share for ' ||
+              coalesce(v_name, 'a tournament') || ' — ' || v_partner ||
+              ' still needs to pay theirs.';
+  else
+    v_body := coalesce(new.player_name, 'A player') || ' paid the full EGP ' ||
+              coalesce(new.paid_amount, 0)::text || ' pair entry for ' ||
+              coalesce(v_name, 'a tournament') || ' (covering ' || v_partner || ').';
+  end if;
   insert into public.notifications (user_id, type, title, body, data)
-  select p.id,
-         'admin_tournament',
-         'Tournament payment to verify',
-         coalesce(new.player_name, 'A player') || ' · ' ||
-           coalesce(v_name, 'tournament') || ' · EGP ' ||
-           coalesce(new.paid_amount, 0)::text,
+  select uid, 'admin_tournament', 'Tournament payment to verify', v_body,
          jsonb_build_object('tournament_id', new.tournament_id,
                             'entry_id', new.id, 'admin', true)
-  from public.profiles p
-  where p.is_admin = true;
+  from (select v_org as uid where v_org is not null
+        union select p.id from public.profiles p where p.is_admin = true) r
+  where uid is not null;
   return new;
 end $$;
 
@@ -3814,6 +3954,12 @@ create or replace function public.set_tournament_organizer()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if new.organizer_id is null and public.current_admin_role() = 'organizer' then
+    -- Organizers must set up their community before publishing a tournament.
+    -- (Super admins skip this — their role isn't 'organizer'.)
+    if not exists (select 1 from public.communities where organizer_id = auth.uid()) then
+      raise exception 'Create your community before publishing a tournament.'
+        using errcode = 'check_violation';
+    end if;
     new.organizer_id := auth.uid();
   end if;
   return new;
@@ -3887,6 +4033,12 @@ create table if not exists public.organizer_broadcasts (
   recipients    int not null default 0,
   created_at    timestamptz not null default now()
 );
+-- Broadcasts double as social posts: an optional image + a link to the mirrored
+-- community feed post (where members like/comment). announcement_id is a plain
+-- uuid (no FK) because community_announcements is created later in this file.
+-- See 2026-07-29_broadcast_media.sql.
+alter table public.organizer_broadcasts add column if not exists image_url text;
+alter table public.organizer_broadcasts add column if not exists announcement_id uuid;
 create index if not exists idx_org_broadcasts_owner on public.organizer_broadcasts (organizer_id, created_at desc);
 alter table public.organizer_broadcasts enable row level security;
 do $$ begin
@@ -3894,10 +4046,14 @@ do $$ begin
     using (organizer_id = auth.uid() or public._is_admin());
 exception when duplicate_object then null; end $$;
 
+-- A broadcast is BOTH a push blast (to entrants ∪ community members) AND, when
+-- the organizer has a community, a likeable/commentable community feed post with
+-- an optional image. One compose action → notification + social post.
+drop function if exists public.organizer_broadcast(text, text, uuid);
 create or replace function public.organizer_broadcast(
-  p_title text, p_body text, p_tournament_id uuid default null)
+  p_title text, p_body text, p_tournament_id uuid default null, p_image_url text default null)
 returns text language plpgsql security definer set search_path = public as $$
-declare v_uid uuid := auth.uid(); v_ids uuid[]; v_n int;
+declare v_uid uuid := auth.uid(); v_ids uuid[]; v_n int; v_cid uuid; v_aid uuid;
 begin
   if public.current_admin_role() <> 'organizer' and not public._is_admin() then
     return 'Organizers only.';
@@ -3921,16 +4077,79 @@ begin
        and cm.community_id in (select id from public.communities where organizer_id = v_uid)
   ) u where pid is not null;
   v_n := coalesce(array_length(v_ids, 1), 0);
-  if v_n = 0 then return 'No one to reach yet — get community members or event entrants first.'; end if;
-  insert into public.notifications (user_id, type, title, body, data)
-  select uid, 'broadcast', p_title, nullif(btrim(p_body), ''),
-         jsonb_build_object('from', 'organizer')
-    from unnest(v_ids) as uid;
-  insert into public.organizer_broadcasts (organizer_id, tournament_id, title, body, recipients)
-  values (v_uid, p_tournament_id, p_title, nullif(btrim(p_body), ''), v_n);
+
+  -- Mirror as a community feed post (with the optional image) so members can
+  -- like + comment. Not tournament-scoped broadcasts only? We still post to the
+  -- organizer's single community whenever one exists.
+  select id into v_cid from public.communities where organizer_id = v_uid;
+  if v_cid is not null then
+    insert into public.community_announcements (community_id, title, body, image_url)
+    values (v_cid, p_title, nullif(btrim(coalesce(p_body,'')),''),
+            nullif(btrim(coalesce(p_image_url,'')),''))
+    returning id into v_aid;
+  end if;
+
+  if v_n = 0 and v_aid is null then
+    return 'No one to reach yet — get community members or event entrants first.';
+  end if;
+
+  if v_n > 0 then
+    insert into public.notifications (user_id, type, title, body, data)
+    select uid, 'broadcast', p_title, nullif(btrim(p_body), ''),
+           jsonb_build_object('from', 'organizer', 'community_id', v_cid,
+                              'announcement_id', v_aid)
+      from unnest(v_ids) as uid;
+  end if;
+  insert into public.organizer_broadcasts
+    (organizer_id, tournament_id, title, body, recipients, image_url, announcement_id)
+  values (v_uid, p_tournament_id, p_title, nullif(btrim(p_body), ''), v_n,
+          nullif(btrim(coalesce(p_image_url,'')),''), v_aid);
   return null;
 end $$;
-grant execute on function public.organizer_broadcast(text, text, uuid) to authenticated;
+grant execute on function public.organizer_broadcast(text, text, uuid, text) to authenticated;
+
+-- ── Organizer InstaPay payout (username + link) ──────────────────────────────
+-- Each organizer sets their own InstaPay username and/or payment link in the
+-- console; players registering for a PAID tournament transfer to the *owning
+-- organizer's* details (falling back to the platform app_settings handle, then
+-- a hard default). Full notes: supabase/changes/2026-07-29_organizer_instapay.sql
+alter table public.profiles add column if not exists instapay_handle text;
+alter table public.profiles add column if not exists instapay_link   text;
+
+-- Organizer (or admin) sets their own payout username + link; applies to every
+-- event they own. Returns null on success, or an error string.
+drop function if exists public.set_my_instapay_handle(text);
+create or replace function public.set_my_instapay(p_handle text, p_link text default null)
+returns text language plpgsql security definer set search_path = public as $$
+begin
+  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+    return 'Organizers only.';
+  end if;
+  update public.profiles
+     set instapay_handle = nullif(btrim(p_handle), ''),
+         instapay_link   = nullif(btrim(p_link), '')
+   where id = auth.uid();
+  return null;
+end $$;
+grant execute on function public.set_my_instapay(text, text) to authenticated;
+
+-- The InstaPay details a player transfers to for a given tournament: the owning
+-- organizer's handle/link if set, else the platform-wide app_settings handle,
+-- else a hard default. SECURITY DEFINER so it reads across profiles/app_settings.
+drop function if exists public.tournament_pay_handle(uuid);
+create or replace function public.tournament_pay_info(p_tournament_id uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'handle', coalesce(
+      nullif(btrim(p.instapay_handle), ''),
+      nullif(btrim((select value from public.app_settings where key = 'instapay_handle')), ''),
+      'padelpro@instapay'),
+    'link', nullif(btrim(p.instapay_link), ''))
+    from public.tournaments t
+    left join public.profiles p on p.id = t.organizer_id
+   where t.id = p_tournament_id;
+$$;
+grant execute on function public.tournament_pay_info(uuid) to authenticated, anon;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Community — Phase 3 of Roles/Organizer/Community.
@@ -4676,8 +4895,23 @@ begin
 end $$;
 grant execute on function public.toggle_rsvp(uuid) to authenticated;
 
+-- Community post media (Instagram-style feed post): an optional image on each
+-- announcement. Public bucket; each user writes only inside their own <uid>/
+-- folder. Full notes: supabase/changes/2026-07-29_community_post_media.sql
+alter table public.community_announcements add column if not exists image_url text;
+insert into storage.buckets (id, name, public)
+  values ('community-media', 'community-media', true)
+  on conflict (id) do update set public = true;
+drop policy if exists "community-media owner write" on storage.objects;
+create policy "community-media owner write" on storage.objects
+  for all to authenticated
+  using (bucket_id = 'community-media' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'community-media' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop function if exists public.post_announcement(text, text, boolean);
 create or replace function public.post_announcement(
-  p_title text, p_body text default null, p_pinned boolean default false)
+  p_title text, p_body text default null, p_pinned boolean default false,
+  p_image_url text default null)
 returns text language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_cid uuid;
 begin
@@ -4687,15 +4921,16 @@ begin
   if btrim(coalesce(p_title, '')) = '' then return 'Title required.'; end if;
   select id into v_cid from public.communities where organizer_id = v_uid;
   if v_cid is null then return 'Create your community first.'; end if;
-  insert into public.community_announcements (community_id, title, body, pinned)
-  values (v_cid, p_title, nullif(btrim(coalesce(p_body,'')),''), coalesce(p_pinned, false));
+  insert into public.community_announcements (community_id, title, body, pinned, image_url)
+  values (v_cid, p_title, nullif(btrim(coalesce(p_body,'')),''), coalesce(p_pinned, false),
+          nullif(btrim(coalesce(p_image_url,'')),''));
   insert into public.notifications (user_id, type, title, body, data)
   select cm.player_id, 'community', p_title, nullif(btrim(coalesce(p_body,'')),''),
          jsonb_build_object('community_id', v_cid)
     from public.community_members cm where cm.community_id = v_cid;
   return null;
 end $$;
-grant execute on function public.post_announcement(text, text, boolean) to authenticated;
+grant execute on function public.post_announcement(text, text, boolean, text) to authenticated;
 
 create or replace function public.send_community_message(p_community_id uuid, p_body text)
 returns text language plpgsql security definer set search_path = public as $$
@@ -4852,10 +5087,10 @@ grant execute on function public.organizer_community_stats() to authenticated;
 
 drop function if exists public.community_feed(uuid);
 create or replace function public.community_feed(p_community_id uuid)
-returns table (id uuid, title text, body text, pinned boolean, created_at timestamptz,
+returns table (id uuid, title text, body text, image_url text, pinned boolean, created_at timestamptz,
                going int, i_going boolean, likes int, i_liked boolean, comments int)
 language sql stable security definer set search_path = public as $$
-  select a.id, a.title, a.body, a.pinned, a.created_at,
+  select a.id, a.title, a.body, a.image_url, a.pinned, a.created_at,
          (select count(*)::int from public.announcement_rsvps r where r.announcement_id = a.id) as going,
          exists (select 1 from public.announcement_rsvps r
                   where r.announcement_id = a.id and r.player_id = auth.uid()) as i_going,

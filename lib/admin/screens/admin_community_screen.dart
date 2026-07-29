@@ -6,9 +6,11 @@
 // ============================================================================
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../backend/services/community_service.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
+import '../widgets/organizer_payout_card.dart';
 
 class AdminCommunityScreen extends StatefulWidget {
   const AdminCommunityScreen({super.key});
@@ -280,7 +282,9 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
             ),
           ]),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 16),
+        const OrganizerPayoutCard(),
+        const SizedBox(height: 2),
         Row(children: [
           Expanded(child: Text('CHANNELS', style: AdminText.kicker())),
           GestureDetector(
@@ -687,6 +691,8 @@ class _AnnouncementFormState extends State<_AnnouncementForm> {
   final _title = TextEditingController();
   final _body = TextEditingController();
   bool _pinned = false, _busy = false;
+  Uint8List? _imgBytes;
+  String _imgExt = 'jpg';
 
   @override
   void dispose() {
@@ -695,13 +701,35 @@ class _AnnouncementFormState extends State<_AnnouncementForm> {
     super.dispose();
   }
 
+  Future<void> _pickImage() async {
+    final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (f == null) return;
+    final bytes = await f.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      _imgBytes = bytes;
+      _imgExt = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';
+    });
+  }
+
   Future<void> _post() async {
     if (_title.text.trim().isEmpty) return;
     setState(() => _busy = true);
+    String? imageUrl;
+    if (_imgBytes != null) {
+      imageUrl = await CommunityService.uploadPostImage(_imgBytes!, _imgExt);
+      if (imageUrl == null) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        adminToast(context, "Couldn't upload the photo — try again", ok: false);
+        return;
+      }
+    }
     final err = await CommunityService.postAnnouncement(
       title: _title.text.trim(),
       body: _body.text.trim(),
       pinned: _pinned,
+      imageUrl: imageUrl,
     );
     if (!mounted) return;
     setState(() => _busy = false);
@@ -727,6 +755,9 @@ class _AnnouncementFormState extends State<_AnnouncementForm> {
         _label('Message'),
         _field(_body, 'Add the details players need…', lines: 4),
         const SizedBox(height: 12),
+        _label('Photo (optional)'),
+        _imagePickerBox(),
+        const SizedBox(height: 12),
         GestureDetector(
           onTap: () => setState(() => _pinned = !_pinned),
           child: Row(children: [
@@ -737,6 +768,51 @@ class _AnnouncementFormState extends State<_AnnouncementForm> {
           ]),
         ),
       ],
+    );
+  }
+
+  Widget _imagePickerBox() {
+    if (_imgBytes != null) {
+      return Stack(children: [
+        ClipRRect(
+          borderRadius: AdminUI.fieldR,
+          child: Image.memory(_imgBytes!,
+              width: double.infinity, height: 170, fit: BoxFit.cover),
+        ),
+        Positioned(
+          top: 8,
+          right: 8,
+          child: GestureDetector(
+            onTap: () => setState(() => _imgBytes = null),
+            child: Container(
+              padding: const EdgeInsets.all(5),
+              decoration: const BoxDecoration(
+                  color: Colors.black54, shape: BoxShape.circle),
+              child: const Icon(Icons.close_rounded, size: 18, color: Colors.white),
+            ),
+          ),
+        ),
+      ]);
+    }
+    return GestureDetector(
+      onTap: _pickImage,
+      child: Container(
+        height: 92,
+        decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: AdminUI.fieldR,
+          border: Border.all(color: AdminColors.line),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.add_photo_alternate_outlined,
+                size: 24, color: AdminColors.inkSoft),
+            const SizedBox(height: 5),
+            Text('Add a photo', style: AdminText.small()),
+          ],
+        ),
+      ),
     );
   }
 }

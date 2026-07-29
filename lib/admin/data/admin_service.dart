@@ -411,15 +411,34 @@ class AdminService {
         .select('*, tournament_entries(id, player_id, player_name, '
             'partner_id, partner_name, status, registered_at, '
             'payment_method, paid_amount, instapay_sender, instapay_proof_url, '
-            'refund_status)');
+            'refund_status, fee_mode, payer_paid, partner_paid, '
+            'partner_instapay_sender, partner_instapay_proof_url)');
     if (organizerId != null) query = query.eq('organizer_id', organizerId);
     final res = await query.order('start_date', ascending: false);
     return List<Map<String, dynamic>>.from(res as List);
   }
 
-  /// Confirms a tournament entry's InstaPay transfer (pending → paid).
+  /// Confirms the REGISTRANT's share of an entry's InstaPay transfer. For a
+  /// 'both' entry that fully pays the pair (→ paid); for a 'split' entry it
+  /// clears the payer's half (partner's half verified separately).
   static Future<String?> verifyTournamentEntry(String entryId) =>
-      _updateEntry(entryId, {'status': 'paid'});
+      _verifyShare(entryId, 'payer');
+
+  /// Confirms the PARTNER's own half of a split entry.
+  static Future<String?> verifyPartnerShare(String entryId) =>
+      _verifyShare(entryId, 'partner');
+
+  static Future<String?> _verifyShare(String entryId, String which) async {
+    try {
+      final res = await _db.rpc('verify_entry_share',
+          params: {'p_entry_id': entryId, 'p_which': which});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
 
   /// Rejects a pending entry (no money received) — frees the spot.
   static Future<String?> rejectTournamentEntry(String entryId) =>
@@ -1175,7 +1194,7 @@ class AdminService {
     try {
       final res = await _db
           .from('organizer_broadcasts')
-          .select('id, title, body, recipients, tournament_id, created_at')
+          .select('id, title, body, recipients, tournament_id, image_url, created_at')
           .order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(res as List);
     } catch (_) {
@@ -1303,13 +1322,50 @@ class AdminService {
     required String title,
     required String body,
     String? tournamentId,
+    String? imageUrl,
   }) async {
     try {
       final res = await _db.rpc('organizer_broadcast', params: {
         'p_title': title,
         'p_body': body,
         'p_tournament_id': tournamentId,
+        'p_image_url': imageUrl,
       });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  // ── Organizer InstaPay payout (username + link) ───────────────────
+  /// The signed-in organizer's own InstaPay payout details (nulls if unset).
+  static Future<({String? handle, String? link})> fetchMyInstapay() async {
+    try {
+      final uid = _db.auth.currentUser?.id;
+      if (uid == null) return (handle: null, link: null);
+      final row = await _db
+          .from('profiles')
+          .select('instapay_handle, instapay_link')
+          .eq('id', uid)
+          .maybeSingle();
+      return (
+        handle: (row?['instapay_handle'] as String?)?.trim(),
+        link: (row?['instapay_link'] as String?)?.trim(),
+      );
+    } catch (_) {
+      return (handle: null, link: null);
+    }
+  }
+
+  /// Sets the organizer's payout username + link. Returns null on success,
+  /// else an error string.
+  static Future<String?> setMyInstapay(
+      {required String handle, required String link}) async {
+    try {
+      final res = await _db.rpc('set_my_instapay',
+          params: {'p_handle': handle, 'p_link': link});
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;

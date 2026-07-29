@@ -14,7 +14,8 @@ class TournamentService {
   static const _cols =
       'id, name, venue_name, status, start_date, end_date, start_time, capacity, organizer_id, '
       'entry_fee, prize_pool, description, min_elo, max_elo, format, format_note, best_of, '
-      'tournament_entries(id, player_id, player_name, partner_id, partner_name, status)';
+      'tournament_entries(id, player_id, player_name, partner_id, partner_name, status, '
+      'fee_mode, payer_paid, partner_paid, partner_instapay_sender)';
 
   // Fallback for a pre-migration DB: no entries join, no max_elo — but still
   // selects the display fields (prize, about, best_of) so cards/detail render.
@@ -93,7 +94,8 @@ class TournamentService {
       {String? partnerId,
       String? partnerName,
       String? instapaySender,
-      String? instapayProofUrl}) async {
+      String? instapayProofUrl,
+      String feeMode = 'both'}) async {
     final uid = _uid;
     if (uid == null) return 'Not signed in.';
     try {
@@ -103,6 +105,7 @@ class TournamentService {
         'p_partner_name': partnerName,
         'p_instapay_sender': instapaySender,
         'p_instapay_proof_url': instapayProofUrl,
+        'p_fee_mode': feeMode,
       });
       return res as String?;
     } on PostgrestException catch (e) {
@@ -111,6 +114,44 @@ class TournamentService {
     } catch (e) {
       return e.toString();
     }
+  }
+
+  /// A partner pays their own half of a split entry. Error message or null.
+  static Future<String?> payPartnerShare(String entryId,
+      {String? instapaySender, String? instapayProofUrl}) async {
+    try {
+      final res = await _db.rpc('pay_partner_share', params: {
+        'p_entry_id': entryId,
+        'p_instapay_sender': instapaySender,
+        'p_instapay_proof_url': instapayProofUrl,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// The InstaPay details a player should transfer their entry fee to for this
+  /// tournament — the owning organizer's username + payment link, falling back
+  /// to the platform handle, then a hard default. Resolved server-side by
+  /// `tournament_pay_info`.
+  static Future<({String handle, String? link})> fetchPayInfo(
+      String tournamentId) async {
+    try {
+      final res = await _db.rpc('tournament_pay_info',
+          params: {'p_tournament_id': tournamentId});
+      if (res is Map) {
+        final h = (res['handle'] as String?)?.trim();
+        final l = (res['link'] as String?)?.trim();
+        return (
+          handle: (h != null && h.isNotEmpty) ? h : 'padelpro@instapay',
+          link: (l != null && l.isNotEmpty) ? l : null,
+        );
+      }
+    } catch (_) {}
+    return (handle: 'padelpro@instapay', link: null);
   }
 
   /// Would withdrawing *now* refund the entry fee? Eligible only strictly

@@ -597,6 +597,26 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
                       const SizedBox(height: 5),
                       Text(a.body!, style: AppText.body(AppColors.inkSoft)),
                     ],
+                    if (a.imageUrl != null) ...[
+                      const SizedBox(height: 10),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          a.imageUrl!,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                          loadingBuilder: (ctx, child, prog) => prog == null
+                              ? child
+                              : Container(
+                                  height: 180,
+                                  alignment: Alignment.center,
+                                  color: AppColors.field,
+                                  child: const CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     Row(children: [
                       GestureDetector(

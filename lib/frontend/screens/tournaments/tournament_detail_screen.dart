@@ -119,16 +119,24 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _TournamentPaymentSheet(
-        amount: _fee,
+        feePerPlayer: _fee,
+        allowSplit: _partner != null,
+        tournamentId: widget.tournamentId,
         tournamentName: (_t?['name'] as String?) ?? 'this tournament',
+        partnerName: _partner?['name'] as String?,
       ),
     );
     if (result == null || !mounted) return; // cancelled
     await _register(
-        instapaySender: result['sender'], instapayProofUrl: result['proof']);
+        instapaySender: result['sender'],
+        instapayProofUrl: result['proof'],
+        feeMode: result['feeMode'] ?? 'both');
   }
 
-  Future<void> _register({String? instapaySender, String? instapayProofUrl}) async {
+  Future<void> _register(
+      {String? instapaySender,
+      String? instapayProofUrl,
+      String feeMode = 'both'}) async {
     setState(() => _busy = true);
     final err = await TournamentService.register(
       widget.tournamentId,
@@ -136,6 +144,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       partnerName: _partner?['name'] as String?,
       instapaySender: instapaySender,
       instapayProofUrl: instapayProofUrl,
+      feeMode: feeMode,
     );
     if (!mounted) return;
     setState(() => _busy = false);
@@ -143,8 +152,58 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       _snack(err, color: AppColors.danger);
     } else {
       _snack(_fee > 0
-          ? "Spot reserved — we'll confirm once your transfer is verified."
+          ? (feeMode == 'split'
+              ? "Your share is in — we've asked your partner to pay theirs."
+              : "Spot reserved — we'll confirm once your transfer is verified.")
           : "You're in! See you at ${(_t?['venue_name'] as String?) ?? 'the club'}.");
+      _load();
+    }
+  }
+
+  // The current user is a partner on a split entry whose own half is unpaid.
+  Map<String, dynamic>? get _myUnpaidPartnerShare {
+    final uid = _uid;
+    if (uid == null) return null;
+    for (final e in _entries) {
+      final sender = e['partner_instapay_sender'] as String?;
+      if (e['partner_id'] == uid &&
+          e['fee_mode'] == 'split' &&
+          e['partner_paid'] != true &&
+          (sender == null || sender.isEmpty)) {
+        return e;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _startPartnerShare(Map<String, dynamic> entry) async {
+    if (_fee <= 0) return;
+    final result = await showModalBottomSheet<Map<String, String?>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _TournamentPaymentSheet(
+        feePerPlayer: _fee,
+        allowSplit: false,
+        partnerShare: true,
+        tournamentId: widget.tournamentId,
+        tournamentName: (_t?['name'] as String?) ?? 'this tournament',
+        partnerName: null,
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() => _busy = true);
+    final err = await TournamentService.payPartnerShare(
+      entry['id'] as String,
+      instapaySender: result['sender'],
+      instapayProofUrl: result['proof'],
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      _snack(err, color: AppColors.danger);
+    } else {
+      _snack("Your share is in — the organizer will confirm your spot.");
       _load();
     }
   }
@@ -438,9 +497,13 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: _bigStat('ENTRY / PAIR', _fee > 0 ? _egp(_fee) : 'Free'),
+            child: _bigStat('ENTRY / PLAYER', _fee > 0 ? _egp(_fee) : 'Free'),
           ),
         ]),
+        if (_myUnpaidPartnerShare != null) ...[
+          const SizedBox(height: 14),
+          _partnerShareCard(_myUnpaidPartnerShare!),
+        ],
         if (about.isNotEmpty) ...[
           const SizedBox(height: 20),
           Text('THE COMPETITION', style: AppText.kicker(AppColors.primary)),
@@ -532,6 +595,37 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               style: AppText.stat(22, highlight ? AppColors.primary : AppColors.ink)),
         ]),
       );
+
+  // Shown to a partner whose own half of a split entry is still unpaid.
+  Widget _partnerShareCard(Map<String, dynamic> entry) {
+    final registrant = (entry['player_name'] as String?)?.split(' ').first ?? 'Your partner';
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.sports_tennis_rounded, size: 18, color: AppColors.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text('$registrant registered you as their partner',
+                style: AppText.cardTitle().copyWith(fontSize: 15)),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        Text('Pay your ${_egp(_fee)} share to lock in your spot together.',
+            style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13.5, height: 1.4)),
+        const SizedBox(height: 12),
+        AppButton('Pay my share · ${_egp(_fee)}',
+            full: true,
+            height: 50,
+            onPressed: _busy ? null : () => _startPartnerShare(entry)),
+      ]),
+    );
+  }
 
   // Tournaments carry a free-text venue_name (no coords) — open the maps app to
   // a search on that name.
@@ -1051,7 +1145,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           border: Border(top: BorderSide(color: AppColors.lineSoft))),
       child: Row(children: [
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('ENTRY / PAIR', style: AppText.tag().copyWith(fontSize: 9.5)),
+          Text('ENTRY / PLAYER', style: AppText.tag().copyWith(fontSize: 9.5)),
           Text(_fee > 0 ? _egp(_fee) : 'Free', style: AppText.stat(20)),
         ]),
         const SizedBox(width: 14),
@@ -1087,10 +1181,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
 /// `{sender, proof}` on confirm (proof = uploaded storage path or null), or
 /// null if cancelled. Mirrors the store checkout's InstaPay step.
 class _TournamentPaymentSheet extends StatefulWidget {
-  final int amount;
+  final int feePerPlayer;
+  final bool allowSplit; // show the "just me / both of us" choice
+  final bool partnerShare; // this is a partner paying their own half
+  final String tournamentId;
   final String tournamentName;
-  const _TournamentPaymentSheet(
-      {required this.amount, required this.tournamentName});
+  final String? partnerName;
+  const _TournamentPaymentSheet({
+    required this.feePerPlayer,
+    required this.allowSplit,
+    this.partnerShare = false,
+    required this.tournamentId,
+    required this.tournamentName,
+    this.partnerName,
+  });
   @override
   State<_TournamentPaymentSheet> createState() => _TournamentPaymentSheetState();
 }
@@ -1100,13 +1204,25 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
   Uint8List? _proofBytes;
   String _proofExt = 'jpg';
   String _handle = '';
+  String? _payLink;
   bool _busy = false;
+  String _mode = 'both'; // 'both' (pay 2×) | 'split' (pay own share)
+
+  // What the user pays right now.
+  int get _amount => widget.partnerShare
+      ? widget.feePerPlayer
+      : (_mode == 'split' ? widget.feePerPlayer : widget.feePerPlayer * 2);
 
   @override
   void initState() {
     super.initState();
-    OrderService.fetchInstapayHandle().then((h) {
-      if (mounted) setState(() => _handle = h);
+    TournamentService.fetchPayInfo(widget.tournamentId).then((info) {
+      if (mounted) {
+        setState(() {
+          _handle = info.handle;
+          _payLink = info.link;
+        });
+      }
     });
     _sender.addListener(() => setState(() {}));
   }
@@ -1142,7 +1258,11 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
       proofPath = await OrderService.uploadPaymentProof(_proofBytes!, _proofExt);
     }
     if (!mounted) return;
-    Navigator.pop(context, {'sender': sender, 'proof': proofPath});
+    Navigator.pop(context, {
+      'sender': sender,
+      'proof': proofPath,
+      'feeMode': widget.partnerShare ? 'split' : _mode,
+    });
   }
 
   void _copy(String v) {
@@ -1152,6 +1272,20 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
     // copy looked like it did nothing. AppToast draws on the root overlay,
     // above the sheet, so the confirmation is actually visible.
     AppToast.show(context, 'Copied $v');
+  }
+
+  Future<void> _openPayLink() async {
+    final l = (_payLink ?? '').trim();
+    if (l.isEmpty) return;
+    final uri = Uri.tryParse(l.startsWith('http') ? l : 'https://$l');
+    if (uri == null) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) {
+        AppToast.show(context, "Couldn't open the link", kind: ToastKind.error);
+      }
+    }
   }
 
   @override
@@ -1180,17 +1314,45 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                           color: AppColors.line,
                           borderRadius: BorderRadius.circular(2))),
                 ),
-                Text('Pay entry fee', style: AppText.stat(22, AppColors.ink)),
+                Text(widget.partnerShare ? 'Pay your share' : 'Pay entry fee',
+                    style: AppText.stat(22, AppColors.ink)),
                 const SizedBox(height: 4),
                 Text(
-                    'Transfer to the InstaPay account below, then enter your '
-                    'sending username so we can match the payment.',
+                    widget.partnerShare
+                        ? 'Transfer your share to the InstaPay account below, then '
+                            'enter your sending username so we can match it.'
+                        : 'Transfer to the InstaPay account below, then enter your '
+                            'sending username so we can match the payment.',
                     style: AppText.small().copyWith(fontSize: 13, height: 1.4)),
+                if (widget.allowSplit && !widget.partnerShare) ...[
+                  const SizedBox(height: 16),
+                  Text('WHO ARE YOU PAYING FOR?', style: AppText.kicker()),
+                  const SizedBox(height: 8),
+                  _payForToggle(),
+                ],
                 const SizedBox(height: 18),
                 _copyRow('Send to · InstaPay', _handle.isEmpty ? '…' : _handle,
                     mono: true),
                 const SizedBox(height: 10),
-                _copyRow('Amount', _egp(widget.amount), copyable: false),
+                _copyRow('Amount', _egp(_amount), copyable: false),
+                if ((_payLink ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _openPayLink,
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      label: const Text('Open payment link'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.ink,
+                        side: const BorderSide(color: AppColors.line),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 18),
                 Text('YOUR INSTAPAY USERNAME', style: AppText.kicker()),
                 const SizedBox(height: 7),
@@ -1233,6 +1395,56 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
         ),
       ),
     );
+  }
+
+  Widget _payForToggle() {
+    Widget opt(String key, String title, String sub, int amount) {
+      final on = _mode == key;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _mode = key),
+          child: Container(
+            margin: EdgeInsets.only(right: key == 'both' ? 8 : 0),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: on
+                  ? AppColors.primary.withValues(alpha: 0.08)
+                  : AppColors.surface,
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(
+                  color: on ? AppColors.primary : AppColors.line,
+                  width: on ? 1.6 : 1),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(
+                    on
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.radio_button_off_rounded,
+                    size: 17,
+                    color: on ? AppColors.primary : AppColors.inkSoft),
+                const SizedBox(width: 6),
+                Expanded(
+                    child: Text(title,
+                        style: AppText.bodyStrong().copyWith(fontSize: 13.5))),
+              ]),
+              const SizedBox(height: 6),
+              Text(_egp(amount),
+                  style: AppText.stat(18, on ? AppColors.primary : AppColors.ink)),
+              const SizedBox(height: 3),
+              Text(sub, style: AppText.small().copyWith(fontSize: 11, height: 1.3)),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      opt('both', 'Both of us', 'Cover the full pair entry.',
+          widget.feePerPlayer * 2),
+      opt('split', 'Just me', 'Your partner pays their share.',
+          widget.feePerPlayer),
+    ]);
   }
 
   Widget _copyRow(String label, String value,
