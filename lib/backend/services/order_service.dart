@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -44,13 +46,15 @@ class OrderService {
         'proofs/$uid/${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(99999)}.$safeExt';
     try {
       // Paths are unique, so this is always a fresh insert — no upsert needed
-      // (upsert would additionally require an UPDATE storage policy).
+      // (upsert would additionally require an UPDATE storage policy). A hard
+      // timeout keeps a stalled connection from spinning forever instead of
+      // surfacing an error.
       await _db.storage.from(_proofBucket).uploadBinary(
             path,
             bytes,
             fileOptions: FileOptions(
                 contentType: 'image/${safeExt == 'jpg' ? 'jpeg' : safeExt}'),
-          );
+          ).timeout(const Duration(seconds: 25));
       return (path: path, error: null);
     } on StorageException catch (e) {
       debugPrint('[OrderService] uploadPaymentProof storage error: '
@@ -62,11 +66,28 @@ class OrderService {
               ? 'Not allowed to upload right now. Please sign out and back in.'
               : 'Upload failed: ${e.message}';
       return (path: null, error: reason);
-    } catch (e) {
-      debugPrint('[OrderService] uploadPaymentProof error: $e');
+    } on TimeoutException catch (e) {
+      debugPrint('[OrderService] uploadPaymentProof timed out: $e');
       return (
         path: null,
-        error: 'Couldn\'t upload your payment screenshot — check your connection and try again.'
+        error: 'Upload timed out. Try again on a stronger connection.'
+      );
+    } on SocketException catch (e) {
+      debugPrint('[OrderService] uploadPaymentProof socket error: $e');
+      return (
+        path: null,
+        error: 'No internet connection. Check your Wi-Fi or mobile data and try again.'
+      );
+    } catch (e) {
+      // Anything else (TLS handshake failures, a proxy/CDN returning HTML
+      // instead of JSON on a 5xx, etc.) — log the real type so the next
+      // report is diagnosable instead of another opaque "check your
+      // connection", but keep the user-facing text actionable.
+      debugPrint('[OrderService] uploadPaymentProof error: '
+          '${e.runtimeType}: $e');
+      return (
+        path: null,
+        error: 'Couldn\'t upload your payment screenshot. Please try again in a moment.'
       );
     }
   }
