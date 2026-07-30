@@ -218,7 +218,14 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
 
   Future<void> _pickProof() async {
     try {
-      final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+      // Downscale + compress so proofs stay a few hundred KB — full-res phone
+      // photos are multi-MB and time out / hit bucket size limits on mobile data.
+      final f = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 70,
+      );
       if (f == null) return;
       final bytes = await f.readAsBytes();
       final ext = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';

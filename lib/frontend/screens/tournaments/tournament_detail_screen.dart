@@ -1342,7 +1342,14 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
   static String _egp(int n) => 'EGP $n';
 
   Future<void> _pickProof() async {
-    final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+    // Downscale + compress so proofs stay small (full-res photos time out /
+    // hit bucket size limits on mobile data).
+    final f = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 70,
+    );
     if (f == null) return;
     final bytes = await f.readAsBytes();
     final ext =
