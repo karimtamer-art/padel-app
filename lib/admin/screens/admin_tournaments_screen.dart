@@ -951,6 +951,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final endC = TextEditingController(text: t?['end_date'] ?? '');
     final startTimeC = TextEditingController(text: t?['start_time'] ?? '');
     final regOpensC = TextEditingController(text: t?['registration_opens'] ?? '');
+    final reasonC = TextEditingController(text: t?['cancel_reason'] ?? '');
     final prizeC =
         TextEditingController(text: t?['prize_pool']?.toString() ?? '');
     final feeC = TextEditingController(text: t?['entry_fee']?.toString() ?? '');
@@ -1026,6 +1027,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'status': status,
             'rated': rated,
             'sponsored': sponsored,
+            'cancel_reason': status == 'cancelled'
+                ? (reasonC.text.trim().isEmpty ? null : reasonC.text.trim())
+                : null,
           };
           if (!isNew) data['id'] = t['id'];
           final err = await AdminService.upsertTournament(data);
@@ -1274,31 +1278,82 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               statusBtn('Cancelled', 'cancelled'),
             ]),
             const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                  color: AdminColors.surfaceAlt,
-                  borderRadius: BorderRadius.circular(10)),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  const Icon(Icons.autorenew_rounded, size: 14, color: AdminColors.primary),
-                  const SizedBox(width: 6),
-                  Text('On Auto, the card updates itself:',
-                      style: AdminText.sans(12.5, FontWeight.w800, AdminColors.ink)),
+            if (status == 'auto')
+              Container(
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                    color: AdminColors.surfaceAlt,
+                    borderRadius: BorderRadius.circular(10)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.autorenew_rounded, size: 14, color: AdminColors.primary),
+                    const SizedBox(width: 6),
+                    Text('On Auto, the card updates itself:',
+                        style: AdminText.sans(12.5, FontWeight.w800, AdminColors.ink)),
+                  ]),
+                  const SizedBox(height: 6),
+                  Text('Upcoming  →  Open  →  Full  →  Live  →  Completed',
+                      style: AdminText.sans(12, FontWeight.w700, AdminColors.primary)),
+                  const SizedBox(height: 5),
+                  Text(
+                      'Upcoming until the registration-opens day · Open once players '
+                      'can register · Full when spots run out · Live on the start day · '
+                      'Completed after the end date. Use Postponed or Cancelled to '
+                      'override this.',
+                      style: AdminText.small(AdminColors.inkFaint)),
                 ]),
-                const SizedBox(height: 6),
-                Text(
-                    'Upcoming  →  Open  →  Full  →  Live  →  Completed',
-                    style: AdminText.sans(12, FontWeight.w700, AdminColors.primary)),
-                const SizedBox(height: 5),
-                Text(
-                    'Upcoming until the registration-opens day · Open once players '
-                    'can register · Full when spots run out · Live on the start day · '
-                    'Completed after the end date. Use Postponed or Cancelled to '
-                    'override this.',
-                    style: AdminText.small(AdminColors.inkFaint)),
+              )
+            else if (status == 'postponed')
+              Container(
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                    color: AdminColors.wash(AdminColors.warn, 0.10),
+                    borderRadius: BorderRadius.circular(10)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.event_repeat_rounded, size: 14, color: AdminColors.warn),
+                    const SizedBox(width: 6),
+                    Text('Postponing this tournament',
+                        style: AdminText.sans(12.5, FontWeight.w800, AdminColors.ink)),
+                  ]),
+                  const SizedBox(height: 6),
+                  Text(
+                      'Change the start date to the new date, then Save. Everyone '
+                      'registered stays in and is notified of the new date.',
+                      style: AdminText.small(AdminColors.inkFaint)),
+                  const SizedBox(height: 9),
+                  AdminButton('Pick new date',
+                      variant: AdminBtn.ghost,
+                      height: 38,
+                      icon: Icons.calendar_today_outlined,
+                      onPressed: () async {
+                        await _pickDate(startC);
+                        setSheet(() {});
+                      }),
+                ]),
+              )
+            else // cancelled
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(
+                  padding: const EdgeInsets.all(11),
+                  decoration: BoxDecoration(
+                      color: AdminColors.wash(AdminColors.danger, 0.10),
+                      borderRadius: BorderRadius.circular(10)),
+                  child: Row(children: [
+                    const Icon(Icons.cancel_outlined, size: 15, color: AdminColors.danger),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                          'All registered players are notified this event is '
+                          'cancelled, and it drops off the listings.',
+                          style: AdminText.small(AdminColors.ink)),
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+                _field('Reason (optional)', reasonC,
+                    hint: 'e.g. Venue unavailable — shown to players', maxLines: 2),
               ]),
-            ),
             const SizedBox(height: 16),
             // ── Eligibility ───────────────────────────────────────
             Text('Player eligibility', style: AdminText.strong(AdminColors.inkSoft)),
