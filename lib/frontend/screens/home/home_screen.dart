@@ -1204,13 +1204,14 @@ class _TournamentTile extends StatelessWidget {
     final canRegister = !registered && (ds == 'open' || ds == 'postponed');
     final sc = switch (ds) {
       'open' || 'live' => AppColors.success,
-      'full' || 'postponed' => AppColors.gold,
+      'full' || 'postponed' || 'upcoming' => AppColors.gold,
       _ => AppColors.inkSoft,
     };
     final statusLabel = switch (ds) {
       'open' => 'Open',
       'live' => 'Live',
       'full' => 'Full',
+      'upcoming' => 'Upcoming',
       'postponed' => 'Postponed',
       _ => ds,
     };

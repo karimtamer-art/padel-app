@@ -19,6 +19,8 @@ alter table public.tournament_entries add column if not exists payer_paid   bool
 alter table public.tournament_entries add column if not exists partner_paid boolean not null default false;
 alter table public.tournament_entries add column if not exists partner_instapay_sender    text;
 alter table public.tournament_entries add column if not exists partner_instapay_proof_url text;
+-- register_for_tournament below reads this column (added by its own delta too).
+alter table public.tournaments add column if not exists registration_opens date;
 
 -- The generic "Added to a tournament" partner notification is for FREE events
 -- only now; paid events get a tailored pay/you're-in message from the register
@@ -57,16 +59,19 @@ declare
   v_uid    uuid := auth.uid();
   v_status text; v_start date; v_cap int; v_min int; v_max int; v_fee int;
   v_count  int; v_my_elo int; v_my_name text; v_new text;
-  v_mode   text; v_pay int; v_tname text; v_eid uuid;
+  v_mode   text; v_pay int; v_tname text; v_eid uuid; v_reg_opens date;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
 
-  select status, start_date, capacity, min_elo, max_elo, entry_fee, name
-    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname
+  select status, start_date, capacity, min_elo, max_elo, entry_fee, name, registration_opens
+    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname, v_reg_opens
   from public.tournaments where id = p_tournament_id;
   if not found then return 'Tournament not found.'; end if;
   if v_status = 'cancelled' then
     return 'Registration is closed — this tournament has been cancelled.';
+  end if;
+  if v_reg_opens is not null and current_date < v_reg_opens then
+    return 'Registration hasn''t opened for this tournament yet.';
   end if;
   if v_start is not null and v_start <= current_date then
     return 'Registration is closed — this tournament has already started.';

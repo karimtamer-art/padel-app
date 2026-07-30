@@ -119,13 +119,14 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     final ds = TournamentService.tournamentStatus(t, entries.length);
     final sc = switch (ds) {
       'open' || 'live' => AppColors.success,
-      'full' || 'postponed' => AppColors.gold,
+      'full' || 'postponed' || 'upcoming' => AppColors.gold,
       _ => AppColors.inkSoft,
     };
     final statusLabel = switch (ds) {
       'open' => 'Open',
       'live' => 'Live',
       'full' => 'Full',
+      'upcoming' => 'Upcoming',
       'completed' => 'Completed',
       'cancelled' => 'Cancelled',
       'postponed' => 'Postponed',
@@ -147,9 +148,11 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     }
 
     final isCommunity = t['organizer_id'] != null;
+    final sponsored = t['sponsored'] == true;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: AppCard(
+      child: Stack(clipBehavior: Clip.none, children: [
+      AppCard(
         onTap: open,
         borderColor: isCommunity ? AppColors.gold : null,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -205,6 +208,32 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
           ]),
         ]),
       ),
+      if (sponsored)
+        Positioned(
+          top: -7,
+          right: 16,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: AppColors.gold,
+              borderRadius: BorderRadius.circular(999),
+              boxShadow: [
+                BoxShadow(
+                    color: AppColors.gold.withValues(alpha: 0.35),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3)),
+              ],
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.workspace_premium_rounded, size: 12, color: Colors.white),
+              const SizedBox(width: 4),
+              Text('SPONSORED',
+                  style: AppText.tag(Colors.white).copyWith(
+                      fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+            ]),
+          ),
+        ),
+      ]),
     );
   }
 

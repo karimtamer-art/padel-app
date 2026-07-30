@@ -7,10 +7,11 @@ class NotificationService {
   NotificationService._();
   static SupabaseClient get _db => Supabase.instance.client;
 
-  /// Notifications older than this drop off the inbox (and stop counting).
-  static const _retention = Duration(days: 30);
+  /// Notifications older than this drop OFF THE VIEW (and stop counting toward
+  /// the bell). Rows are only hidden, never deleted — see [pruneOld].
+  static const _retention = Duration(days: 14);
 
-  /// ISO timestamp of the retention cutoff (rows older than this are hidden).
+  /// ISO timestamp of the display cutoff (rows older than this are hidden).
   static String get _cutoff =>
       DateTime.now().toUtc().subtract(_retention).toIso8601String();
 
@@ -62,20 +63,10 @@ class NotificationService {
     } catch (_) {}
   }
 
-  /// Best-effort cleanup: delete this user's notifications past the retention
-  /// window so the table doesn't grow forever. Silently no-ops if the delete
-  /// policy isn't present yet (pre-migration).
-  static Future<void> pruneOld() async {
-    final uid = _db.auth.currentUser?.id;
-    if (uid == null) return;
-    try {
-      await _db
-          .from('notifications')
-          .delete()
-          .eq('user_id', uid)
-          .lt('created_at', _cutoff);
-    } catch (_) {}
-  }
+  /// Notifications past the display window are HIDDEN by [fetch]/[unreadCount],
+  /// not deleted — they stay in the DB. This is intentionally a no-op so that
+  /// nothing is destroyed; kept as a stable entry point for older callers.
+  static Future<void> pruneOld() async {}
 
   // ── Push preferences (mirrored on profiles.notify_*) ─────────────
   // Keys: push (master) | match | tournament | order. Missing columns

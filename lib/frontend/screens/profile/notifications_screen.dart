@@ -57,8 +57,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     super.initState();
     _load();
     _loadPrefs();
-    // Best-effort: drop rows older than the retention window.
-    NotificationService.pruneOld();
   }
 
   Future<void> _loadPrefs() async {
@@ -213,8 +211,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _open(_Notif n) {
-    // Tapping any notification clears its unread state.
+    // Tapping any notification clears its unread state; only rows with a real
+    // target then navigate — the rest (broadcasts, announcements) just mark read.
     _markReadLocal(n);
+    if (!_isTappable(n)) return;
     switch (n.type) {
       case 'message':
         _openChat(n);
@@ -242,7 +242,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _row(_Notif n) {
-    // Tappable rows deep-link to their subject; others are display-only.
+    // Rows with a subject show a chevron and deep-link on tap; all rows are
+    // still tappable so a tap always clears the unread dot (no page opens for
+    // display-only ones like broadcasts).
     final tappable = _isTappable(n);
     final content = Container(
       color: n.unread ? AppColors.primary.withValues(alpha: 0.05) : Colors.transparent,
@@ -281,7 +283,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ],
       ]),
     );
-    if (!tappable) return content;
     return GestureDetector(
         behavior: HitTestBehavior.opaque, onTap: () => _open(n), child: content);
   }

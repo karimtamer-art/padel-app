@@ -587,6 +587,11 @@ alter table public.tournaments add column if not exists best_of int not null def
 alter table public.tournaments add column if not exists max_elo int;
 alter table public.tournaments add column if not exists start_time text;
 alter table public.tournaments add column if not exists format_note text;
+-- Organizer/admin marks an event "sponsored" → a ribbon on its card.
+alter table public.tournaments add column if not exists sponsored boolean not null default false;
+-- Day registration opens. Before it the auto status is 'upcoming' (no register);
+-- from that day it flips to 'open'. Null = open immediately.
+alter table public.tournaments add column if not exists registration_opens date;
 
 -- widen constraints so the app's values are accepted
 alter table public.tournaments drop constraint if exists tournaments_format_chk;
@@ -1454,16 +1459,19 @@ declare
   v_uid    uuid := auth.uid();
   v_status text; v_start date; v_cap int; v_min int; v_max int; v_fee int;
   v_count  int; v_my_elo int; v_my_name text; v_new text;
-  v_mode   text; v_pay int; v_tname text; v_eid uuid;
+  v_mode   text; v_pay int; v_tname text; v_eid uuid; v_reg_opens date;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
 
-  select status, start_date, capacity, min_elo, max_elo, entry_fee, name
-    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname
+  select status, start_date, capacity, min_elo, max_elo, entry_fee, name, registration_opens
+    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname, v_reg_opens
   from public.tournaments where id = p_tournament_id;
   if not found then return 'Tournament not found.'; end if;
   if v_status = 'cancelled' then
     return 'Registration is closed — this tournament has been cancelled.';
+  end if;
+  if v_reg_opens is not null and current_date < v_reg_opens then
+    return 'Registration hasn''t opened for this tournament yet.';
   end if;
   if v_start is not null and v_start <= current_date then
     return 'Registration is closed — this tournament has already started.';

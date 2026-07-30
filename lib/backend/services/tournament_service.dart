@@ -13,7 +13,8 @@ class TournamentService {
   // a no-entries result (so "am I registered?" / spot counts broke).
   static const _cols =
       'id, name, venue_name, status, start_date, end_date, start_time, capacity, organizer_id, '
-      'entry_fee, prize_pool, description, min_elo, max_elo, format, format_note, best_of, '
+      'entry_fee, prize_pool, description, min_elo, max_elo, format, format_note, best_of, sponsored, '
+      'registration_opens, '
       'tournament_entries(id, player_id, player_name, partner_id, partner_name, status, '
       'fee_mode, payer_paid, partner_paid, partner_instapay_sender)';
 
@@ -305,6 +306,9 @@ class TournamentService {
     final deadline = end ?? start;
     if (deadline != null && now.isAfter(deadline)) return 'completed';
     if (start != null && !now.isBefore(start)) return 'live';
+    // Registration hasn't opened yet → 'upcoming' (shown, but not registerable).
+    final regOpens = DateTime.tryParse((t['registration_opens'] as String?) ?? '');
+    if (regOpens != null && now.isBefore(regOpens)) return 'upcoming';
     final cap = (t['capacity'] as num?)?.toInt() ?? 0;
     if (cap > 0 && entryCount >= cap) return 'full';
     return 'open';

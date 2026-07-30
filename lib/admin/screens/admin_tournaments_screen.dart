@@ -950,6 +950,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final startC = TextEditingController(text: t?['start_date'] ?? '');
     final endC = TextEditingController(text: t?['end_date'] ?? '');
     final startTimeC = TextEditingController(text: t?['start_time'] ?? '');
+    final regOpensC = TextEditingController(text: t?['registration_opens'] ?? '');
     final prizeC =
         TextEditingController(text: t?['prize_pool']?.toString() ?? '');
     final feeC = TextEditingController(text: t?['entry_fee']?.toString() ?? '');
@@ -961,6 +962,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         ? 'auto'
         : rawStatus;
     bool rated = t?['rated'] as bool? ?? true;
+    bool sponsored = t?['sponsored'] as bool? ?? false;
 
     // Eligibility — derive mode from existing data
     final existingMin = (t?['min_elo'] as num?)?.toInt() ?? 0;
@@ -991,7 +993,18 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         height: 50,
         icon: Icons.check_rounded,
         onPressed: () async {
-          if (nameC.text.trim().isEmpty) return;
+          if (nameC.text.trim().isEmpty) {
+            adminToast(context, 'Give the tournament a name.', ok: false);
+            return;
+          }
+          if (startC.text.trim().isEmpty) {
+            adminToast(context, 'Pick a start date.', ok: false);
+            return;
+          }
+          if (startTimeC.text.trim().isEmpty) {
+            adminToast(context, 'Pick a start time.', ok: false);
+            return;
+          }
           final data = <String, dynamic>{
             'name': nameC.text.trim(),
             'venue_name': venueC.text.trim(),
@@ -1000,6 +1013,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'end_date': endC.text.trim().isEmpty ? null : endC.text.trim(),
             'start_time':
                 startTimeC.text.trim().isEmpty ? null : startTimeC.text.trim(),
+            'registration_opens':
+                regOpensC.text.trim().isEmpty ? null : regOpensC.text.trim(),
             'prize_pool': num.tryParse(prizeC.text),
             'entry_fee': num.tryParse(feeC.text),
             'capacity': int.tryParse(capC.text),
@@ -1010,6 +1025,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'format': format,
             'status': status,
             'rated': rated,
+            'sponsored': sponsored,
           };
           if (!isNew) data['id'] = t['id'];
           final err = await AdminService.upsertTournament(data);
@@ -1038,7 +1054,19 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
           Expanded(child: _dateField('End date', endC)),
         ]),
         const SizedBox(height: 14),
-        _timeField('Start time (optional)', startTimeC),
+        _timeField('Start time', startTimeC),
+        const SizedBox(height: 14),
+        _dateField('Registration opens', regOpensC),
+        const SizedBox(height: 6),
+        Row(children: [
+          const Icon(Icons.info_outline_rounded, size: 13, color: AdminColors.inkFaint),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text('Optional — before this day the card shows "Upcoming"; '
+                'from it, registration opens. Leave blank to open right away.',
+                style: AdminText.small(AdminColors.inkFaint)),
+          ),
+        ]),
         const SizedBox(height: 14),
         _field('Prize pool', prizeC, prefix: 'EGP'),
         const SizedBox(height: 14),
@@ -1212,19 +1240,64 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                 Switch.adaptive(value: rated, onChanged: (v) => setSheet(() => rated = v)),
               ]),
             ),
+            const SizedBox(height: 10),
+            // ── Sponsored ─────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                  color: AdminColors.surfaceAlt, borderRadius: BorderRadius.circular(12)),
+              child: Row(children: [
+                Icon(Icons.workspace_premium_outlined, size: 18,
+                    color: sponsored ? AdminColors.gold : AdminColors.inkFaint),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Sponsored', style: AdminText.sans(14, FontWeight.w800, AdminColors.ink)),
+                    const SizedBox(height: 2),
+                    Text('Shows a "SPONSORED" ribbon on the tournament card.',
+                        style: AdminText.small(AdminColors.inkFaint)),
+                  ]),
+                ),
+                Switch.adaptive(
+                    value: sponsored,
+                    activeThumbColor: AdminColors.gold,
+                    onChanged: (v) => setSheet(() => sponsored = v)),
+              ]),
+            ),
             const SizedBox(height: 16),
             // ── Status ────────────────────────────────────────────
             Text('Status', style: AdminText.strong(AdminColors.inkSoft)),
             const SizedBox(height: 7),
             Row(children: [
-              statusBtn('Auto (by dates)', 'auto'),
+              statusBtn('Auto', 'auto'),
               statusBtn('Postponed', 'postponed'),
               statusBtn('Cancelled', 'cancelled'),
             ]),
-            const SizedBox(height: 6),
-            Text(
-              'Normally leave on Auto — to extend or delay, just change the dates.',
-              style: AdminText.small(AdminColors.inkFaint),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                  color: AdminColors.surfaceAlt,
+                  borderRadius: BorderRadius.circular(10)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  const Icon(Icons.autorenew_rounded, size: 14, color: AdminColors.primary),
+                  const SizedBox(width: 6),
+                  Text('On Auto, the card updates itself:',
+                      style: AdminText.sans(12.5, FontWeight.w800, AdminColors.ink)),
+                ]),
+                const SizedBox(height: 6),
+                Text(
+                    'Upcoming  →  Open  →  Full  →  Live  →  Completed',
+                    style: AdminText.sans(12, FontWeight.w700, AdminColors.primary)),
+                const SizedBox(height: 5),
+                Text(
+                    'Upcoming until the registration-opens day · Open once players '
+                    'can register · Full when spots run out · Live on the start day · '
+                    'Completed after the end date. Use Postponed or Cancelled to '
+                    'override this.',
+                    style: AdminText.small(AdminColors.inkFaint)),
+              ]),
             ),
             const SizedBox(height: 16),
             // ── Eligibility ───────────────────────────────────────

@@ -303,6 +303,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     return (t == null || t.isEmpty) ? null : t;
   }
 
+  /// "Jun 15" for the registration-opens date, or null when not set.
+  String? get _regOpensLabel {
+    final d = DateTime.tryParse(_t?['registration_opens'] as String? ?? '')?.toLocal();
+    return d == null ? null : '${_months[d.month - 1]} ${d.day}';
+  }
+
   String get _formatLabel {
     switch (_t?['format'] as String?) {
       case 'knockout':
@@ -1166,6 +1172,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
                           'completed' => 'Tournament Ended',
                           'cancelled' => 'Registration Closed',
                           'live' => 'Tournament in Progress',
+                          'upcoming' => _regOpensLabel != null
+                              ? 'Registration opens $_regOpensLabel'
+                              : 'Registration not open yet',
                           _ => needPartner ? 'Pick a partner first' : 'Register Pair',
                         },
                   full: true, height: 52,

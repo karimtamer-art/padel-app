@@ -136,7 +136,7 @@ class _MyTournamentsScreenState extends State<MyTournamentsScreen> {
         ? AppColors.inkFaint
         : switch (ds) {
             'open' || 'live' => AppColors.success,
-            'full' || 'postponed' => AppColors.gold,
+            'full' || 'postponed' || 'upcoming' => AppColors.gold,
             _ => AppColors.inkSoft,
           };
     final label = withdrawn
@@ -145,6 +145,7 @@ class _MyTournamentsScreenState extends State<MyTournamentsScreen> {
             'open' => 'Open',
             'live' => 'Live',
             'full' => 'Full',
+            'upcoming' => 'Upcoming',
             'completed' => 'Completed',
             'cancelled' => 'Cancelled',
             'postponed' => 'Postponed',
