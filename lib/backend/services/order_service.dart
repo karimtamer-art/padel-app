@@ -1,5 +1,5 @@
 import 'dart:math';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/mock_data.dart' show CartLine;
 
@@ -29,26 +29,45 @@ class OrderService {
     return 'padelpro@instapay';
   }
 
-  /// Uploads an InstaPay transfer screenshot to the private proofs bucket and
-  /// returns its storage path (not a URL — admins sign it to view). Returns
-  /// `null` on failure; the order can still be placed without a proof.
-  static Future<String?> uploadPaymentProof(Uint8List bytes, String ext) async {
+  /// Uploads an InstaPay transfer screenshot to the private proofs bucket.
+  /// Returns `(path: ..., error: null)` on success — the storage path (not a
+  /// URL; admins sign it to view) — or `(path: null, error: <reason>)` so the
+  /// UI can show WHY it failed instead of a generic "check your connection".
+  static Future<({String? path, String? error})> uploadPaymentProof(
+      Uint8List bytes, String ext) async {
     final uid = _db.auth.currentUser?.id;
-    if (uid == null) return null;
+    if (uid == null) {
+      return (path: null, error: 'You appear to be signed out. Sign in and try again.');
+    }
     final safeExt = ext.toLowerCase() == 'jpeg' ? 'jpg' : ext.toLowerCase();
     final path =
         'proofs/$uid/${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(99999)}.$safeExt';
     try {
+      // Paths are unique, so this is always a fresh insert — no upsert needed
+      // (upsert would additionally require an UPDATE storage policy).
       await _db.storage.from(_proofBucket).uploadBinary(
             path,
             bytes,
             fileOptions: FileOptions(
-                contentType: 'image/${safeExt == 'jpg' ? 'jpeg' : safeExt}',
-                upsert: true),
+                contentType: 'image/${safeExt == 'jpg' ? 'jpeg' : safeExt}'),
           );
-      return path;
-    } catch (_) {
-      return null;
+      return (path: path, error: null);
+    } on StorageException catch (e) {
+      debugPrint('[OrderService] uploadPaymentProof storage error: '
+          '${e.statusCode} ${e.error} ${e.message}');
+      final m = e.message.toLowerCase();
+      final reason = (m.contains('not found') || m.contains('bucket'))
+          ? 'Payment uploads aren\'t set up on the server yet. Please contact support.'
+          : (e.statusCode == '403' || m.contains('policy') || m.contains('unauthorized'))
+              ? 'Not allowed to upload right now. Please sign out and back in.'
+              : 'Upload failed: ${e.message}';
+      return (path: null, error: reason);
+    } catch (e) {
+      debugPrint('[OrderService] uploadPaymentProof error: $e');
+      return (
+        path: null,
+        error: 'Couldn\'t upload your payment screenshot — check your connection and try again.'
+      );
     }
   }
 

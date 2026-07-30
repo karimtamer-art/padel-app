@@ -1359,14 +1359,22 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
     final sender = _sender.text.trim();
     if (sender.isEmpty || _proofBytes == null) return;
     setState(() => _busy = true);
-    String? proofPath;
-    if (_proofBytes != null) {
-      proofPath = await OrderService.uploadPaymentProof(_proofBytes!, _proofExt);
-    }
+    final res = await OrderService.uploadPaymentProof(_proofBytes!, _proofExt);
     if (!mounted) return;
+    // Screenshot is required here — if it didn't upload, show why and let them
+    // retry rather than submitting a proof-less (unverifiable) payment.
+    if (res.path == null) {
+      setState(() => _busy = false);
+      AppToast.show(
+          context,
+          res.error ??
+              "Couldn't upload your payment screenshot — check your connection and try again.",
+          kind: ToastKind.error);
+      return;
+    }
     Navigator.pop(context, {
       'sender': sender,
-      'proof': proofPath,
+      'proof': res.path,
       'feeMode': widget.partnerShare ? 'split' : _mode,
     });
   }
