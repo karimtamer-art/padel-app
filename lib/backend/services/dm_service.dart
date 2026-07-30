@@ -32,6 +32,37 @@ class DmService {
         .map((rows) => List<Map<String, dynamic>>.from(rows));
   }
 
+  /// Every conversation the signed-in user is part of that has at least one
+  /// message — newest activity first. Each row:
+  /// { conversation_id, other_id, other_name, other_username, last_text,
+  ///   last_at, unread }. Drives the standalone Messages inbox.
+  static Future<List<Map<String, dynamic>>> inbox() async {
+    try {
+      final res = await _db.rpc('dm_inbox');
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Total unread direct messages (across all conversations) — drives the
+  /// Messages icon badge on Home. Counted off the 'message' notifications.
+  static Future<int> unreadCount() async {
+    final uid = _uid;
+    if (uid == null) return 0;
+    try {
+      final res = await _db
+          .from('notifications')
+          .select('id')
+          .eq('user_id', uid)
+          .eq('type', 'message')
+          .eq('read', false);
+      return (res as List).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   /// Sends a message. Returns an error string or null. The row arrives back
   /// through [messageStream], so the UI shouldn't append it manually.
   static Future<String?> send(String conversationId, String text) async {

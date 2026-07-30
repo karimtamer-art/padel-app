@@ -283,6 +283,33 @@ class CommunityService {
       _rpc('send_community_message',
           {'p_community_id': communityId, 'p_body': body});
 
+  // ── Channel unread badge ────────────────────────────────────────
+
+  /// Unread channel-message count for a community (excludes the caller's own
+  /// posts; floored at their last-read cursor, else when they joined). Drives
+  /// the red badge on the Home community card. Returns 0 on any error.
+  static Future<int> unreadChannelCount(String communityId) async {
+    try {
+      final res = await _db.rpc('community_unread_count',
+          params: {'p_community_id': communityId});
+      return (res as int?) ?? 0;
+    } catch (e) {
+      debugPrint('[CommunityService] unreadChannelCount: $e');
+      return 0;
+    }
+  }
+
+  /// Move the caller's read cursor to now for a community — called when they
+  /// open the Chat tab, so the Home card badge clears.
+  static Future<void> markCommunityRead(String communityId) async {
+    try {
+      await _db.rpc('mark_community_read',
+          params: {'p_community_id': communityId});
+    } catch (e) {
+      debugPrint('[CommunityService] markCommunityRead: $e');
+    }
+  }
+
   // ── Community channels (hub "Chat" tab) ─────────────────────────
 
   /// The community's channels with a last-message preview. Each row:

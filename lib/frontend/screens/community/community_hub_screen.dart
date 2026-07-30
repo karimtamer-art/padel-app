@@ -470,7 +470,12 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
         child: GestureDetector(
           onTap: () {
             setState(() => _tab = i);
-            if (i == _chatTabIndex) _refreshChannels();
+            if (i == _chatTabIndex) {
+              _refreshChannels();
+              // Seeing the channels clears the Home community-card unread badge.
+              final c = _c;
+              if (c != null) CommunityService.markCommunityRead(c.id);
+            }
           },
           child: Container(
             margin: const EdgeInsets.all(3),

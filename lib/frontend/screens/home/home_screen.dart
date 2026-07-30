@@ -17,11 +17,13 @@ import 'package:padel_clay/backend/services/store_service.dart';
 import 'package:padel_clay/backend/services/community_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
+import 'package:padel_clay/backend/services/dm_service.dart';
 import 'matchmaking_hero.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import '../profile/notifications_screen.dart';
 import '../community/community_hub_screen.dart';
+import '../chat/messages_inbox_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onSeeStore;
@@ -58,6 +60,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<MemberLite> _communityMembers = [];
   int _communityEventsWeek = 0;
   int _unread = 0;
+  int _dmUnread = 0; // unread direct messages → Messages icon badge
+  int _communityUnread = 0; // unread community channel messages → card badge
   // Matches in the player's rating band near them (the "N near you" teaser).
   int _bandCount = 0;
   // Most recent completed-but-unacked match → the "MATCH COMPLETE" hero.
@@ -110,8 +114,12 @@ class _HomeScreenState extends State<HomeScreen> {
           table: 'notifications',
           filter: PostgresChangeFilter(
               type: PostgresChangeFilterType.eq, column: 'user_id', value: uid),
-          callback: (_) {
-            if (mounted) setState(() => _unread++);
+          callback: (payload) {
+            if (!mounted) return;
+            setState(() {
+              _unread++;
+              if (payload.newRecord['type'] == 'message') _dmUnread++;
+            });
           },
         )
         .subscribe();
@@ -123,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _fetchMatches(),
       _fetchTournaments(),
       _fetchUnread(),
+      _fetchDmUnread(),
       _fetchFeatured(),
       _fetchCommunity(),
       _fetchBandCount(),
@@ -261,6 +270,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) _unread = n;
   }
 
+  Future<void> _fetchDmUnread() async {
+    final n = await DmService.unreadCount();
+    if (mounted) _dmUnread = n;
+  }
+
   Future<void> _fetchBandCount() async {
     final n = await MatchService.countCandidates();
     if (mounted) _bandCount = n;
@@ -304,6 +318,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final c = await CommunityService.homeCommunity();
     List<MemberLite> members = [];
     int eventsWeek = 0;
+    int unread = 0;
     if (c != null) {
       final results = await Future.wait([
         CommunityService.members(c.id, limit: 5),
@@ -318,11 +333,14 @@ class _HomeScreenState extends State<HomeScreen> {
         final d = DateTime.tryParse(e.startDate ?? '');
         return d != null && d.isAfter(from) && d.isBefore(to);
       }).length;
+      // Unread channel chatter → red badge on the card (members only).
+      if (c.isMember) unread = await CommunityService.unreadChannelCount(c.id);
     }
     if (mounted) {
       _community = c;
       _communityMembers = members;
       _communityEventsWeek = eventsWeek;
+      _communityUnread = unread;
       _communityLoaded = true;
     }
   }
@@ -333,6 +351,14 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.of(c).push(MaterialPageRoute(
         builder: (_) => CommunityHubScreen(communityId: community.id)));
     _fetchCommunity();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openMessages(BuildContext c) async {
+    await Navigator.of(c)
+        .push(MaterialPageRoute(builder: (_) => const MessagesInboxScreen()));
+    // Reading chats may have marked messages read — refresh the badge.
+    await _fetchDmUnread();
     if (mounted) setState(() {});
   }
 
@@ -354,6 +380,9 @@ class _HomeScreenState extends State<HomeScreen> {
           title: 'Padel Rivals',
           leadingInitials: widget.initials.isNotEmpty ? widget.initials : 'P',
           actions: [
+            IconChip(Icons.forum_outlined,
+                badge: _dmUnread, onTap: () => _openMessages(context)),
+            const SizedBox(width: 10),
             IconChip(Icons.notifications_none_rounded,
                 badge: _unread, onTap: () => _openNotifications(context)),
           ],
@@ -506,15 +535,36 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.all(20),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                        color: AppColors.gold,
-                        borderRadius: BorderRadius.circular(14)),
-                    child: const Icon(Icons.groups_2_rounded, size: 26, color: Colors.white),
-                  ),
+                  Stack(clipBehavior: Clip.none, children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: AppColors.gold,
+                          borderRadius: BorderRadius.circular(14)),
+                      child: const Icon(Icons.groups_2_rounded, size: 26, color: Colors.white),
+                    ),
+                    // Red badge when the community channels have new messages.
+                    if (_communityUnread > 0)
+                      Positioned(
+                        top: -5,
+                        right: -5,
+                        child: Container(
+                          constraints: const BoxConstraints(minWidth: 20),
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: AppColors.danger,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.hero, width: 2),
+                          ),
+                          child: Text(_communityUnread > 9 ? '9+' : '$_communityUnread',
+                              style: AppText.tag(Colors.white)
+                                  .copyWith(fontSize: 10, fontWeight: FontWeight.w800)),
+                        ),
+                      ),
+                  ]),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
