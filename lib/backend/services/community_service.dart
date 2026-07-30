@@ -81,7 +81,7 @@ class CommunityService {
       final res = await _db
           .from('community_members')
           .select('player_id, joined_at, '
-              'profiles!community_members_player_id_fkey(name, avatar_url)')
+              'profiles!community_members_player_id_fkey(name, avatar_url, tier, level)')
           .eq('community_id', communityId)
           .order('joined_at')
           .limit(limit);
@@ -91,11 +91,40 @@ class CommunityService {
           id: r['player_id'] as String,
           name: (p?['name'] as String?) ?? 'Player',
           avatarUrl: p?['avatar_url'] as String?,
+          tier: _tierOf(p?['tier'] as String?, (p?['level'] as num?)?.toDouble()),
         );
       }).toList();
     } catch (e) {
       debugPrint('[CommunityService] members: $e');
       return [];
+    }
+  }
+
+  /// Tier label from the profile's tier column, else derived from level.
+  static String? _tierOf(String? tier, double? level) {
+    final t = tier?.trim();
+    if (t != null && t.isNotEmpty) {
+      return t[0].toUpperCase() + t.substring(1).toLowerCase();
+    }
+    if (level == null) return null;
+    if (level < 2.0) return 'Bronze';
+    if (level < 3.5) return 'Silver';
+    if (level < 5.0) return 'Gold';
+    return 'Elite';
+  }
+
+  /// Full mini-profile for one member (stats + community rank), or null.
+  static Future<Map<String, dynamic>?> memberCard(
+      String communityId, String playerId) async {
+    try {
+      final res = await _db.rpc('community_member_card', params: {
+        'p_community_id': communityId,
+        'p_player_id': playerId,
+      });
+      return res is Map ? Map<String, dynamic>.from(res) : null;
+    } catch (e) {
+      debugPrint('[CommunityService] memberCard: $e');
+      return null;
     }
   }
 
@@ -559,7 +588,9 @@ class Community {
 class MemberLite {
   final String id, name;
   final String? avatarUrl;
-  const MemberLite({required this.id, required this.name, this.avatarUrl});
+  final String? tier; // 'Gold' / 'Silver' / … (or derived from level)
+  const MemberLite(
+      {required this.id, required this.name, this.avatarUrl, this.tier});
 
   String get initials {
     final parts =

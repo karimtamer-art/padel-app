@@ -7,6 +7,7 @@ import '../../theme/app_text.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/common.dart';
 import '../tournaments/tournament_detail_screen.dart';
+import '../chat/dm_chat_screen.dart';
 import 'message_organizer_screen.dart';
 
 /// A member's view of an organizer's community — hero, Events / Feed / Members,
@@ -27,6 +28,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   List<Map<String, dynamic>> _channels = [];
   bool _loading = true, _busy = false;
   int _tab = 0;
+  String _memberQuery = '';
+  final _memberSearch = TextEditingController();
 
   // Tab order: Events(0) · Chat(1) · Feed(2) · Members(3).
   static const _chatTabIndex = 1;
@@ -35,6 +38,12 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _memberSearch.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -687,24 +696,125 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       if (_members.isEmpty)
         _empty(Icons.groups_outlined, 'No members yet. Be the first to join!')
       else
-        _pad(Wrap(
-          spacing: 10,
-          runSpacing: 12,
-          children: _members
-              .map((m) => SizedBox(
-                    width: 64,
-                    child: Column(children: [
-                      AppAvatar(m.initials, size: 46, color: AppColors.accent),
-                      const SizedBox(height: 5),
-                      Text(m.name.split(' ').first,
-                          style: AppText.small(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
-                    ]),
-                  ))
-              .toList(),
-        )),
+        _membersDirectory(),
     ]);
+  }
+
+  Widget _membersDirectory() {
+    final q = _memberQuery.trim().toLowerCase();
+    final found = q.isEmpty
+        ? _members
+        : _members.where((m) => m.name.toLowerCase().contains(q)).toList();
+    final total = _members.length;
+    final countText = q.isEmpty
+        ? '$total MEMBER${total == 1 ? '' : 'S'}'
+        : '${found.length} OF $total MEMBERS';
+
+    return _pad(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // search bar
+      Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: AppColors.field,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(children: [
+          const Icon(Icons.search_rounded, size: 16, color: AppColors.inkFaint),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _memberSearch,
+              onChanged: (v) => setState(() => _memberQuery = v),
+              style: AppText.body().copyWith(fontSize: 13),
+              decoration: InputDecoration(
+                isCollapsed: true,
+                border: InputBorder.none,
+                hintText: 'Search members',
+                hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 13),
+              ),
+            ),
+          ),
+          if (_memberQuery.isNotEmpty)
+            GestureDetector(
+              onTap: () {
+                _memberSearch.clear();
+                setState(() => _memberQuery = '');
+              },
+              child: const Icon(Icons.close_rounded, size: 15, color: AppColors.inkFaint),
+            ),
+        ]),
+      ),
+      const SizedBox(height: 12),
+      Text(countText,
+          style: AppText.tag(AppColors.inkFaint)
+              .copyWith(fontSize: 11, letterSpacing: 1)),
+      const SizedBox(height: 10),
+      if (found.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Center(
+            child: Text('No member matches “$_memberQuery”.',
+                style: AppText.small(AppColors.inkFaint)),
+          ),
+        )
+      else
+        GridView.count(
+          crossAxisCount: 4,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 0.72,
+          children: [for (final m in found) _memberCell(m)],
+        ),
+      const SizedBox(height: 90),
+    ]));
+  }
+
+  Widget _memberCell(MemberLite m) {
+    final tint = m.tier != null ? AppColors.tier(m.tier!) : AppColors.accent;
+    return GestureDetector(
+      onTap: () => _openMemberProfile(m),
+      behavior: HitTestBehavior.opaque,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        AppAvatar(m.initials, size: 48, color: tint),
+        const SizedBox(height: 6),
+        Text(m.name.split(' ').first,
+            style: AppText.small(AppColors.ink)
+                .copyWith(fontSize: 10.5, fontWeight: FontWeight.w700),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis),
+        if (m.tier != null)
+          Text(m.tier!,
+              style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 10.5),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+      ]),
+    );
+  }
+
+  void _openMemberProfile(MemberLite m) {
+    showDialog<void>(
+      context: context,
+      barrierColor: const Color(0x70120C06),
+      builder: (_) => _MemberProfileSheet(
+        communityId: widget.communityId,
+        member: m,
+        communityName: _c?.name ?? 'the community',
+        onMessage: () {
+          Navigator.of(context).pop(); // close popup
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => DMChatScreen(
+              otherId: m.id,
+              name: m.name,
+              initials: m.initials,
+            ),
+          ));
+        },
+      ),
+    );
   }
 
   // ── Chat tab: channel list ──────────────────────────────────────
@@ -1491,4 +1601,187 @@ class _CommunityChannelScreenState extends State<CommunityChannelScreen> {
       ]),
     );
   }
+}
+
+// ── Member mini-profile popup ───────────────────────────────────────────────
+class _MemberProfileSheet extends StatefulWidget {
+  final String communityId;
+  final MemberLite member;
+  final String communityName;
+  final VoidCallback onMessage;
+  const _MemberProfileSheet({
+    required this.communityId,
+    required this.member,
+    required this.communityName,
+    required this.onMessage,
+  });
+  @override
+  State<_MemberProfileSheet> createState() => _MemberProfileSheetState();
+}
+
+class _MemberProfileSheetState extends State<_MemberProfileSheet> {
+  Map<String, dynamic>? _card;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final card =
+        await CommunityService.memberCard(widget.communityId, widget.member.id);
+    if (!mounted) return;
+    setState(() {
+      _card = card;
+      _loading = false;
+    });
+  }
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  String _sinceLabel() {
+    final d = DateTime.tryParse('${_card?['joined']}')?.toLocal();
+    if (d == null) return 'Member';
+    return 'Member since ${_months[d.month - 1]} ${d.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.member;
+    final tint = m.tier != null ? AppColors.tier(m.tier!) : AppColors.accent;
+    final played = (_card?['played'] as num?)?.toInt() ?? 0;
+    final wins = (_card?['wins'] as num?)?.toInt() ?? 0;
+    final winRate = played > 0 ? '${(wins / played * 100).round()}%' : '—';
+    final elo = (_card?['elo'] as num?)?.toInt();
+    final rank = (_card?['rank'] as num?)?.toInt();
+    final city = (_card?['city'] as String?)?.trim();
+    final hand = (_card?['hand'] as String?)?.trim();
+    final side = (_card?['side'] as String?)?.trim();
+
+    String cap(String s) =>
+        s.isEmpty ? s : s[0].toUpperCase() + s.substring(1).toLowerCase();
+    final handSide = [
+      if (hand != null && hand.isNotEmpty) cap(hand),
+      if (side != null && side.isNotEmpty) '${cap(side)} side',
+    ].join(' · ');
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 26),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [tint.withValues(alpha: 0.13), AppColors.surface],
+              ),
+            ),
+            child: Column(children: [
+              AppAvatar(m.initials, size: 72, color: tint, ring: 2.5),
+              const SizedBox(height: 9),
+              Text(m.name,
+                  style: AppText.stat(18, AppColors.ink), textAlign: TextAlign.center),
+              const SizedBox(height: 3),
+              Text(
+                  [if (city != null && city.isNotEmpty) city, _sinceLabel()].join(' · '),
+                  style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 11.5)),
+              const SizedBox(height: 9),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                if (m.tier != null) AppTag(m.tier!, color: tint),
+                if (rank != null) ...[
+                  const SizedBox(width: 7),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: Text('Rank #$rank',
+                        style: AppText.small(AppColors.inkSoft)
+                            .copyWith(fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ]),
+            ]),
+          ),
+          // stats strip
+          Container(
+            decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: AppColors.lineSoft))),
+            child: _loading
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 18),
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : Row(children: [
+                    _stat(elo != null ? '$elo' : '—', 'Elo'),
+                    _divider(),
+                    _stat('$played', 'Played'),
+                    _divider(),
+                    _stat(winRate, 'Win rate'),
+                  ]),
+          ),
+          // footer
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: AppColors.lineSoft))),
+            child: Column(children: [
+              if (handSide.isNotEmpty) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(handSide,
+                      style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 11.5)),
+                ),
+                const SizedBox(height: 10),
+              ],
+              AppButton('Message privately',
+                  full: true,
+                  height: 48,
+                  icon: Icons.chat_bubble_outline_rounded,
+                  onPressed: widget.onMessage),
+              const SizedBox(height: 8),
+              AppButton('Close',
+                  full: true,
+                  height: 46,
+                  variant: AppBtnVariant.ghost,
+                  onPressed: () => Navigator.of(context).pop()),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _stat(String value, String label) => Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 4),
+          child: Column(children: [
+            Text(value, style: AppText.stat(15, AppColors.ink)),
+            const SizedBox(height: 2),
+            Text(label.toUpperCase(),
+                style: AppText.tag(AppColors.inkFaint)
+                    .copyWith(fontSize: 9.5, letterSpacing: 0.7)),
+          ]),
+        ),
+      );
+
+  Widget _divider() =>
+      Container(width: 1, height: 40, color: AppColors.lineSoft);
 }

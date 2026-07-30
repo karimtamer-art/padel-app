@@ -210,29 +210,41 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
           ]),
         ]),
       ),
+      // Blue 3D "SPONSORED" tab overhanging the right edge, vertically centered.
       if (sponsored)
         Positioned(
-          top: -7,
-          right: 16,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: AppColors.gold,
-              borderRadius: BorderRadius.circular(999),
-              boxShadow: [
-                BoxShadow(
-                    color: AppColors.gold.withValues(alpha: 0.35),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3)),
-              ],
+          right: -10,
+          top: 0,
+          bottom: 0,
+          child: IgnorePointer(
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(7),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF6FA2F7), Color(0xFF3A6FDD), Color(0xFF2450B8)],
+                    stops: [0.0, 0.45, 1.0],
+                  ),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                  boxShadow: [
+                    BoxShadow(
+                        color: const Color(0xFF18347C).withValues(alpha: 0.7),
+                        blurRadius: 14,
+                        offset: const Offset(0, 7)),
+                    BoxShadow(
+                        color: const Color(0xFF18347C).withValues(alpha: 0.35),
+                        blurRadius: 3,
+                        offset: const Offset(0, 2)),
+                  ],
+                ),
+                child: Text('SPONSORED',
+                    style: AppText.tag(Colors.white).copyWith(
+                        fontSize: 8.5, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+              ),
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.workspace_premium_rounded, size: 12, color: Colors.white),
-              const SizedBox(width: 4),
-              Text('SPONSORED',
-                  style: AppText.tag(Colors.white).copyWith(
-                      fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
-            ]),
           ),
         ),
       ]),
