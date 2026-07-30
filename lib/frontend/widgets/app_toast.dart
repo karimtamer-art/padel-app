@@ -70,16 +70,50 @@ class _ToastStack extends StatefulWidget {
 }
 
 class _ToastStackState extends State<_ToastStack> {
+  // At most this many pills are ever on screen at once; older ones are dropped
+  // so rapid taps can never bury the screen.
+  static const int _maxVisible = 3;
+
   final List<_ToastData> _items = [];
+  final Map<int, Timer> _timers = {};
 
   void add(_ToastData d) {
-    setState(() => _items.add(d));
-    Timer(d.duration, () => remove(d.id));
+    // Coalesce: an identical message already showing just refreshes its timer
+    // instead of stacking a duplicate (spamming "Copied" stays a single pill).
+    final existing = _items
+        .where((e) => e.message == d.message && e.kind == d.kind)
+        .toList();
+    if (existing.isNotEmpty) {
+      for (final e in existing) {
+        _timers.remove(e.id)?.cancel();
+        _timers[e.id] = Timer(e.duration, () => remove(e.id));
+      }
+      return;
+    }
+    setState(() {
+      _items.add(d);
+      // Cap the stack — drop the oldest pills beyond the limit.
+      while (_items.length > _maxVisible) {
+        final dropped = _items.removeAt(0);
+        _timers.remove(dropped.id)?.cancel();
+      }
+    });
+    _timers[d.id] = Timer(d.duration, () => remove(d.id));
   }
 
   void remove(int id) {
+    _timers.remove(id)?.cancel();
     if (!mounted) return;
     setState(() => _items.removeWhere((e) => e.id == id));
+  }
+
+  @override
+  void dispose() {
+    for (final t in _timers.values) {
+      t.cancel();
+    }
+    _timers.clear();
+    super.dispose();
   }
 
   @override

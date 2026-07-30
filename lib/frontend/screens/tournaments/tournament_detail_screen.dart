@@ -1265,13 +1265,20 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
     });
   }
 
-  void _copy(String v) {
-    Clipboard.setData(ClipboardData(text: v));
+  Future<void> _copy(String v) async {
+    var ok = true;
+    try {
+      await Clipboard.setData(ClipboardData(text: v));
+    } catch (_) {
+      ok = false;
+    }
     if (!mounted) return;
     // A ScaffoldMessenger snackbar renders *behind* this modal sheet, so the
     // copy looked like it did nothing. AppToast draws on the root overlay,
-    // above the sheet, so the confirmation is actually visible.
-    AppToast.show(context, 'Copied $v');
+    // above the sheet, so the confirmation is actually visible. AppToast
+    // coalesces identical messages, so tapping repeatedly won't stack pills.
+    AppToast.show(context, ok ? 'Copied $v' : "Couldn't copy — try again",
+        kind: ok ? ToastKind.success : ToastKind.error);
   }
 
   Future<void> _openPayLink() async {

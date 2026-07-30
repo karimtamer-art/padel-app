@@ -758,9 +758,15 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
         if (copyable) ...[
           const SizedBox(width: 10),
           GestureDetector(
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: value));
-              _toast('Copied');
+            onTap: () async {
+              var ok = true;
+              try {
+                await Clipboard.setData(ClipboardData(text: value));
+              } catch (_) {
+                ok = false;
+              }
+              if (!mounted) return;
+              _toast(ok ? 'Copied' : "Couldn't copy — try again", error: !ok);
             },
             child: Container(
               height: 34,
