@@ -37,6 +37,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   List<Map<String, dynamic>> _players = [];
   bool _playersLoading = true;
   final _search = TextEditingController();
+  String? _myGender; // for client-side gender-category pre-check
 
   String? get _uid => Supabase.instance.client.auth.currentUser?.id;
 
@@ -58,14 +59,59 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       TournamentService.fetchBracket(widget.tournamentId),
       MatchService.searchPlayers(''),
     ]);
+    final myGender = await _fetchMyGender();
     if (!mounted) return;
     setState(() {
       _t = results[0] as Map<String, dynamic>?;
       _bracket = results[1] as List<Map<String, dynamic>>;
       _players = results[2] as List<Map<String, dynamic>>;
+      _myGender = myGender;
       _loading = false;
       _playersLoading = false;
     });
+  }
+
+  Future<String?> _fetchMyGender() async {
+    final uid = _uid;
+    if (uid == null) return null;
+    try {
+      final r = await Supabase.instance.client
+          .from('profiles')
+          .select('gender')
+          .eq('id', uid)
+          .maybeSingle();
+      return r?['gender'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String get _category => (_t?['category'] as String?) ?? 'open';
+
+  /// A friendly reason the current pairing can't enter this category, or null if
+  /// it's fine (also null when data is unknown — the server does the final check).
+  String? _categoryBlock() {
+    final cat = _category;
+    if (cat == 'open' || _myGender == null) return null;
+    final pg = _partner?['gender'] as String?;
+    switch (cat) {
+      case 'mens':
+        if (_myGender != 'male' || (pg != null && pg != 'male')) {
+          return "This is a men's-only event — both players must be men.";
+        }
+        break;
+      case 'womens':
+        if (_myGender != 'female' || (pg != null && pg != 'female')) {
+          return "This is a women's-only event — both players must be women.";
+        }
+        break;
+      case 'mixed':
+        if (_myGender == 'male' && pg == 'male') {
+          return "Mixed event — a team can't be two men.";
+        }
+        break;
+    }
+    return null;
   }
 
   Future<void> _searchPlayers(String q) async {
@@ -110,6 +156,11 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   /// Entry point for the Register button. Free events register straight away;
   /// paid events collect an InstaPay transfer (sender + proof) first.
   Future<void> _startRegister() async {
+    final block = _categoryBlock();
+    if (block != null) {
+      _snack(block, color: AppColors.danger);
+      return;
+    }
     if (_fee <= 0) {
       await _register();
       return;
@@ -548,6 +599,10 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               remaining != null ? '$remaining of $_cap' : '${_entries.length} pairs',
               remaining != null ? 'remaining' : 'registered')),
         ]),
+        if (_category != 'open') ...[
+          const SizedBox(height: 12),
+          _categoryCard(),
+        ],
         if (_minElo > 0 || _maxElo != null) ...[
           const SizedBox(height: 22),
           Text('ELIGIBILITY', style: AppText.kicker(AppColors.primary)),
@@ -601,6 +656,47 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               style: AppText.stat(22, highlight ? AppColors.primary : AppColors.ink)),
         ]),
       );
+
+  // Gender-category banner (men's / women's / mixed).
+  Widget _categoryCard() {
+    final (icon, title, rule) = switch (_category) {
+      'mens' => (
+          Icons.male_rounded,
+          "Men's only",
+          'Both players in a pair must be men.'
+        ),
+      'womens' => (
+          Icons.female_rounded,
+          "Women's only",
+          'Both players in a pair must be women.'
+        ),
+      _ => (
+          Icons.wc_rounded,
+          'Mixed',
+          "A team can't be two men — pair with a woman."
+        ),
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+      ),
+      child: Row(children: [
+        Icon(icon, size: 20, color: AppColors.accent),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('$title event', style: AppText.cardTitle().copyWith(fontSize: 15)),
+            const SizedBox(height: 2),
+            Text(rule,
+                style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13, height: 1.35)),
+          ]),
+        ),
+      ]),
+    );
+  }
 
   // Shown to a partner whose own half of a split entry is still unpaid.
   Widget _partnerShareCard(Map<String, dynamic> entry) {

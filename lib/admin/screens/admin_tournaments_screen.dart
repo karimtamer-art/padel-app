@@ -964,6 +964,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         : rawStatus;
     bool rated = t?['rated'] as bool? ?? true;
     bool sponsored = t?['sponsored'] as bool? ?? false;
+    String category = t?['category'] as String? ?? 'open';
 
     // Eligibility — derive mode from existing data
     final existingMin = (t?['min_elo'] as num?)?.toInt() ?? 0;
@@ -1027,6 +1028,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'status': status,
             'rated': rated,
             'sponsored': sponsored,
+            'category': category,
             'cancel_reason': status == 'cancelled'
                 ? (reasonC.text.trim().isEmpty ? null : reasonC.text.trim())
                 : null,
@@ -1204,7 +1206,48 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             );
           }
 
+          Widget catChip(String label, String value, IconData icon) {
+            final on = category == value;
+            return GestureDetector(
+              onTap: () => setSheet(() => category = value),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                  color: on ? AdminColors.primary : AdminColors.surfaceAlt,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: on ? AdminColors.primary : AdminColors.line),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(icon, size: 14, color: on ? Colors.white : AdminColors.inkSoft),
+                  const SizedBox(width: 6),
+                  Text(label,
+                      style: AdminText.sans(12, FontWeight.w800,
+                          on ? Colors.white : AdminColors.inkSoft)),
+                ]),
+              ),
+            );
+          }
+
+          String catBlurb(String c) => switch (c) {
+                'mens' => "Men's only — both players in a pair must be men.",
+                'womens' => "Women's only — both players in a pair must be women.",
+                'mixed' => "Mixed — a team can't be two men (a woman + anyone).",
+                _ => 'Open to everyone — any pairing.',
+              };
+
           return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // ── Category ──────────────────────────────────────────
+            Text('Category', style: AdminText.strong(AdminColors.inkSoft)),
+            const SizedBox(height: 7),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              catChip('Open', 'open', Icons.groups_outlined),
+              catChip('Men\'s', 'mens', Icons.male_rounded),
+              catChip('Women\'s', 'womens', Icons.female_rounded),
+              catChip('Mixed', 'mixed', Icons.wc_rounded),
+            ]),
+            const SizedBox(height: 8),
+            Text(catBlurb(category), style: AdminText.small(AdminColors.inkFaint)),
+            const SizedBox(height: 16),
             // ── Format ────────────────────────────────────────────
             Text('Format', style: AdminText.strong(AdminColors.inkSoft)),
             const SizedBox(height: 7),

@@ -14,7 +14,7 @@ class TournamentService {
   static const _cols =
       'id, name, venue_name, status, start_date, end_date, start_time, capacity, organizer_id, '
       'entry_fee, prize_pool, description, min_elo, max_elo, format, format_note, best_of, sponsored, '
-      'registration_opens, '
+      'registration_opens, category, '
       'tournament_entries(id, player_id, player_name, partner_id, partner_name, status, '
       'fee_mode, payer_paid, partner_paid, partner_instapay_sender)';
 

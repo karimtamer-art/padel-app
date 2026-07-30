@@ -175,6 +175,8 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
           ]),
           const SizedBox(height: 10),
           Wrap(spacing: 6, runSpacing: 6, children: [
+            if (_catLabel(t['category'] as String?) != null)
+              AppTag(_catLabel(t['category'] as String?)!, color: AppColors.accent),
             if (venue.isNotEmpty) AppTag(venue),
             if (minElo > 0 && maxElo != null && maxElo > 0)
               AppTag('Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo(minElo))}–${RankingScale.fmtLevel(RankingScale.levelFromElo(maxElo))}')
@@ -236,6 +238,14 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
       ]),
     );
   }
+
+  // Short tag for a gender category, or null for 'open'/unset (no tag).
+  static String? _catLabel(String? c) => switch (c) {
+        'mens' => "Men's",
+        'womens' => "Women's",
+        'mixed' => 'Mixed',
+        _ => null,
+      };
 
   static String _egp(int n) {
     final s = n.toString();

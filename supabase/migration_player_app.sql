@@ -592,6 +592,14 @@ alter table public.tournaments add column if not exists sponsored boolean not nu
 -- Day registration opens. Before it the auto status is 'upcoming' (no register);
 -- from that day it flips to 'open'. Null = open immediately.
 alter table public.tournaments add column if not exists registration_opens date;
+-- Gender category of the event: open (any) | mens (both men) | womens (both
+-- women) | mixed (a team can't be two men). Enforced in register_for_tournament.
+alter table public.tournaments add column if not exists category text not null default 'open';
+do $$ begin
+  alter table public.tournaments drop constraint if exists tournaments_category_chk;
+  alter table public.tournaments add constraint tournaments_category_chk
+    check (category in ('open', 'mens', 'womens', 'mixed'));
+exception when others then null; end $$;
 
 -- widen constraints so the app's values are accepted
 alter table public.tournaments drop constraint if exists tournaments_format_chk;
@@ -1460,11 +1468,12 @@ declare
   v_status text; v_start date; v_cap int; v_min int; v_max int; v_fee int;
   v_count  int; v_my_elo int; v_my_name text; v_new text;
   v_mode   text; v_pay int; v_tname text; v_eid uuid; v_reg_opens date;
+  v_category text; v_my_gender text; v_partner_gender text;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
 
-  select status, start_date, capacity, min_elo, max_elo, entry_fee, name, registration_opens
-    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname, v_reg_opens
+  select status, start_date, capacity, min_elo, max_elo, entry_fee, name, registration_opens, category
+    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname, v_reg_opens, v_category
   from public.tournaments where id = p_tournament_id;
   if not found then return 'Tournament not found.'; end if;
   if v_status = 'cancelled' then
@@ -1491,6 +1500,30 @@ begin
     end if;
     if v_max is not null and v_max > 0 and v_my_elo > v_max then
       return 'Your level is above the maximum for this event.';
+    end if;
+  end if;
+
+  -- Gender category. Partner gender is only known for a real app user (guest
+  -- partners added by the organizer skip this — the organizer vouches for them).
+  if coalesce(v_category, 'open') <> 'open' then
+    select gender into v_my_gender from public.profiles where id = v_uid;
+    if p_partner_id is not null then
+      select gender into v_partner_gender from public.profiles where id = p_partner_id;
+    end if;
+    if v_category = 'mens' then
+      if v_my_gender is distinct from 'male'
+         or (p_partner_id is not null and v_partner_gender is distinct from 'male') then
+        return 'This is a men''s-only event — both players must be men.';
+      end if;
+    elsif v_category = 'womens' then
+      if v_my_gender is distinct from 'female'
+         or (p_partner_id is not null and v_partner_gender is distinct from 'female') then
+        return 'This is a women''s-only event — both players must be women.';
+      end if;
+    elsif v_category = 'mixed' then
+      if v_my_gender = 'male' and p_partner_id is not null and v_partner_gender = 'male' then
+        return 'Mixed event — a team can''t be two men.';
+      end if;
     end if;
   end if;
 

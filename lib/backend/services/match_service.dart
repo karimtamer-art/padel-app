@@ -183,7 +183,7 @@ class MatchService {
     try {
       var q = _db
           .from('profiles')
-          .select('id, name, username, elo, level, tier')
+          .select('id, name, username, elo, level, tier, gender')
           .eq('is_admin', false)
           .neq('id', _uid ?? '');
       final term = query.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
