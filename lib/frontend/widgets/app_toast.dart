@@ -41,8 +41,20 @@ class AppToast {
       onAction: onAction,
       duration: duration,
     );
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _key.currentState?.add(data));
+    final state = _key.currentState;
+    if (state != null) {
+      // Stack already mounted — add now; its setState schedules a frame so the
+      // pill shows immediately (don't wait on a post-frame callback, which
+      // doesn't schedule a frame on its own and would linger until the next
+      // scroll/tap forces one).
+      state.add(data);
+    } else {
+      // First toast this session — the stack mounts next frame; add then, and
+      // force that frame so it isn't delayed until some later repaint.
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _key.currentState?.add(data));
+      WidgetsBinding.instance.scheduleFrame();
+    }
   }
 }
 

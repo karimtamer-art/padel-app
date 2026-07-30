@@ -8,6 +8,7 @@ import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
+import 'package:padel_clay/frontend/widgets/copy_icon.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
@@ -1370,21 +1371,6 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
     });
   }
 
-  Future<void> _copy(String v) async {
-    var ok = true;
-    try {
-      await Clipboard.setData(ClipboardData(text: v));
-    } catch (_) {
-      ok = false;
-    }
-    if (!mounted) return;
-    // A ScaffoldMessenger snackbar renders *behind* this modal sheet, so the
-    // copy looked like it did nothing. AppToast draws on the root overlay,
-    // above the sheet, so the confirmation is actually visible. AppToast
-    // coalesces identical messages, so tapping repeatedly won't stack pills.
-    AppToast.show(context, ok ? 'Copied $v' : "Couldn't copy — try again",
-        kind: ok ? ToastKind.success : ToastKind.error);
-  }
 
   Future<void> _openPayLink() async {
     final l = (_payLink ?? '').trim();
@@ -1561,28 +1547,24 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
 
   Widget _copyRow(String label, String value,
       {bool mono = false, bool copyable = true}) {
-    return GestureDetector(
-      onTap: (!copyable || value == '…') ? null : () => _copy(value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-            color: AppColors.field, borderRadius: BorderRadius.circular(12)),
-        child: Row(children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: AppText.small().copyWith(fontSize: 11)),
-              const SizedBox(height: 2),
-              Text(value,
-                  style: mono
-                      ? AppText.bodyStrong().copyWith(
-                          fontFamily: 'monospace', fontSize: 14)
-                      : AppText.bodyStrong().copyWith(fontSize: 15)),
-            ]),
-          ),
-          if (copyable)
-            const Icon(Icons.copy_rounded, size: 16, color: AppColors.inkSoft),
-        ]),
-      ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+          color: AppColors.field, borderRadius: BorderRadius.circular(12)),
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: AppText.small().copyWith(fontSize: 11)),
+            const SizedBox(height: 2),
+            Text(value,
+                style: mono
+                    ? AppText.bodyStrong().copyWith(
+                        fontFamily: 'monospace', fontSize: 14)
+                    : AppText.bodyStrong().copyWith(fontSize: 15)),
+          ]),
+        ),
+        if (copyable && value != '…') CopyIcon(value, size: 16),
+      ]),
     );
   }
 

@@ -340,7 +340,7 @@ class _SignUpFlowState extends State<SignUpFlow> {
         const SizedBox(height: 20),
         SegmentedField(
           label: 'Gender',
-          columns: 3,
+          columns: 2,
           value: _data.gender,
           onChanged: (v) => setState(() => _data.gender = v),
           options: const [

@@ -1945,10 +1945,12 @@ alter table public.profiles drop column if exists hand;
 alter table public.profiles drop column if exists court_side;
 alter table public.profiles drop column if exists full_name;
 
--- widen constraints to match all UI choices
+-- gender is male/female only (the 'other' option was removed from the UI); any
+-- legacy 'other' rows are nulled so the tightened constraint applies cleanly.
+update public.profiles set gender = null where gender = 'other';
 alter table public.profiles drop constraint if exists profiles_gender_chk;
 alter table public.profiles add constraint profiles_gender_chk
-  check (gender is null or gender in ('male','female','other'));
+  check (gender is null or gender in ('male','female'));
 
 alter table public.profiles drop constraint if exists profiles_side_chk;
 alter table public.profiles add constraint profiles_side_chk
@@ -2062,7 +2064,7 @@ begin
     v_dob := null;
   end if;
   v_gender := nullif(new.raw_user_meta_data->>'gender', '');
-  if v_gender not in ('male','female','other') then v_gender := null; end if;
+  if v_gender is not null and v_gender not in ('male','female') then v_gender := null; end if;
   v_hand := nullif(new.raw_user_meta_data->>'preferred_hand', '');
   if v_hand not in ('right','left') then v_hand := null; end if;
   v_side := nullif(new.raw_user_meta_data->>'preferred_court_side', '');

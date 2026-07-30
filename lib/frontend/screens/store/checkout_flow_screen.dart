@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
+import 'package:padel_clay/frontend/widgets/copy_icon.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/address_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
@@ -757,31 +758,7 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
         ),
         if (copyable) ...[
           const SizedBox(width: 10),
-          GestureDetector(
-            onTap: () async {
-              var ok = true;
-              try {
-                await Clipboard.setData(ClipboardData(text: value));
-              } catch (_) {
-                ok = false;
-              }
-              if (!mounted) return;
-              _toast(ok ? 'Copied' : "Couldn't copy — try again", error: !ok);
-            },
-            child: Container(
-              height: 34,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(9)),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.copy_rounded, size: 15, color: AppColors.primary),
-                const SizedBox(width: 6),
-                Text('Copy', style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 12)),
-              ]),
-            ),
-          ),
+          CopyIcon(value, label: 'Copy', size: 15),
         ],
       ]),
     );

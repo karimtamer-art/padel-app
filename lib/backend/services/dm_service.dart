@@ -26,7 +26,9 @@ class DmService {
         .from('direct_messages')
         .stream(primaryKey: ['id'])
         .eq('conversation_id', conversationId)
-        .order('sent_at')
+        // Supabase's stream .order() defaults to DESCENDING — be explicit so
+        // oldest is first and new messages append at the bottom of the chat.
+        .order('sent_at', ascending: true)
         .map((rows) => List<Map<String, dynamic>>.from(rows));
   }
 

@@ -354,13 +354,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
                 // ── Player prefs ──
                 SegmentedField(
-                  label: 'Gender', columns: 3,
+                  label: 'Gender', columns: 2,
                   value: _gender,
                   onChanged: (v) => setState(() => _gender = v),
                   options: const [
                     SegOption('male', 'Male'),
                     SegOption('female', 'Female'),
-                    SegOption('other', 'Other'),
                   ],
                 ),
                 const SizedBox(height: 22),

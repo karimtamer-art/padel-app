@@ -13,6 +13,26 @@ class PrivacyAccountScreen extends StatefulWidget {
 
 class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
   User? get _user => Supabase.instance.client.auth.currentUser;
+  String? _phone; // from profiles.phone (the auth user's phone is empty here)
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPhone();
+  }
+
+  Future<void> _loadPhone() async {
+    final uid = _user?.id;
+    if (uid == null) return;
+    try {
+      final row = await Supabase.instance.client
+          .from('profiles')
+          .select('phone')
+          .eq('id', uid)
+          .maybeSingle();
+      if (mounted) setState(() => _phone = (row?['phone'] as String?)?.trim());
+    } catch (_) {}
+  }
 
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(behavior: SnackBarBehavior.floating, content: Text(msg)));
@@ -42,7 +62,7 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
               subtitle: _user?.email ?? 'Not set',
               onTap: () => _snack('To change your email, contact support.')),
           NavTile(icon: Icons.phone_outlined, title: 'Phone Number',
-              subtitle: (_user?.phone?.isNotEmpty ?? false) ? '+${_user!.phone}' : 'Not set',
+              subtitle: (_phone?.isNotEmpty ?? false) ? _phone! : 'Not set',
               onTap: () => _snack('Update your phone from Edit Profile.')),
           NavTile(icon: Icons.lock_outline_rounded, title: 'Change Password',
               subtitle: 'Sends a reset link to your email', onTap: _changePassword),
