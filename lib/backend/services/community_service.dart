@@ -299,14 +299,29 @@ class CommunityService {
     }
   }
 
-  /// Move the caller's read cursor to now for a community — called when they
-  /// open the Chat tab, so the Home card badge clears.
-  static Future<void> markCommunityRead(String communityId) async {
+  /// Per-channel unread counts for a community: { channelId: unread }. Powers
+  /// the small badge on each channel row in the hub Chat tab. Empty on error.
+  static Future<Map<String, int>> channelUnreads(String communityId) async {
     try {
-      await _db.rpc('mark_community_read',
+      final res = await _db.rpc('community_channel_unreads',
           params: {'p_community_id': communityId});
+      return {
+        for (final r in (res as List))
+          (r['channel_id'] as String): (r['unread'] as int?) ?? 0,
+      };
     } catch (e) {
-      debugPrint('[CommunityService] markCommunityRead: $e');
+      debugPrint('[CommunityService] channelUnreads: $e');
+      return {};
+    }
+  }
+
+  /// Move the caller's read cursor to now for one channel — called when the
+  /// channel is opened, clearing its badge (and shrinking the Home card total).
+  static Future<void> markChannelRead(String channelId) async {
+    try {
+      await _db.rpc('mark_channel_read', params: {'p_channel_id': channelId});
+    } catch (e) {
+      debugPrint('[CommunityService] markChannelRead: $e');
     }
   }
 

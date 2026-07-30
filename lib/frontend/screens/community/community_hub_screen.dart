@@ -26,6 +26,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   List<Announcement> _feed = [];
   List<MemberLite> _members = [];
   List<Map<String, dynamic>> _channels = [];
+  Map<String, int> _channelUnread = {}; // channelId → unread count (badges)
   bool _loading = true, _busy = false;
   int _tab = 0;
   String _memberQuery = '';
@@ -58,6 +59,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       CommunityService.feed(c.id),
       CommunityService.members(c.id),
       CommunityService.channelList(c.id),
+      CommunityService.channelUnreads(c.id),
     ]);
     if (!mounted) return;
     setState(() {
@@ -66,6 +68,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       _feed = results[1] as List<Announcement>;
       _members = results[2] as List<MemberLite>;
       _channels = results[3] as List<Map<String, dynamic>>;
+      _channelUnread = results[4] as Map<String, int>;
       _loading = false;
     });
   }
@@ -73,8 +76,16 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
   Future<void> _refreshChannels() async {
     final c = _c;
     if (c == null) return;
-    final ch = await CommunityService.channelList(c.id);
-    if (mounted) setState(() => _channels = ch);
+    final results = await Future.wait([
+      CommunityService.channelList(c.id),
+      CommunityService.channelUnreads(c.id),
+    ]);
+    if (mounted) {
+      setState(() {
+        _channels = results[0] as List<Map<String, dynamic>>;
+        _channelUnread = results[1] as Map<String, int>;
+      });
+    }
   }
 
   Future<void> _openChannel(Map<String, dynamic> ch) async {
@@ -95,7 +106,9 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
         ),
       ),
     );
-    // Preview may have changed.
+    // They've seen this channel — clear its badge, then refresh previews +
+    // per-channel unread counts (which also shrinks the Home card total).
+    await CommunityService.markChannelRead(ch['id'] as String);
     _refreshChannels();
   }
 
@@ -470,12 +483,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
         child: GestureDetector(
           onTap: () {
             setState(() => _tab = i);
-            if (i == _chatTabIndex) {
-              _refreshChannels();
-              // Seeing the channels clears the Home community-card unread badge.
-              final c = _c;
-              if (c != null) CommunityService.markCommunityRead(c.id);
-            }
+            // Refresh per-channel unread badges; each channel clears when opened.
+            if (i == _chatTabIndex) _refreshChannels();
           },
           child: Container(
             margin: const EdgeInsets.all(3),
@@ -866,6 +875,8 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
     final custom = ch['is_custom'] == true;
     final going = (ch['going'] as num?)?.toInt() ?? 0;
     final preview = (ch['preview'] as String?)?.trim();
+    final unread = _channelUnread[ch['id']] ?? 0;
+    final hasUnread = unread > 0;
 
     final iconColor = kind == 'match' ? AppColors.primary : AppColors.gold;
     final leading = isEvent
@@ -916,11 +927,29 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
               Text(sub,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
+                  style: AppText.small(
+                          hasUnread ? AppColors.inkSoft : AppColors.inkFaint)
+                      .copyWith(
+                          fontSize: 11.5,
+                          fontWeight:
+                              hasUnread ? FontWeight.w700 : FontWeight.w500)),
             ]),
           ),
           const SizedBox(width: 6),
-          const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
+          if (hasUnread)
+            Container(
+              constraints: const BoxConstraints(minWidth: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: AppColors.danger,
+                  borderRadius: BorderRadius.circular(10)),
+              child: Text(unread > 99 ? '99+' : '$unread',
+                  style: AppText.tag(Colors.white)
+                      .copyWith(fontSize: 10.5, fontWeight: FontWeight.w800)),
+            )
+          else
+            const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
         ]),
       ),
     );
