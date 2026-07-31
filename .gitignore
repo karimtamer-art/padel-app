@@ -70,7 +70,10 @@ AuthKey_*.p8
 .claude/
 
 # Desktop admin console (local-only tool; not part of the app build)
-desktop_admin/android/key.properties
+desktop_admin/
 android/upload-keystore.jks
 *.jks
 *.keystore
+
+# Local-only Supabase demo/scratch (not part of the app build)
+supabase/demo/
