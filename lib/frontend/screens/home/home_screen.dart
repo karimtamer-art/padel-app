@@ -20,6 +20,7 @@ import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
 import 'matchmaking_hero.dart';
 import '../detail/match_detail_screen.dart';
+import '../detail/join_match_sheet.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import '../profile/notifications_screen.dart';
 import '../community/community_hub_screen.dart';
@@ -53,6 +54,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _myMatches = [];
+  // Open matches from other players I'm allowed to see (mm_candidates) —
+  // joinable straight from Home, no radar needed.
+  List<Map<String, dynamic>> _joinable = [];
+  String? _joining; // match_id currently being joined
   List<Map<String, dynamic>> _tournaments = [];
   List<Map<String, dynamic>> _featured = [];
   Community? _community;
@@ -129,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!silent && mounted) setState(() => _loading = true);
     await Future.wait([
       _fetchMatches(),
+      _fetchJoinable(),
       _fetchTournaments(),
       _fetchUnread(),
       _fetchDmUnread(),
@@ -186,6 +192,45 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       if (mounted) _myMatches = list;
     } catch (_) {}
+  }
+
+  /// Open matches hosted by other players that I'm allowed to see. Casual ones
+  /// come from anybody (unrated → no band/placement gate); competitive stays
+  /// inside my rating band. Server-side rules live in `mm_candidates`.
+  Future<void> _fetchJoinable() async {
+    final rows = await MatchService.fetchBandCandidates(limit: 10);
+    if (mounted) _joinable = rows;
+  }
+
+  /// Candidate rows come back flat from the RPC; reshape them into the same
+  /// map `_UpcomingMatchCard` reads for my own matches.
+  static Map<String, dynamic> _asMatch(Map<String, dynamic> c) => {
+        'id': c['match_id'],
+        'match_type': c['match_type'],
+        'scheduled_at': c['scheduled_at'],
+        'courts': {'name': c['court_name'], 'venue_name': c['venue_name']},
+      };
+
+  /// Join straight from the card: same solo-or-with-a-partner question the
+  /// radar asks, then `mm_accept` (capacity + band re-checked server-side).
+  Future<void> _joinCandidate(Map<String, dynamic> c) async {
+    final id = c['match_id'] as String?;
+    if (id == null || _joining != null) return;
+    final seats = 4 - ((c['players'] as num?)?.toInt() ?? 0);
+    final choice = await showJoinMatchSheet(context, slotsLeft: seats);
+    if (choice == null || !mounted) return;
+    setState(() => _joining = id);
+    final err = await MatchService.acceptCandidate(id, partnerId: choice.partnerId);
+    if (!mounted) return;
+    setState(() => _joining = null);
+    if (err != null) {
+      AppToast.show(context, err, kind: ToastKind.error);
+      _loadData(silent: true); // it may have filled up — refresh the row
+      return;
+    }
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => MatchDetailScreen(matchId: id)));
+    if (mounted) _loadData(silent: true);
   }
 
   Future<void> _fetchTournaments() async {
@@ -950,7 +995,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-    if (_myMatches.isEmpty) {
+    if (_myMatches.isEmpty && _joinable.isEmpty) {
       return Padding(
         padding: AppSpacing.screenH,
         child: AppCard(
@@ -985,9 +1030,19 @@ class _HomeScreenState extends State<HomeScreen> {
         scrollDirection: Axis.horizontal,
         padding: AppSpacing.screenH,
         children: [
+          // Mine first (open them), then open matches from other players that
+          // can be joined right here.
           for (final m in _myMatches)
             _UpcomingMatchCard(m,
                 onOpen: () => _openMatch(context, m['id'] as String)),
+          for (final c in _joinable)
+            _UpcomingMatchCard(
+              _asMatch(c),
+              onOpen: () => _joinCandidate(c),
+              onJoin: () => _joinCandidate(c),
+              playersOverride: (c['players'] as num?)?.toInt() ?? 0,
+              busy: _joining == c['match_id'],
+            ),
         ],
       ),
     );
@@ -1104,7 +1159,14 @@ class _HomeScreenState extends State<HomeScreen> {
 class _UpcomingMatchCard extends StatelessWidget {
   final Map<String, dynamic> match;
   final VoidCallback onOpen;
-  const _UpcomingMatchCard(this.match, {required this.onOpen});
+  /// Set for a match the player is NOT in yet → the action becomes "Join
+  /// Match" instead of "View Match".
+  final VoidCallback? onJoin;
+  /// `mm_candidates` returns a flat seat count instead of the players list.
+  final int? playersOverride;
+  final bool busy;
+  const _UpcomingMatchCard(this.match,
+      {required this.onOpen, this.onJoin, this.playersOverride, this.busy = false});
 
   static const _months = ['Jan','Feb','Mar','Apr','May','Jun',
                           'Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1144,7 +1206,8 @@ class _UpcomingMatchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ranked = match['match_type'] == 'ranked';
     final court = match['courts'] as Map?;
-    final players = (match['match_players'] as List?)?.length ?? 0;
+    final players =
+        playersOverride ?? (match['match_players'] as List?)?.length ?? 0;
     final filled = players.clamp(0, 4);
     final lat = (court?['lat'] as num?)?.toDouble();
     final lng = (court?['lng'] as num?)?.toDouble();
@@ -1190,10 +1253,14 @@ class _UpcomingMatchCard extends StatelessWidget {
                 style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
           ]),
           const SizedBox(height: 12),
-          // These cards are always matches the player is already in, so the
-          // action opens the match — never "Join".
+          // Mine → open it. Someone else's open match → join it from here.
           Row(children: [
-            Expanded(child: AppButton('View Match', full: true, height: 44, onPressed: onOpen)),
+            Expanded(
+                child: AppButton(
+                    onJoin == null ? 'View Match' : (busy ? 'Joining…' : 'Join Match'),
+                    full: true,
+                    height: 44,
+                    onPressed: busy ? null : (onJoin ?? onOpen))),
             if (hasLoc) ...[
               const SizedBox(width: 8),
               GestureDetector(
