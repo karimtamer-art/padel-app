@@ -496,8 +496,12 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
                                 style: AdminText.small()),
                             const SizedBox(height: 5),
                             Row(children: [
+                              // Players no longer name an asking price — older
+                              // requests still carry one, so show it if set.
                               Text(
-                                  'Asking ${_egp(t['asking_credit'])}',
+                                  t['asking_credit'] != null
+                                      ? 'Asking ${_egp(t['asking_credit'])}'
+                                      : 'No asking price',
                                   style:
                                       AdminText.small(AdminColors.inkSoft)),
                               if (t['offer_credit'] != null) ...[
@@ -518,10 +522,12 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   }
 
   void _openTrade(Map<String, dynamic> t) {
-    final asking = (t['asking_credit'] as num?)?.toInt() ?? 0;
+    final asking = (t['asking_credit'] as num?)?.toInt();
     final existingOffer = (t['offer_credit'] as num?)?.toInt();
-    final offerC = TextEditingController(
-        text: '${existingOffer ?? (asking * 0.85).round()}');
+    // Suggest 85% of the asking price only when the (legacy) field is set —
+    // new requests come in without one, so start the offer field empty.
+    final suggested = existingOffer ?? (asking != null ? (asking * 0.85).round() : null);
+    final offerC = TextEditingController(text: suggested?.toString() ?? '');
     final status = t['status'] as String? ?? 'pending';
 
     adminSheet(
@@ -565,8 +571,10 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
         Row(children: [
           _kv('Condition', t['condition'] as String? ?? '—'),
           const SizedBox(width: 10),
-          _kv('Asking', _egp(t['asking_credit'])),
-          const SizedBox(width: 10),
+          if (t['asking_credit'] != null) ...[
+            _kv('Asking', _egp(t['asking_credit'])),
+            const SizedBox(width: 10),
+          ],
           _kv('Your offer',
               t['offer_credit'] != null ? _egp(t['offer_credit']) : '—'),
         ]),

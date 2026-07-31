@@ -1,5 +1,4 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -885,8 +884,9 @@ class _Condition {
 }
 
 /// Trade-In — multi-step submission:
-///   0. Condition  1. Details  2. Asking price  3. Trade toward
-///   4. Review     5. Submitted (confirmation + reference number)
+///   0. Condition  1. Details  2. Trade toward
+///   3. Review     4. Submitted (confirmation + reference number)
+/// No asking price — the credit is set by our team after inspection.
 class _TradeInSheet extends StatefulWidget {
   final List<Map<String, dynamic>> rackets;
   const _TradeInSheet({required this.rackets});
@@ -902,8 +902,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
     _Condition('Worn', 'Heavy use, still functional'),
   ];
 
-  static const _steps = ['Condition', 'Details', 'Price', 'Trade for', 'Review'];
-  static const _last = 4; // Review; step 5 = submitted
+  static const _steps = ['Condition', 'Details', 'Trade for', 'Review'];
+  static const _last = 3; // Review; step 4 = submitted
 
   List<Map<String, dynamic>> get _rackets => widget.rackets;
 
@@ -913,7 +913,6 @@ class _TradeInSheetState extends State<_TradeInSheet> {
   final _nameC = TextEditingController();
   final _brandC = TextEditingController();
   final _notesC = TextEditingController();
-  final _askC = TextEditingController();
   int _target = -1;
   String _ref = '';
 
@@ -922,16 +921,12 @@ class _TradeInSheetState extends State<_TradeInSheet> {
     _nameC.dispose();
     _brandC.dispose();
     _notesC.dispose();
-    _askC.dispose();
     super.dispose();
   }
 
-  int get _ask => int.tryParse(_askC.text) ?? 0;
   Map<String, dynamic>? get _targetP =>
       _target >= 0 && _target < _rackets.length ? _rackets[_target] : null;
   int get _targetPrice => _targetP == null ? 0 : _price(_targetP!);
-  int get _credit => _ask; // final value confirmed at inspection
-  int get _diff => _targetPrice - _credit;
 
   static String _brand(Map r) => (r['brand'] as String?)?.trim() ?? '';
   static String _name(Map r) => (r['name'] as String?)?.trim() ?? '';
@@ -950,8 +945,6 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         return _nameC.text.trim().isNotEmpty &&
             _brandC.text.trim().isNotEmpty;
       case 2:
-        return _ask > 0;
-      case 3:
         return _target >= 0;
       default:
         return true;
@@ -959,9 +952,9 @@ class _TradeInSheetState extends State<_TradeInSheet> {
   }
 
   String get _ctaLabel {
-    if (_step < 3) return 'Continue';
-    if (_step == 3) return 'Review Request';
-    if (_step == 4) return _busy ? 'Submitting…' : 'Submit Request';
+    if (_step < 2) return 'Continue';
+    if (_step == 2) return 'Review Request';
+    if (_step == _last) return _busy ? 'Submitting…' : 'Submit Request';
     return 'Done';
   }
 
@@ -995,7 +988,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
             'player_id': uid,
             'racket_desc': desc.isEmpty ? 'Racket trade-in' : desc,
             'condition': _conditions[_cond].label,
-            'asking_credit': _ask,
+            // no asking price — our team sets the credit after inspection
             'note': note,
             'status': 'pending',
           })
@@ -1118,10 +1111,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
       case 1:
         return _detailsStep();
       case 2:
-        return _priceStep();
-      case 3:
         return _tradeForStep();
-      case 4:
+      case 3:
         return _reviewStep();
       default:
         return _submittedStep();
@@ -1264,47 +1255,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         ],
       );
 
-  // ── STEP 2 — asking price ──
-  Widget _priceStep() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _heading("What's your asking price?",
-            "This is the credit you'd like for your racket. We'll confirm the final value after inspection."),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: AppColors.field,
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: AppColors.line, width: 1.5),
-          ),
-          child: Row(children: [
-            Text('EGP',
-                style: AppText.stat(20, AppColors.inkFaint)
-                    .copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextField(
-                controller: _askC,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                style: AppText.stat(30, AppColors.ink),
-                decoration: InputDecoration(
-                  isCollapsed: true,
-                  border: InputBorder.none,
-                  hintText: '0',
-                  hintStyle: AppText.stat(30, AppColors.inkFaint),
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-            ),
-          ]),
-        ),
-      ],
-    );
-  }
-
-  // ── STEP 3 — trade toward ──
+  // ── STEP 2 — trade toward ──
   Widget _tradeForStep() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1326,6 +1277,37 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         ],
       );
 
+  /// Square product thumbnail — same `image_url` the store grid uses, with the
+  /// striped placeholder as the fallback (no image, or a broken/blocked URL).
+  /// `contain` on a field-coloured tile so a tall racket shot isn't cropped.
+  Widget _thumb(Map<String, dynamic>? p, double size) {
+    final url = (p?['image_url'] as String?)?.trim() ?? '';
+    const radius = BorderRadius.all(Radius.circular(10));
+    Widget placeholder() => SizedBox(
+          width: size,
+          height: size,
+          child: StripedPlaceholder(
+              height: size, icon: Icons.sports_tennis_rounded, radius: radius),
+        );
+    if (url.isEmpty) return placeholder();
+    return ClipRRect(
+      borderRadius: radius,
+      child: Container(
+        width: size,
+        height: size,
+        color: AppColors.field,
+        child: Image.network(
+          url,
+          fit: BoxFit.contain,
+          cacheWidth: (size * 3).round(),
+          loadingBuilder: (_, child, progress) =>
+              progress == null ? child : const SizedBox.shrink(),
+          errorBuilder: (_, __, ___) => placeholder(),
+        ),
+      ),
+    );
+  }
+
   Widget _targetRow(int i) {
     final p = _rackets[i];
     final on = _target == i;
@@ -1340,11 +1322,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
               color: on ? AppColors.primary : AppColors.line, width: 1.5),
         ),
         child: Row(children: [
-          const ClipRRect(
-            borderRadius: BorderRadius.all(Radius.circular(10)),
-            child:
-                StripedPlaceholder(height: 48, icon: Icons.sports_tennis_rounded),
-          ),
+          _thumb(p, 48),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1380,7 +1358,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
     );
   }
 
-  // ── STEP 4 — review ──
+  // ── STEP 3 — review ──
   Widget _reviewStep() {
     final tp = _targetP;
     return Column(
@@ -1400,11 +1378,9 @@ class _TradeInSheetState extends State<_TradeInSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const ClipRRect(
-                  borderRadius: BorderRadius.all(Radius.circular(10)),
-                  child: StripedPlaceholder(
-                      height: 60, icon: Icons.sports_tennis_rounded),
-                ),
+                // the player's own racket — always the placeholder, they don't
+                // upload a photo
+                _thumb(null, 60),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -1437,18 +1413,17 @@ class _TradeInSheetState extends State<_TradeInSheet> {
             border: Border.all(color: AppColors.line),
           ),
           child: Column(children: [
-            _reviewRow('Your asking price', MockData.egp(_ask)),
             _reviewRow('Trading toward', tp == null ? '—' : _name(tp)),
             _reviewRow('New racket price', MockData.egp(_targetPrice)),
-            _reviewRow('Credit applied', '− ${MockData.egp(_credit)}'),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 13),
               child: Row(children: [
-                Text(_diff >= 0 ? 'You pay' : 'Store credit back',
+                Text('Trade-in credit',
                     style: AppText.bodyStrong().copyWith(fontWeight: FontWeight.w800)),
                 const Spacer(),
-                Text(MockData.egp(_diff.abs()),
-                    style: AppText.stat(19, AppColors.primary)),
+                Text('After inspection',
+                    style: AppText.bodyStrong(AppColors.primary)
+                        .copyWith(fontSize: 13.5)),
               ]),
             ),
           ]),
@@ -1476,7 +1451,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         ]),
       );
 
-  // ── STEP 5 — submitted ──
+  // ── STEP 4 — submitted ──
   Widget _submittedStep() => Padding(
         padding: const EdgeInsets.only(top: 24),
         child: Column(children: [
