@@ -621,6 +621,17 @@ alter table public.tournament_entries drop constraint if exists tournament_entri
 alter table public.tournament_entries add constraint tournament_entries_status_chk
   check (status in ('registered','withdrawn','confirmed','pending','paid','cancelled'));
 
+-- matches.status: the live constraint (migration 0003) predates the status
+-- machine and has no 'pending_confirm', so submit_match_result's ranked path
+-- (`status = case when ranked then 'pending_confirm' ...`) failed with
+-- matches_status_chk on EVERY ranked score submission. Widen it to exactly the
+-- set the app writes: open → full → pending_confirm → completed | disputed,
+-- plus in_progress (legacy) and cancelled (host cancel / stale sweep).
+alter table public.matches drop constraint if exists matches_status_chk;
+alter table public.matches add constraint matches_status_chk
+  check (status in ('open','full','in_progress','pending_confirm',
+                    'completed','cancelled','disputed'));
+
 -- admin can read all profiles (needed for dashboard player count)
 drop policy if exists "profiles: admin read all" on public.profiles;
 create policy "profiles: admin read all" on public.profiles
