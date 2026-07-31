@@ -14,7 +14,7 @@ class TournamentService {
   static const _cols =
       'id, name, venue_name, status, start_date, end_date, start_time, capacity, organizer_id, '
       'entry_fee, prize_pool, description, min_elo, max_elo, format, format_note, best_of, sponsored, '
-      'registration_opens, category, '
+      'registration_opens, registration_closed, category, '
       'tournament_entries(id, player_id, player_name, partner_id, partner_name, status, '
       'fee_mode, payer_paid, partner_paid, partner_instapay_sender)';
 
@@ -296,21 +296,77 @@ class TournamentService {
   /// The `status` DB column is only authoritative for 'cancelled' / 'postponed'.
   /// Everything else is computed from dates and capacity so legacy rows
   /// ('upcoming', 'open', 'completed', 'auto') all behave correctly.
-  static String tournamentStatus(Map<String, dynamic> t, int entryCount) {
+  /// [asOf] overrides the clock — tests pin it so results don't drift with the
+  /// time of day. Production callers omit it.
+  static String tournamentStatus(Map<String, dynamic> t, int entryCount,
+      {DateTime? asOf}) {
     final col = (t['status'] as String?) ?? '';
     if (col == 'cancelled') return 'cancelled';
     if (col == 'postponed') return 'postponed';
-    final now = DateTime.now();
-    final start = DateTime.tryParse((t['start_date'] as String?) ?? '');
-    final end = DateTime.tryParse((t['end_date'] as String?) ?? '');
-    final deadline = end ?? start;
-    if (deadline != null && now.isAfter(deadline)) return 'completed';
+    final now = asOf ?? DateTime.now();
+    final startDay = DateTime.tryParse((t['start_date'] as String?) ?? '');
+    final endDay = DateTime.tryParse((t['end_date'] as String?) ?? '');
+    // An event is over at the END of its last day. Using the start midnight as
+    // the deadline marked a same-day tournament (no end_date) 'completed' for
+    // the entire day it was actually being played.
+    final lastDay = endDay ?? startDay;
+    if (lastDay != null &&
+        now.isAfter(DateTime(lastDay.year, lastDay.month, lastDay.day)
+            .add(const Duration(days: 1)))) {
+      return 'completed';
+    }
+    final start = tournamentStart(t);
     if (start != null && !now.isBefore(start)) return 'live';
     // Registration hasn't opened yet → 'upcoming' (shown, but not registerable).
     final regOpens = DateTime.tryParse((t['registration_opens'] as String?) ?? '');
     if (regOpens != null && now.isBefore(regOpens)) return 'upcoming';
+    // Organizer pulled sign-ups early — an explicit decision, so it outranks
+    // the 'full' label.
+    if (t['registration_closed'] == true) return 'closed';
     final cap = (t['capacity'] as num?)?.toInt() ?? 0;
     if (cap > 0 && entryCount >= cap) return 'full';
+    final deadline = registrationDeadline(t);
+    if (deadline != null && !now.isBefore(deadline)) return 'closed';
     return 'open';
+  }
+
+  /// Local start instant: `start_date` plus `start_time` ('6:00 PM') when set.
+  /// Falls back to midnight for legacy rows that carry no time.
+  static DateTime? tournamentStart(Map<String, dynamic> t) {
+    final d = DateTime.tryParse((t['start_date'] as String?) ?? '');
+    if (d == null) return null;
+    final clock = _parseClock(t['start_time'] as String?);
+    if (clock == null) return d;
+    return DateTime(d.year, d.month, d.day, clock.$1, clock.$2);
+  }
+
+  /// When sign-ups stop: 1 hour before the start time. Mirrors the SQL
+  /// `tournament_reg_deadline` — change both together. Rows with no
+  /// `start_time` keep the legacy midnight cutoff.
+  static DateTime? registrationDeadline(Map<String, dynamic> t) {
+    final d = DateTime.tryParse((t['start_date'] as String?) ?? '');
+    if (d == null) return null;
+    final clock = _parseClock(t['start_time'] as String?);
+    if (clock == null) return d;
+    return DateTime(d.year, d.month, d.day, clock.$1, clock.$2)
+        .subtract(const Duration(hours: 1));
+  }
+
+  /// Parses the admin picker's free-text time ('6:00 PM', '18:00') to (h, m).
+  static (int, int)? _parseClock(String? raw) {
+    final s = (raw ?? '').trim();
+    if (s.isEmpty) return null;
+    final m = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)?$', caseSensitive: false)
+        .firstMatch(s);
+    if (m == null) return null;
+    var h = int.parse(m.group(1)!);
+    final min = int.parse(m.group(2)!);
+    final ap = m.group(3)?.toUpperCase();
+    if (ap != null) {
+      h = h % 12;
+      if (ap == 'PM') h += 12;
+    }
+    if (h > 23 || min > 59) return null;
+    return (h, min);
   }
 }

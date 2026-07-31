@@ -592,6 +592,10 @@ alter table public.tournaments add column if not exists sponsored boolean not nu
 -- Day registration opens. Before it the auto status is 'upcoming' (no register);
 -- from that day it flips to 'open'. Null = open immediately.
 alter table public.tournaments add column if not exists registration_opens date;
+-- Organizer/admin shuts sign-ups early. Independent of capacity and of the
+-- automatic 1-hour-before-start cutoff — any of the three closes registration.
+alter table public.tournaments
+  add column if not exists registration_closed boolean not null default false;
 -- Gender category of the event: open (any) | mens (both men) | womens (both
 -- women) | mixed (a team can't be two men). Enforced in register_for_tournament.
 alter table public.tournaments add column if not exists category text not null default 'open';
@@ -1452,6 +1456,35 @@ alter table public.tournament_entries add column if not exists partner_instapay_
 alter table public.tournament_entries add column if not exists partner_instapay_proof_url text;
 
 drop function if exists public.register_for_tournament(uuid, uuid, text);
+-- tournaments.start_time is free text from the admin picker ('6:00 PM'). Parse
+-- it defensively — a junk/legacy value must not blow up registration.
+create or replace function public._tournament_clock(p_text text)
+returns time
+language plpgsql immutable as $$
+begin
+  if p_text is null or btrim(p_text) = '' then return null; end if;
+  return btrim(p_text)::time;
+exception when others then
+  return null;
+end $$;
+
+-- When sign-ups stop: 1 hour before the first ball. start_date is a date and
+-- start_time a local wall-clock string, so the two are combined in Cairo time
+-- (the DB runs UTC; without this a 6 PM event would stay open until 9 PM).
+-- Rows with no start_time keep the legacy midnight cutoff.
+create or replace function public.tournament_reg_deadline(
+  p_start date, p_start_time text)
+returns timestamptz
+language sql stable as $$
+  select case
+    when p_start is null then null
+    when public._tournament_clock(p_start_time) is null
+      then (p_start::timestamp at time zone 'Africa/Cairo')
+    else ((p_start::timestamp + public._tournament_clock(p_start_time))
+            at time zone 'Africa/Cairo') - interval '1 hour'
+  end
+$$;
+
 drop function if exists public.register_for_tournament(uuid, uuid, text, text, text);
 
 create or replace function public.register_for_tournament(
@@ -1469,11 +1502,14 @@ declare
   v_count  int; v_my_elo int; v_my_name text; v_new text;
   v_mode   text; v_pay int; v_tname text; v_eid uuid; v_reg_opens date;
   v_category text; v_my_gender text; v_partner_gender text;
+  v_start_time text; v_reg_closed boolean; v_deadline timestamptz;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
 
-  select status, start_date, capacity, min_elo, max_elo, entry_fee, name, registration_opens, category
-    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname, v_reg_opens, v_category
+  select status, start_date, capacity, min_elo, max_elo, entry_fee, name, registration_opens, category,
+         start_time, coalesce(registration_closed, false)
+    into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname, v_reg_opens, v_category,
+         v_start_time, v_reg_closed
   from public.tournaments where id = p_tournament_id;
   if not found then return 'Tournament not found.'; end if;
   if v_status = 'cancelled' then
@@ -1482,8 +1518,14 @@ begin
   if v_reg_opens is not null and current_date < v_reg_opens then
     return 'Registration hasn''t opened for this tournament yet.';
   end if;
-  if v_start is not null and v_start <= current_date then
-    return 'Registration is closed — this tournament has already started.';
+  if v_reg_closed then
+    return 'Registration for this tournament has been closed by the organizer.';
+  end if;
+  -- Sign-ups run until 1 hour before the start time — NOT until midnight of the
+  -- start day, which used to lock out same-day events before anyone woke up.
+  v_deadline := public.tournament_reg_deadline(v_start, v_start_time);
+  if v_deadline is not null and now() >= v_deadline then
+    return 'Registration is closed — it stops 1 hour before the tournament starts.';
   end if;
 
   -- capacity (ignore withdrawn; an existing row for this user is a re-register)

@@ -964,6 +964,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         : rawStatus;
     bool rated = t?['rated'] as bool? ?? true;
     bool sponsored = t?['sponsored'] as bool? ?? false;
+    bool regClosed = t?['registration_closed'] as bool? ?? false;
     String category = t?['category'] as String? ?? 'open';
 
     // Eligibility — derive mode from existing data
@@ -1028,6 +1029,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'status': status,
             'rated': rated,
             'sponsored': sponsored,
+            'registration_closed': regClosed,
             'category': category,
             'cancel_reason': status == 'cancelled'
                 ? (reasonC.text.trim().isEmpty ? null : reasonC.text.trim())
@@ -1312,6 +1314,34 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               ]),
             ),
             const SizedBox(height: 16),
+            // ── Close registration early ──────────────────────────
+            Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                  color: regClosed
+                      ? AdminColors.wash(AdminColors.warn, 0.10)
+                      : AdminColors.surfaceAlt,
+                  borderRadius: BorderRadius.circular(12)),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Close registration now',
+                        style: AdminText.sans(14, FontWeight.w800, AdminColors.ink)),
+                    const SizedBox(height: 2),
+                    Text(
+                        'Stops sign-ups immediately, even if spots are left. '
+                        'Otherwise registration closes on its own 1 hour before '
+                        'the start time, or when the tournament fills up.',
+                        style: AdminText.small(AdminColors.inkFaint)),
+                  ]),
+                ),
+                const SizedBox(width: 10),
+                Switch.adaptive(
+                    value: regClosed,
+                    onChanged: (v) => setSheet(() => regClosed = v)),
+              ]),
+            ),
+            const SizedBox(height: 16),
             // ── Status ────────────────────────────────────────────
             Text('Status', style: AdminText.strong(AdminColors.inkSoft)),
             const SizedBox(height: 7),
@@ -1335,13 +1365,14 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                         style: AdminText.sans(12.5, FontWeight.w800, AdminColors.ink)),
                   ]),
                   const SizedBox(height: 6),
-                  Text('Upcoming  →  Open  →  Full  →  Live  →  Completed',
+                  Text('Upcoming  →  Open  →  Full/Closed  →  Live  →  Completed',
                       style: AdminText.sans(12, FontWeight.w700, AdminColors.primary)),
                   const SizedBox(height: 5),
                   Text(
                       'Upcoming until the registration-opens day · Open once players '
-                      'can register · Full when spots run out · Live on the start day · '
-                      'Completed after the end date. Use Postponed or Cancelled to '
+                      'can register · Full when spots run out · Closed from 1 hour '
+                      'before the start time · Live at the start time · Completed '
+                      'after the last day ends. Use Postponed or Cancelled to '
                       'override this.',
                       style: AdminText.small(AdminColors.inkFaint)),
                 ]),

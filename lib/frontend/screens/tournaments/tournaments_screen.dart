@@ -126,6 +126,7 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
       'open' => 'Open',
       'live' => 'Live',
       'full' => 'Full',
+      'closed' => 'Registration closed',
       'upcoming' => 'Upcoming',
       'completed' => 'Completed',
       'cancelled' => 'Cancelled',

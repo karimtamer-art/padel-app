@@ -469,6 +469,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       'open' => 'Open',
       'live' => 'Live',
       'full' => 'Full',
+      'closed' => 'Registration closed',
       'completed' => 'Completed',
       'cancelled' => 'Cancelled',
       'postponed' => 'Postponed',
@@ -1268,6 +1269,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
                           'full' => 'Tournament Full',
                           'completed' => 'Tournament Ended',
                           'cancelled' => 'Registration Closed',
+                          'closed' => 'Registration Closed',
                           'live' => 'Tournament in Progress',
                           'upcoming' => _regOpensLabel != null
                               ? 'Registration opens $_regOpensLabel'
