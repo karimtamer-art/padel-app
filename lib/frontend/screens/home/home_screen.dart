@@ -476,6 +476,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 else if (liveMatch != null)
                   _LiveHero(
                     match: liveMatch,
+                    myId: _db.auth.currentUser?.id,
                     onEnterScore: () =>
                         _openMatch(context, liveMatch['id'] as String),
                   )
@@ -1684,79 +1685,101 @@ class _BookNextHero extends StatelessWidget {
   }
 }
 
-// ── Next-match hero (placed player, a match is booked/live) ──────────────────
+// ── Shared match-hero pieces (next-match + live) ─────────────────────────────
+// Both heroes show the same match from a different moment in its life, so the
+// lineup, the venue/time panel and the venue footer live here once.
 
-class _NextMatchHero extends StatelessWidget {
-  final Map<String, dynamic> match;
-  final String? myId;
-  final VoidCallback onTap;
-  const _NextMatchHero({required this.match, required this.onTap, this.myId});
+const _heroMonths = ['Jan','Feb','Mar','Apr','May','Jun',
+                     'Jul','Aug','Sep','Oct','Nov','Dec'];
+const _heroWeekdays = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
-  static const _months = ['Jan','Feb','Mar','Apr','May','Jun',
-                          'Jul','Aug','Sep','Oct','Nov','Dec'];
-  static const _weekdays = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+String _heroClock(DateTime dt) {
+  final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+  final m = dt.minute.toString().padLeft(2, '0');
+  return '$h:$m ${dt.hour < 12 ? 'AM' : 'PM'}';
+}
 
-  static String _clock(DateTime dt) {
-    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-    final m = dt.minute.toString().padLeft(2, '0');
-    return '$h:$m ${dt.hour < 12 ? 'AM' : 'PM'}';
+/// "Today, 6:00 PM" — near dates read as words, anything past this week falls
+/// back to the date.
+String _heroWhen(DateTime dt) {
+  final now = DateTime.now();
+  final days = DateTime(dt.year, dt.month, dt.day)
+      .difference(DateTime(now.year, now.month, now.day))
+      .inDays;
+  final day = days == 0
+      ? 'Today'
+      : days == 1
+          ? 'Tomorrow'
+          : (days > 1 && days < 7)
+              ? _heroWeekdays[dt.weekday - 1]
+              : '${_heroMonths[dt.month - 1]} ${dt.day}';
+  return '$day, ${_heroClock(dt)}';
+}
+
+/// "Gezira Club — Court 2", or whichever half exists.
+String _heroVenue(Map<String, dynamic> match) {
+  final court = match['courts'] as Map?;
+  final venue = (court?['venue_name'] as String?)?.trim() ?? '';
+  final name = (court?['name'] as String?)?.trim() ?? '';
+  final line = [venue, name].where((s) => s.isNotEmpty).join(' — ');
+  return line.isEmpty ? 'Venue to be agreed' : line;
+}
+
+String _heroProfName(Map p) =>
+    ((p['profiles'] as Map?)?['name'] as String?)?.trim() ?? '';
+
+String _heroFirstName(Map p) {
+  final n = _heroProfName(p);
+  if (n.isEmpty) return 'Player';
+  return n.split(RegExp(r'\s+')).first;
+}
+
+String _heroInitials(String name) {
+  final parts =
+      name.trim().split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+  if (parts.isEmpty) return '?';
+  if (parts.length == 1) {
+    final p = parts.first;
+    return (p.length >= 2 ? p.substring(0, 2) : p).toUpperCase();
   }
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
 
-  /// "Today, 6:00 PM" — near dates read as words, anything past this week
-  /// falls back to the date.
-  String _whenLine(DateTime dt) {
-    final now = DateTime.now();
-    final days = DateTime(dt.year, dt.month, dt.day)
-        .difference(DateTime(now.year, now.month, now.day))
-        .inDays;
-    final day = days == 0
-        ? 'Today'
-        : days == 1
-            ? 'Tomorrow'
-            : (days > 1 && days < 7)
-                ? _weekdays[dt.weekday - 1]
-                : '${_months[dt.month - 1]} ${dt.day}';
-    return '$day, ${_clock(dt)}';
-  }
+/// "Karim & Sara", "Karim & open", "Open team" — the empty half of a team is
+/// named, not hidden, because these heroes often show a match still filling.
+String _heroSideName(List<Map> players) {
+  if (players.isEmpty) return 'Open team';
+  if (players.length == 1) return '${_heroFirstName(players.first)} & open';
+  return '${_heroFirstName(players[0])} & ${_heroFirstName(players[1])}';
+}
 
-  String _countdown(DateTime dt) {
-    final diff = dt.difference(DateTime.now());
-    if (diff.isNegative) return 'now';
-    if (diff.inHours >= 24) return 'in ${diff.inDays}d';
-    if (diff.inHours >= 1) return 'in ${diff.inHours}h ${diff.inMinutes % 60}m';
-    return 'in ${diff.inMinutes}m';
-  }
+/// The lineup split into my team and theirs, me first on my side.
+({List<Map> us, List<Map> them}) _heroTeams(
+    Map<String, dynamic> match, String? myId) {
+  final all =
+      ((match['match_players'] as List?) ?? const []).whereType<Map>().toList();
+  String teamOf(Map p) => (p['team'] as String? ?? 'a').toLowerCase();
+  final myTeam = teamOf(all.firstWhere((p) => p['player_id'] == myId,
+      orElse: () => <String, dynamic>{'team': 'a'}));
+  final us = all.where((p) => teamOf(p) == myTeam).toList()
+    ..sort((a, b) => a['player_id'] == myId
+        ? -1
+        : b['player_id'] == myId
+            ? 1
+            : 0);
+  return (us: us, them: all.where((p) => teamOf(p) != myTeam).toList());
+}
 
-  static String _profName(Map p) =>
-      ((p['profiles'] as Map?)?['name'] as String?)?.trim() ?? '';
+/// One player circle, or a hollow "+" for a seat nobody has taken yet.
+class _HeroSeat extends StatelessWidget {
+  final Map? player;
+  final Color color;
+  final double size;
+  const _HeroSeat(this.player, {required this.color, this.size = 46});
 
-  static String _firstName(Map p) {
-    final n = _profName(p);
-    if (n.isEmpty) return 'Player';
-    return n.split(RegExp(r'\s+')).first;
-  }
-
-  static String _initials(String name) {
-    final parts =
-        name.trim().split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
-    if (parts.isEmpty) return '?';
-    if (parts.length == 1) {
-      final p = parts.first;
-      return (p.length >= 2 ? p.substring(0, 2) : p).toUpperCase();
-    }
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-
-  /// "Karim & Sara", "Karim & open", "Open team" — the empty half of a team is
-  /// named, not hidden, because this hero mostly shows matches still filling.
-  static String _sideName(List<Map> players) {
-    if (players.isEmpty) return 'Open team';
-    if (players.length == 1) return '${_firstName(players.first)} & open';
-    return '${_firstName(players[0])} & ${_firstName(players[1])}';
-  }
-
-  /// One player circle, or a hollow "+" for a slot nobody has taken yet.
-  Widget _slot(Map? p, Color color, double size) {
+  @override
+  Widget build(BuildContext context) {
+    final p = player;
     if (p == null) {
       return Container(
         width: size,
@@ -1765,15 +1788,15 @@ class _NextMatchHero extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: AppColors.hero2,
-          border: Border.all(
-              color: Colors.white.withValues(alpha: 0.30), width: 1.5),
+          border:
+              Border.all(color: Colors.white.withValues(alpha: 0.30), width: 1.5),
         ),
         child: Icon(Icons.add_rounded,
             size: size * 0.42, color: Colors.white.withValues(alpha: 0.55)),
       );
     }
     final url = ((p['profiles'] as Map?)?['avatar_url'] as String?)?.trim() ?? '';
-    final label = Text(_initials(_profName(p)),
+    final label = Text(_heroInitials(_heroProfName(p)),
         style: AppText.bodyStrong(color)
             .copyWith(fontSize: size * 0.32, fontWeight: FontWeight.w800));
     return Container(
@@ -1796,9 +1819,16 @@ class _NextMatchHero extends StatelessWidget {
               errorBuilder: (_, __, ___) => label),
     );
   }
+}
 
-  /// A team: two overlapping circles (padel is 2v2) + the pair's name.
-  Widget _side(List<Map> players, Color color) {
+/// A team: two overlapping seats (padel is 2v2) + the pair's name.
+class _HeroSide extends StatelessWidget {
+  final List<Map> players;
+  final Color color;
+  const _HeroSide(this.players, {required this.color});
+
+  @override
+  Widget build(BuildContext context) {
     const size = 46.0;
     const overlap = 13.0;
     return Column(children: [
@@ -1808,23 +1838,71 @@ class _NextMatchHero extends StatelessWidget {
         child: Stack(children: [
           Positioned(
               left: 0,
-              child: _slot(players.isNotEmpty ? players[0] : null, color, size)),
+              child: _HeroSeat(players.isNotEmpty ? players[0] : null,
+                  color: color, size: size)),
           Positioned(
               left: size - overlap,
-              child:
-                  _slot(players.length > 1 ? players[1] : null, color, size)),
+              child: _HeroSeat(players.length > 1 ? players[1] : null,
+                  color: color, size: size)),
         ]),
       ),
       const SizedBox(height: 8),
-      Text(_sideName(players),
+      Text(_heroSideName(players),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
           style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 12.5)),
     ]);
   }
+}
 
-  Widget _detailRow(IconData icon, String text) => Row(children: [
+/// Us vs them, with the format pill and ranked/casual caption between.
+class _HeroLineup extends StatelessWidget {
+  final Map<String, dynamic> match;
+  final String? myId;
+  const _HeroLineup({required this.match, this.myId});
+
+  @override
+  Widget build(BuildContext context) {
+    final teams = _heroTeams(match, myId);
+    final ranked = match['match_type'] == 'ranked';
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(child: _HeroSide(teams.us, color: AppColors.primary)),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 6),
+          Text('VS',
+              style:
+                  AppText.stat(19, AppColors.heroInk).copyWith(letterSpacing: 0.5)),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.09),
+                borderRadius: BorderRadius.circular(6)),
+            child: Text('DOUBLES',
+                style: AppText.tag(AppColors.heroFaint)
+                    .copyWith(fontSize: 9.5, letterSpacing: 0.8)),
+          ),
+          const SizedBox(height: 5),
+          Text(ranked ? 'Ranked' : 'Casual',
+              style: AppText.small(ranked ? AppColors.gold : AppColors.heroFaint)
+                  .copyWith(fontSize: 10.5)),
+        ]),
+      ),
+      Expanded(child: _HeroSide(teams.them, color: AppColors.heroFaint)),
+    ]);
+  }
+}
+
+/// The inset panel: where it is, when it is.
+class _HeroDetails extends StatelessWidget {
+  final String venueLine;
+  final String timeLine;
+  const _HeroDetails({required this.venueLine, required this.timeLine});
+
+  static Widget _row(IconData icon, String text) => Row(children: [
         Icon(icon, size: 14, color: AppColors.heroFaint),
         const SizedBox(width: 8),
         Expanded(
@@ -1836,31 +1914,52 @@ class _NextMatchHero extends StatelessWidget {
       ]);
 
   @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(12)),
+        child: Column(children: [
+          _row(Icons.place_rounded, venueLine),
+          const SizedBox(height: 7),
+          _row(Icons.schedule_rounded, timeLine),
+        ]),
+      );
+}
+
+/// "✓ Venue confirmed" once a court is attached, honest about it when not.
+Widget _heroVenueStamp(bool hasCourt) => Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(hasCourt ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+          size: 14, color: hasCourt ? AppColors.success : AppColors.gold),
+      const SizedBox(width: 6),
+      Text(hasCourt ? 'Venue confirmed' : 'Court to be agreed',
+          style: AppText.tag(hasCourt ? AppColors.success : AppColors.gold)
+              .copyWith(fontSize: 11)),
+    ]);
+
+// ── Next-match hero (placed player, a match is booked/live) ──────────────────
+
+class _NextMatchHero extends StatelessWidget {
+  final Map<String, dynamic> match;
+  final String? myId;
+  final VoidCallback onTap;
+  const _NextMatchHero({required this.match, required this.onTap, this.myId});
+
+  String _countdown(DateTime dt) {
+    final diff = dt.difference(DateTime.now());
+    if (diff.isNegative) return 'now';
+    if (diff.inHours >= 24) return 'in ${diff.inDays}d';
+    if (diff.inHours >= 1) return 'in ${diff.inHours}h ${diff.inMinutes % 60}m';
+    return 'in ${diff.inMinutes}m';
+  }
+
+  @override
   Widget build(BuildContext context) {
     final status = match['status'] as String? ?? 'open';
     final live = status == 'in_progress';
-    final court = match['courts'] as Map?;
-    final venue = (court?['venue_name'] as String?)?.trim() ?? '';
-    final courtLabel = (court?['name'] as String?)?.trim() ?? '';
     final hasCourt = match['court_id'] != null;
-    final venueLine = [venue, courtLabel].where((s) => s.isNotEmpty).join(' — ');
-    final ranked = match['match_type'] == 'ranked';
     final dt = DateTime.tryParse(match['scheduled_at'] as String? ?? '')?.toLocal();
-
-    // Split the lineup into my team and theirs, me first on my side.
-    final all = ((match['match_players'] as List?) ?? const [])
-        .whereType<Map>()
-        .toList();
-    String teamOf(Map p) => (p['team'] as String? ?? 'a').toLowerCase();
-    final myTeam = teamOf(all.firstWhere((p) => p['player_id'] == myId,
-        orElse: () => <String, dynamic>{'team': 'a'}));
-    final us = all.where((p) => teamOf(p) == myTeam).toList()
-      ..sort((a, b) => a['player_id'] == myId
-          ? -1
-          : b['player_id'] == myId
-              ? 1
-              : 0);
-    final them = all.where((p) => teamOf(p) != myTeam).toList();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
@@ -1911,62 +2010,17 @@ class _NextMatchHero extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 // Us vs them — filled seats show the player, empty ones a "+".
-                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Expanded(child: _side(us, AppColors.primary)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const SizedBox(height: 6),
-                      Text('VS',
-                          style: AppText.stat(19, AppColors.heroInk)
-                              .copyWith(letterSpacing: 0.5)),
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.09),
-                            borderRadius: BorderRadius.circular(6)),
-                        child: Text('DOUBLES',
-                            style: AppText.tag(AppColors.heroFaint)
-                                .copyWith(fontSize: 9.5, letterSpacing: 0.8)),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(ranked ? 'Ranked' : 'Casual',
-                          style: AppText.small(
-                                  ranked ? AppColors.gold : AppColors.heroFaint)
-                              .copyWith(fontSize: 10.5)),
-                    ]),
-                  ),
-                  Expanded(child: _side(them, AppColors.heroFaint)),
-                ]),
+                _HeroLineup(match: match, myId: myId),
                 const SizedBox(height: 18),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                  decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.07),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Column(children: [
-                    _detailRow(Icons.place_rounded,
-                        venueLine.isEmpty ? 'Venue to be agreed' : venueLine),
-                    const SizedBox(height: 7),
-                    _detailRow(
-                        Icons.schedule_rounded,
-                        live
-                            ? 'Underway — good luck!'
-                            : (dt != null ? _whenLine(dt) : 'Time to be set')),
-                  ]),
+                _HeroDetails(
+                  venueLine: _heroVenue(match),
+                  timeLine: live
+                      ? 'Underway — good luck!'
+                      : (dt != null ? _heroWhen(dt) : 'Time to be set'),
                 ),
                 const SizedBox(height: 14),
                 Row(children: [
-                  Icon(hasCourt ? Icons.check_circle_rounded : Icons.info_outline_rounded,
-                      size: 14,
-                      color: hasCourt ? AppColors.success : AppColors.gold),
-                  const SizedBox(width: 6),
-                  Text(hasCourt ? 'Venue confirmed' : 'Court to be agreed',
-                      style: AppText.tag(
-                              hasCourt ? AppColors.success : AppColors.gold)
-                          .copyWith(fontSize: 11)),
+                  _heroVenueStamp(hasCourt),
                   const Spacer(),
                   Text('View Details →',
                       style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 13.5)),
@@ -1984,15 +2038,16 @@ class _NextMatchHero extends StatelessWidget {
 
 class _LiveHero extends StatelessWidget {
   final Map<String, dynamic> match;
+  final String? myId;
   final VoidCallback onEnterScore;
-  const _LiveHero({required this.match, required this.onEnterScore});
+  const _LiveHero(
+      {required this.match, required this.onEnterScore, this.myId});
 
   @override
   Widget build(BuildContext context) {
-    final court = match['courts'] as Map?;
-    final courtName = court?['venue_name'] as String? ??
-        court?['name'] as String? ?? 'Your court';
     final players = (match['match_players'] as List?)?.length ?? 0;
+    final hasCourt = match['court_id'] != null;
+    final dt = DateTime.tryParse(match['scheduled_at'] as String? ?? '')?.toLocal();
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
       child: Container(
@@ -2031,15 +2086,18 @@ class _LiveHero extends StatelessWidget {
                 Text('$players/4 checked in',
                     style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 11)),
               ]),
-              const SizedBox(height: 16),
-              Text(courtName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.stat(21, AppColors.heroInk).copyWith(letterSpacing: -0.4)),
-              const SizedBox(height: 6),
-              Text('Your match is on — good luck! Enter the score when you finish.',
-                  style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 13, height: 1.5)),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
+              _HeroLineup(match: match, myId: myId),
+              const SizedBox(height: 18),
+              _HeroDetails(
+                venueLine: _heroVenue(match),
+                timeLine: dt != null
+                    ? 'Started ${_heroClock(dt)} — good luck!'
+                    : 'Your match is on — good luck!',
+              ),
+              const SizedBox(height: 12),
+              _heroVenueStamp(hasCourt),
+              const SizedBox(height: 14),
               AppButton('Enter score when done',
                   full: true, height: 48, icon: Icons.scoreboard_rounded, onPressed: onEnterScore),
             ]),
