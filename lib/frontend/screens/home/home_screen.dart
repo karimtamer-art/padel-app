@@ -162,16 +162,29 @@ class _HomeScreenState extends State<HomeScreen> {
       // in pending_confirm/disputed must always keep an entry point here (the
       // status filter already excludes completed/cancelled, so the list stays
       // small, and stale 'open' ones are auto-cancelled by the sweep).
+      // NOTE: postgrest's .order() defaults to ascending: false, so this pulls
+      // the LATEST rows — deliberate, it guarantees upcoming matches survive the
+      // limit even when old pending_confirm/disputed ones pile up. The list is
+      // re-sorted soonest-first below, which is the order the UI wants.
       final rows = await _db
           .from('matches')
-          .select('id, status, match_type, scheduled_at, courts(name, venue_name, lat, lng, address), match_players(player_id)')
+          .select('id, status, match_type, scheduled_at, court_id, '
+              'courts(name, venue_name, lat, lng, address), '
+              'match_players(player_id, team, profiles(name, avatar_url))')
           .inFilter('id', ids)
           .inFilter('status',
               ['open', 'full', 'in_progress', 'pending_confirm', 'disputed'])
           .order('scheduled_at')
-          .limit(8);
+          .limit(20);
 
-      if (mounted) _myMatches = List<Map<String, dynamic>>.from(rows as List);
+      final list = List<Map<String, dynamic>>.from(rows as List)
+        ..sort((a, b) {
+          final da = DateTime.tryParse(a['scheduled_at'] as String? ?? '');
+          final db = DateTime.tryParse(b['scheduled_at'] as String? ?? '');
+          if (da == null || db == null) return 0;
+          return da.compareTo(db);
+        });
+      if (mounted) _myMatches = list;
     } catch (_) {}
   }
 
@@ -240,17 +253,48 @@ class _HomeScreenState extends State<HomeScreen> {
     ProfileService.markPlacementRevealed();
   }
 
-  /// The soonest match to surface in the hero: the next future slot, or one
-  /// that's currently in progress. `_myMatches` is already sorted ascending by
-  /// scheduled_at, so the first qualifying row is the closest one.
+  /// The match to surface in the hero: the soonest slot still ahead, or — when
+  /// the start time has just passed — a match that's still alive.
+  ///
+  /// That second case matters: an under-filled match stays 'open' and keeps
+  /// filling for the server's grace window past scheduled_at (mm_grace(), 30
+  /// min) before expire_stale_matches cancels it. `_liveMatch` only covers
+  /// 'full'/'in_progress', so without this an open match whose time just passed
+  /// fell through every hero branch and Home flipped to "NO MATCH SCHEDULED"
+  /// while the player still had a real match.
   Map<String, dynamic>? _nextUpcomingMatch() {
     final now = DateTime.now();
+    const grace = Duration(minutes: 30); // mirrors mm_grace()
+    Map<String, dynamic>? next;
+    DateTime? nextAt;
+    Map<String, dynamic>? started;
+    DateTime? startedAt;
+
     for (final m in _myMatches) {
-      if (m['status'] == 'in_progress') return m;
+      final status = m['status'] as String?;
+      if (status != 'open' && status != 'full' && status != 'in_progress') {
+        continue; // pending_confirm / disputed have their own surfaces
+      }
       final dt = DateTime.tryParse(m['scheduled_at'] as String? ?? '')?.toLocal();
-      if (dt != null && dt.isAfter(now)) return m;
+      if (dt == null) {
+        if (status == 'in_progress') return m;
+        continue;
+      }
+      if (dt.isAfter(now)) {
+        if (nextAt == null || dt.isBefore(nextAt)) {
+          next = m;
+          nextAt = dt;
+        }
+      } else if (status == 'in_progress' || dt.isAfter(now.subtract(grace))) {
+        // Already started but not over: keep the one that started most recently.
+        if (startedAt == null || dt.isAfter(startedAt)) {
+          started = m;
+          startedAt = dt;
+        }
+      }
     }
-    return null;
+    // A match happening right now beats one scheduled later.
+    return started ?? next;
   }
 
   Future<void> _openMatch(BuildContext c, String id) async {
@@ -439,6 +483,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 else if (nextMatch != null)
                   _NextMatchHero(
                     match: nextMatch,
+                    myId: _db.auth.currentUser?.id,
                     onTap: () => _openMatch(context, nextMatch['id'] as String),
                   )
                 // Otherwise nudge them to book their next game (never blank).
@@ -1643,17 +1688,35 @@ class _BookNextHero extends StatelessWidget {
 
 class _NextMatchHero extends StatelessWidget {
   final Map<String, dynamic> match;
+  final String? myId;
   final VoidCallback onTap;
-  const _NextMatchHero({required this.match, required this.onTap});
+  const _NextMatchHero({required this.match, required this.onTap, this.myId});
 
   static const _months = ['Jan','Feb','Mar','Apr','May','Jun',
                           'Jul','Aug','Sep','Oct','Nov','Dec'];
+  static const _weekdays = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
-  String _fullWhen(DateTime dt) {
+  static String _clock(DateTime dt) {
     final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final m = dt.minute.toString().padLeft(2, '0');
-    final ampm = dt.hour < 12 ? 'AM' : 'PM';
-    return '${_months[dt.month - 1]} ${dt.day}  ·  $h:$m $ampm';
+    return '$h:$m ${dt.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  /// "Today, 6:00 PM" — near dates read as words, anything past this week
+  /// falls back to the date.
+  String _whenLine(DateTime dt) {
+    final now = DateTime.now();
+    final days = DateTime(dt.year, dt.month, dt.day)
+        .difference(DateTime(now.year, now.month, now.day))
+        .inDays;
+    final day = days == 0
+        ? 'Today'
+        : days == 1
+            ? 'Tomorrow'
+            : (days > 1 && days < 7)
+                ? _weekdays[dt.weekday - 1]
+                : '${_months[dt.month - 1]} ${dt.day}';
+    return '$day, ${_clock(dt)}';
   }
 
   String _countdown(DateTime dt) {
@@ -1664,16 +1727,140 @@ class _NextMatchHero extends StatelessWidget {
     return 'in ${diff.inMinutes}m';
   }
 
+  static String _profName(Map p) =>
+      ((p['profiles'] as Map?)?['name'] as String?)?.trim() ?? '';
+
+  static String _firstName(Map p) {
+    final n = _profName(p);
+    if (n.isEmpty) return 'Player';
+    return n.split(RegExp(r'\s+')).first;
+  }
+
+  static String _initials(String name) {
+    final parts =
+        name.trim().split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      final p = parts.first;
+      return (p.length >= 2 ? p.substring(0, 2) : p).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  /// "Karim & Sara", "Karim & open", "Open team" — the empty half of a team is
+  /// named, not hidden, because this hero mostly shows matches still filling.
+  static String _sideName(List<Map> players) {
+    if (players.isEmpty) return 'Open team';
+    if (players.length == 1) return '${_firstName(players.first)} & open';
+    return '${_firstName(players[0])} & ${_firstName(players[1])}';
+  }
+
+  /// One player circle, or a hollow "+" for a slot nobody has taken yet.
+  Widget _slot(Map? p, Color color, double size) {
+    if (p == null) {
+      return Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.hero2,
+          border: Border.all(
+              color: Colors.white.withValues(alpha: 0.30), width: 1.5),
+        ),
+        child: Icon(Icons.add_rounded,
+            size: size * 0.42, color: Colors.white.withValues(alpha: 0.55)),
+      );
+    }
+    final url = ((p['profiles'] as Map?)?['avatar_url'] as String?)?.trim() ?? '';
+    final label = Text(_initials(_profName(p)),
+        style: AppText.bodyStrong(color)
+            .copyWith(fontSize: size * 0.32, fontWeight: FontWeight.w800));
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withValues(alpha: 0.16),
+        border: Border.all(color: color, width: 2),
+      ),
+      child: url.isEmpty
+          ? label
+          : Image.network(url,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              cacheWidth: (size * 3).round(),
+              errorBuilder: (_, __, ___) => label),
+    );
+  }
+
+  /// A team: two overlapping circles (padel is 2v2) + the pair's name.
+  Widget _side(List<Map> players, Color color) {
+    const size = 46.0;
+    const overlap = 13.0;
+    return Column(children: [
+      SizedBox(
+        width: size * 2 - overlap,
+        height: size,
+        child: Stack(children: [
+          Positioned(
+              left: 0,
+              child: _slot(players.isNotEmpty ? players[0] : null, color, size)),
+          Positioned(
+              left: size - overlap,
+              child:
+                  _slot(players.length > 1 ? players[1] : null, color, size)),
+        ]),
+      ),
+      const SizedBox(height: 8),
+      Text(_sideName(players),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 12.5)),
+    ]);
+  }
+
+  Widget _detailRow(IconData icon, String text) => Row(children: [
+        Icon(icon, size: 14, color: AppColors.heroFaint),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.small(AppColors.heroInk).copyWith(fontSize: 12.5)),
+        ),
+      ]);
+
   @override
   Widget build(BuildContext context) {
     final status = match['status'] as String? ?? 'open';
     final live = status == 'in_progress';
     final court = match['courts'] as Map?;
-    final courtName = court?['venue_name'] as String? ??
-        court?['name'] as String? ?? 'Court to be agreed';
-    final players = (match['match_players'] as List?)?.length ?? 0;
+    final venue = (court?['venue_name'] as String?)?.trim() ?? '';
+    final courtLabel = (court?['name'] as String?)?.trim() ?? '';
+    final hasCourt = match['court_id'] != null;
+    final venueLine = [venue, courtLabel].where((s) => s.isNotEmpty).join(' — ');
     final ranked = match['match_type'] == 'ranked';
     final dt = DateTime.tryParse(match['scheduled_at'] as String? ?? '')?.toLocal();
+
+    // Split the lineup into my team and theirs, me first on my side.
+    final all = ((match['match_players'] as List?) ?? const [])
+        .whereType<Map>()
+        .toList();
+    String teamOf(Map p) => (p['team'] as String? ?? 'a').toLowerCase();
+    final myTeam = teamOf(all.firstWhere((p) => p['player_id'] == myId,
+        orElse: () => <String, dynamic>{'team': 'a'}));
+    final us = all.where((p) => teamOf(p) == myTeam).toList()
+      ..sort((a, b) => a['player_id'] == myId
+          ? -1
+          : b['player_id'] == myId
+              ? 1
+              : 0);
+    final them = all.where((p) => teamOf(p) != myTeam).toList();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
@@ -1711,7 +1898,7 @@ class _NextMatchHero extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    AppTag(live ? 'Live now' : 'Next match',
+                    AppTag(live ? 'LIVE NOW' : 'NEXT MATCH',
                         color: live ? AppColors.success : AppColors.primary, solid: true),
                     if (!live && dt != null)
                       Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1719,38 +1906,69 @@ class _NextMatchHero extends StatelessWidget {
                         const SizedBox(width: 5),
                         Text(_countdown(dt),
                             style: AppText.tag(AppColors.gold).copyWith(fontSize: 11)),
-                      ])
-                    else
-                      AppTag(ranked ? 'Ranked' : 'Casual', color: AppColors.heroFaint),
+                      ]),
                   ],
                 ),
-                const SizedBox(height: 16),
-                Text(courtName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.stat(21, AppColors.heroInk).copyWith(letterSpacing: -0.4)),
-                const SizedBox(height: 6),
-                Text(
-                    live
-                        ? 'Your match is underway — good luck!'
-                        : (dt != null ? _fullWhen(dt) : 'Time to be set'),
-                    style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 13)),
-                const SizedBox(height: 16),
-                Row(children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.09),
-                        borderRadius: BorderRadius.circular(8)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.group_rounded, size: 13, color: AppColors.heroInk),
-                      const SizedBox(width: 6),
-                      Text('$players/4 players',
-                          style: AppText.tag(AppColors.heroInk).copyWith(fontSize: 11, letterSpacing: 0.2)),
+                const SizedBox(height: 18),
+                // Us vs them — filled seats show the player, empty ones a "+".
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(child: _side(us, AppColors.primary)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const SizedBox(height: 6),
+                      Text('VS',
+                          style: AppText.stat(19, AppColors.heroInk)
+                              .copyWith(letterSpacing: 0.5)),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.09),
+                            borderRadius: BorderRadius.circular(6)),
+                        child: Text('DOUBLES',
+                            style: AppText.tag(AppColors.heroFaint)
+                                .copyWith(fontSize: 9.5, letterSpacing: 0.8)),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(ranked ? 'Ranked' : 'Casual',
+                          style: AppText.small(
+                                  ranked ? AppColors.gold : AppColors.heroFaint)
+                              .copyWith(fontSize: 10.5)),
                     ]),
                   ),
+                  Expanded(child: _side(them, AppColors.heroFaint)),
+                ]),
+                const SizedBox(height: 18),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                  decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Column(children: [
+                    _detailRow(Icons.place_rounded,
+                        venueLine.isEmpty ? 'Venue to be agreed' : venueLine),
+                    const SizedBox(height: 7),
+                    _detailRow(
+                        Icons.schedule_rounded,
+                        live
+                            ? 'Underway — good luck!'
+                            : (dt != null ? _whenLine(dt) : 'Time to be set')),
+                  ]),
+                ),
+                const SizedBox(height: 14),
+                Row(children: [
+                  Icon(hasCourt ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+                      size: 14,
+                      color: hasCourt ? AppColors.success : AppColors.gold),
+                  const SizedBox(width: 6),
+                  Text(hasCourt ? 'Venue confirmed' : 'Court to be agreed',
+                      style: AppText.tag(
+                              hasCourt ? AppColors.success : AppColors.gold)
+                          .copyWith(fontSize: 11)),
                   const Spacer(),
-                  Text('View details →',
+                  Text('View Details →',
                       style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 13.5)),
                 ]),
               ]),
