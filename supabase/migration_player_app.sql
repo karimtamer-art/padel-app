@@ -2525,8 +2525,12 @@ begin
      and (select count(*) from public.match_players mp2 where mp2.match_id = m.id) < 4
      and not exists (select 1 from public.match_players mp3
                       where mp3.match_id = m.id and mp3.player_id = v_uid)
+     -- Casual matches are UNRATED, so neither the rating band nor the
+     -- placement/placed split applies — every player sees every open casual
+     -- match in their city. Competitive keeps both gates.
      and (
-       case when v_placement
+       m.match_type = 'casual'
+       or case when v_placement
          then coalesce(cp.placement_played, 0) < 5
          else coalesce(cp.placement_played, 0) >= 5
               and abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0))
@@ -2756,13 +2760,15 @@ declare
   v_rating numeric; v_city text; v_plac boolean; v_window numeric;
   v_status text; v_cby uuid; v_center numeric; v_created timestamptz; v_sched timestamptz;
   v_court uuid; v_ccity text; v_courtcity text; v_cplac boolean; v_count int;
+  v_type text;
 begin
   select coalesce(p.rating, p.level, 2.0), p.city, (coalesce(p.placement_played, 0) < 5)
     into v_rating, v_city, v_plac from public.profiles p where p.id = p_player;
   if not found then return false; end if;
 
-  select m.status, m.created_by, coalesce(m.mm_center_rating, 2.0), m.created_at, m.scheduled_at, m.court_id
-    into v_status, v_cby, v_center, v_created, v_sched, v_court
+  select m.status, m.created_by, coalesce(m.mm_center_rating, 2.0), m.created_at,
+         m.scheduled_at, m.court_id, m.match_type
+    into v_status, v_cby, v_center, v_created, v_sched, v_court, v_type
     from public.matches m where m.id = p_match;
   if not found or v_status <> 'open' or v_cby = p_player then return false; end if;
   if v_sched <= now() - public.mm_grace() then return false; end if;  -- past grace
@@ -2780,11 +2786,14 @@ begin
     from public.profiles where id = v_cby;
   select city into v_courtcity from public.courts where id = v_court;
 
-  if v_plac or v_cplac then
-    if not (v_plac and v_cplac) then return false; end if;
-  elsif abs(v_rating - v_center)
-        > public.mm_band_halfwidth(extract(epoch from (now() - v_created)) / 60.0) then
-    return false;
+  -- Casual is unrated: no band, no placement/placed split (see mm_candidates).
+  if v_type is distinct from 'casual' then
+    if v_plac or v_cplac then
+      if not (v_plac and v_cplac) then return false; end if;
+    elsif abs(v_rating - v_center)
+          > public.mm_band_halfwidth(extract(epoch from (now() - v_created)) / 60.0) then
+      return false;
+    end if;
   end if;
 
   if v_city is not null and coalesce(v_courtcity, v_ccity) is not null
