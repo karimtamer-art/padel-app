@@ -85,6 +85,44 @@ before changing anything.
   than skipping; keep `RatingEngine` and the SQL `_settle_rating` in lockstep.
 - When a task needs DB changes: update the migration file AND list the exact
   SQL the user must re-run in your summary.
+- `postgrest`'s `.order(col)` defaults to **descending** (`ascending: false`),
+  unlike the JS client. It has bitten chat message order and the Home match
+  list — pass `ascending:` explicitly or sort in Dart.
+
+## Two developers, one repo (since 2026-07-31)
+
+- Two laptops push to `origin/master`. The other collaborator is non-technical
+  and also uses Claude Code — Claude owns the git mechanics: pull → commit →
+  push, explained plainly.
+- Loop: `git pull --rebase origin master` → commit → push (`pull.rebase=true`
+  is set). **Never force-push master.**
+- High-collision files — name what you touched in your summary:
+  `supabase/migration_player_app.sql`, `pubspec.yaml` (version),
+  `lib/frontend/widgets/common.dart`.
+- **Only one person runs SQL on the live DB.** Always say which delta must run
+  and ask whether the other person already ran it.
+- Claude's memory dir is per-laptop and NOT in git — durable facts belong here
+  in CLAUDE.md, not in memory.
+- Commits: no `Co-Authored-By` line. On Windows use a PowerShell here-string
+  (`git commit -m @'…'@`, closing `'@` at column 0) — bash heredocs fail.
+- `desktop_admin/` and `supabase/demo/` are local-only (gitignored).
+
+## Live-DB drift traps
+
+- The live DB predates parts of the migration: `create table if not exists`
+  blocks are SKIPPED, so columns/CHECKs inside them never apply. Use
+  `alter table … add column if not exists`, and `drop constraint if exists`
+  then re-add to widen a CHECK.
+- **Adding a status/enum value? Widen the live CHECK in the same change.**
+  `matches_status_chk` (from `migrations/0003`) lacked `pending_confirm`, so
+  every RANKED score submission failed until 2026-08-01
+  (`changes/2026-08-01_matches_status_chk.sql`). Casual matches skip that
+  status and kept working, which hid the bug.
+- Every DB change also gets a standalone delta in `supabase/changes/` so only
+  the new part needs running on live.
+- `profiles` RLS in the repo is read-own-row, but the live DB is looser
+  (organizer/opponent names do resolve). Verify against live before assuming
+  an embed returns other players' rows.
 
 ## Known intentional quirks (not bugs)
 
