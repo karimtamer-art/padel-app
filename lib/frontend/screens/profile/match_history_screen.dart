@@ -8,8 +8,11 @@ import 'settings_common.dart';
 class _Match {
   final bool won;
   final String opp, score, date, type, court;
-  final int elo; // signed delta
-  const _Match(this.won, this.opp, this.score, this.date, this.type, this.court, this.elo);
+  /// Signed rating change from `ranking_history` (v2 native 0–7 points), or
+  /// null when the match never settled one (casual, or pre-v2 rows).
+  final double? delta;
+  const _Match(this.won, this.opp, this.score, this.date, this.type, this.court,
+      this.delta);
 }
 
 class MatchHistoryScreen extends StatefulWidget {
@@ -39,10 +42,30 @@ class _MatchHistoryScreenState extends State<MatchHistoryScreen> {
       return;
     }
     try {
+      // Rating v2 settles into ranking_history (native 0–7 points); the legacy
+      // match_players.elo_before/elo_after columns are no longer written, so
+      // don't read them — a 0 there is "not recorded", not "unrated".
+      final deltas = <String, double>{};
+      try {
+        final hist = await db
+            .from('ranking_history')
+            .select('match_id, delta')
+            .eq('profile_id', uid)
+            .not('match_id', 'is', null)
+            .limit(500);
+        for (final h in List<Map<String, dynamic>>.from(hist as List)) {
+          final mid = h['match_id'] as String?;
+          final d = (h['delta'] as num?)?.toDouble();
+          if (mid != null && d != null) deltas[mid] = d;
+        }
+      } catch (_) {
+        // pre-v2 database (no delta column) — history just shows no change
+      }
+
       final rows = await db
           .from('match_players')
           .select('''
-            team, elo_before, elo_after,
+            team,
             matches!inner(
               id, status, match_type, scheduled_at, winner_team,
               score_team_a, score_team_b,
@@ -89,11 +112,14 @@ class _MatchHistoryScreenState extends State<MatchHistoryScreen> {
         final date = dt == null ? '—' : '${months[dt.month - 1]} ${dt.day}';
         final court = (m['courts'] as Map?)?['venue_name'] as String? ??
             (m['courts'] as Map?)?['name'] as String? ?? '—';
-        final before = (r['elo_before'] as num?)?.toInt();
-        final after = (r['elo_after'] as num?)?.toInt();
-        final delta = (before != null && after != null) ? after - before : 0;
-        list.add(_Match(won, opp, score, date,
-            m['match_type'] == 'ranked' ? 'Competitive' : 'Casual', court, delta));
+        list.add(_Match(
+            won,
+            opp,
+            score,
+            date,
+            m['match_type'] == 'ranked' ? 'Competitive' : 'Casual',
+            court,
+            deltas[m['id'] as String? ?? '']));
       }
       if (mounted) setState(() { _all = list; _loading = false; });
     } catch (_) {
@@ -237,12 +263,19 @@ class _MatchRow extends StatelessWidget {
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
           Text(m.score, style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
           const SizedBox(height: 3),
-          if (m.elo != 0)
-            Text(m.elo > 0 ? '+${m.elo} ELO' : '${m.elo} ELO',
-                style: AppText.tag(m.elo > 0 ? AppColors.success : AppColors.danger)
+          // Only a casual match may be labelled "Casual" — a competitive one
+          // with no settled delta shows nothing rather than contradicting the
+          // "Competitive" line on the left.
+          if (m.type == 'Casual')
+            Text('Casual',
+                style: AppText.tag(AppColors.inkFaint)
                     .copyWith(fontSize: 10.5, letterSpacing: 0))
-          else
-            Text('Casual', style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10.5, letterSpacing: 0)),
+          else if (m.delta != null && m.delta != 0)
+            Text(
+                '${m.delta! > 0 ? '+' : '−'}${m.delta!.abs().toStringAsFixed(2)}',
+                style: AppText.tag(
+                        m.delta! > 0 ? AppColors.success : AppColors.danger)
+                    .copyWith(fontSize: 10.5, letterSpacing: 0)),
         ]),
       ]),
     );

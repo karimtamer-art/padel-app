@@ -29,6 +29,7 @@ class MatchDetailScreen extends StatefulWidget {
 class _MatchDetailScreenState extends State<MatchDetailScreen> {
   int _view = 0; // 0 lobby, 1 result
   Map<String, dynamic>? _match;
+  Map<String, dynamic>? _myRating; // my ranking_history row for this match
   bool _loading = true;
   bool _busy = false;
   List<List<int>> _sets = [
@@ -46,11 +47,35 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
 
   Future<void> _load() async {
     final m = await MatchService.fetchMatch(widget.matchId);
+    final rating = await _fetchMyRatingChange();
     if (!mounted) return;
     setState(() {
       _match = m;
+      _myRating = rating;
       _loading = false;
     });
+  }
+
+  /// My settled rating change for this match. Rating v2 writes it to
+  /// ranking_history (native 0–7 points); match_players.elo_* is legacy and no
+  /// longer populated, so it can't be used to tell "no change" from "not
+  /// recorded". Null = nothing settled for me.
+  Future<Map<String, dynamic>?> _fetchMyRatingChange() async {
+    final uid = _uid;
+    if (uid == null) return null;
+    try {
+      final row = await Supabase.instance.client
+          .from('ranking_history')
+          .select('rating_before, rating_after, delta')
+          .eq('profile_id', uid)
+          .eq('match_id', widget.matchId)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      return row;
+    } catch (_) {
+      return null; // pre-v2 database
+    }
   }
 
   // ── Derived state ──────────────────────────────────────────────────────
@@ -1078,27 +1103,41 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         ]),
       );
     }
-    // applied — show my delta from match_players (level headline, elo detail)
-    final before = (_me?['elo_before'] as num?)?.toInt();
-    final after = (_me?['elo_after'] as num?)?.toInt();
-    final delta = (before != null && after != null) ? after - before : null;
-    final lvBefore = before != null ? RankingScale.levelFromElo(before) : null;
-    final lvAfter = after != null ? RankingScale.levelFromElo(after) : null;
-    final lvDelta = (lvBefore != null && lvAfter != null) ? lvAfter - lvBefore : null;
+    // Applied — rating v2 keeps my change in ranking_history. Fall back to the
+    // legacy match_players.elo_* pair only for rows settled before v2.
+    final rBefore = (_myRating?['rating_before'] as num?)?.toDouble();
+    final rAfter = (_myRating?['rating_after'] as num?)?.toDouble();
+    final rDelta = (_myRating?['delta'] as num?)?.toDouble() ??
+        ((rBefore != null && rAfter != null) ? rAfter - rBefore : null);
+    final eloBefore = (_me?['elo_before'] as num?)?.toInt();
+    final eloAfter = (_me?['elo_after'] as num?)?.toInt();
+    final lvBefore = rBefore ??
+        (eloBefore != null ? RankingScale.levelFromElo(eloBefore) : null);
+    final lvAfter = rAfter ??
+        (eloAfter != null ? RankingScale.levelFromElo(eloAfter) : null);
+    final lvDelta =
+        rDelta ?? ((lvBefore != null && lvAfter != null) ? lvAfter - lvBefore : null);
+    final delta = lvDelta;
+    // Unknown change reads neutral — a red down-arrow for "not recorded" would
+    // tell the player they lost rating when nothing says they did.
+    final tint = delta == null
+        ? AppColors.inkSoft
+        : (delta >= 0 ? AppColors.success : AppColors.danger);
     return AppCard(
       child: Row(children: [
         Container(
           width: 38, height: 38,
           decoration: BoxDecoration(
-              color: (delta != null && delta >= 0 ? AppColors.success : AppColors.danger)
-                  .withValues(alpha: 0.12),
+              color: tint.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(11)),
           child: Icon(
-              delta != null && delta >= 0
-                  ? Icons.trending_up_rounded
-                  : Icons.trending_down_rounded,
+              delta == null
+                  ? Icons.trending_flat_rounded
+                  : (delta >= 0
+                      ? Icons.trending_up_rounded
+                      : Icons.trending_down_rounded),
               size: 19,
-              color: delta != null && delta >= 0 ? AppColors.success : AppColors.danger),
+              color: tint),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -1110,8 +1149,11 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                       '  (${lvDelta! >= 0 ? '+' : '−'}${lvDelta.abs().toStringAsFixed(2)})'
                     : 'Updated',
                 style: AppText.bodyStrong().copyWith(fontSize: 14)),
-            if (delta != null)
-              Text('ELO $before → $after (${delta >= 0 ? '+' : ''}$delta)',
+            // Only when the headline couldn't show before → after, so the
+            // number isn't printed twice.
+            if (delta != null && (lvBefore == null || lvAfter == null))
+              Text(
+                  'Rating ${delta >= 0 ? '+' : '−'}${delta.abs().toStringAsFixed(2)}',
                   style: AppText.small().copyWith(fontSize: 11)),
           ]),
         ),
