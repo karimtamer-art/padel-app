@@ -85,6 +85,16 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         5;
   }
 
+  // Placement matches played so far (0..5). Same fallback chain as _isUnranked
+  // for pre-migration payloads that don't carry placement_played.
+  static int _placementOf(Map<String, dynamic> p) {
+    final n = (p['placement_played'] as num?)?.toInt() ??
+        (p['competitive_matches'] as num?)?.toInt() ??
+        (p['played'] as num?)?.toInt() ??
+        0;
+    return n.clamp(0, 5);
+  }
+
   static String _tierForRating(double lv) {
     if (lv >= 5.0) return 'elite';
     if (lv >= 3.5) return 'gold';
@@ -474,8 +484,13 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
       heightFactor: 0.74,
       footer: Row(children: [
         Expanded(
-          child: AdminButton('Edit ranking',
-              icon: Icons.edit_outlined,
+          // Unranked players are still in placement — surface the exemption
+          // directly instead of hiding it behind "Edit ranking" (same server
+          // call; admin_set_rating marks the player placed).
+          child: AdminButton(unranked ? 'Skip placement' : 'Edit ranking',
+              icon: unranked
+                  ? Icons.fast_forward_rounded
+                  : Icons.edit_outlined,
               height: 48,
               onPressed: () {
                 Navigator.pop(context);
@@ -559,7 +574,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                 const SizedBox(height: 4),
                 Text(
                     unranked
-                        ? 'Unranked · no division yet'
+                        ? 'Unranked · ${_placementOf(p)}/5 placement matches'
                         : '${_metalName(tier)} · Division ${_divLetter(tier)}',
                     style: AdminText.sans(15, FontWeight.w800, AdminColors.ink)),
               ]),
@@ -611,6 +626,10 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
     final id = p['id'] as String;
     final name = p['name'] as String? ?? 'Player';
     final curRating = _ratingOf(p);
+    // Still in placement → this sheet doubles as the "skip placement" action:
+    // setting a rating server-side also marks the player placed.
+    final skipping = _isUnranked(p);
+    final placed = _placementOf(p);
     double rating = ((curRating / 0.25).round() * 0.25).clamp(0.0, 7.0).toDouble();
     bool anchor = p['is_anchor'] == true;
 
@@ -620,14 +639,14 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
 
     adminSheet(
       context,
-      title: 'Set player rating',
+      title: skipping ? 'Skip placement matches' : 'Set player rating',
       sub: name,
       heightFactor: 0.72,
       footer: AdminButton(
-        'Apply',
+        skipping ? 'Skip placement & rank' : 'Apply',
         full: true,
         height: 50,
-        icon: Icons.check_rounded,
+        icon: skipping ? Icons.fast_forward_rounded : Icons.check_rounded,
         onPressed: () async {
           final sigma = anchor ? 0.30 : 0.50;
           Navigator.pop(context);
@@ -650,7 +669,10 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                 'sigma': sigma,
                 'reliability': ((1 - sigma) * 100).round(),
                 'is_anchor': anchor,
-                'is_provisional': false,
+                // Mirror the server rule: is_provisional = sigma > 0.40 or
+                // competitive_matches < 10. Anchor (σ 0.30) clears it; a
+                // leveling session (σ 0.50) does not.
+                'is_provisional': sigma > 0.40,
                 'competitive_matches': 10,
                 // Server bumps placement_played to >=5 (ranked); mirror it so
                 // the row leaves the 'Unranked' bucket immediately, not on the
@@ -660,8 +682,12 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
               _all.sort((a, b) => _ratingOf(b).compareTo(_ratingOf(a)));
             });
           }
-          adminToast(context,
-              '$name set to Lv ${rating.toStringAsFixed(2)}${anchor ? ' · Anchor' : ''}');
+          adminToast(
+              context,
+              skipping
+                  ? '$name skipped placement · Lv ${rating.toStringAsFixed(2)}'
+                  : '$name set to Lv ${rating.toStringAsFixed(2)}'
+                      '${anchor ? ' · Anchor' : ''}');
         },
       ),
       body: StatefulBuilder(builder: (c, setSheet) {
@@ -669,6 +695,28 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
         final sigma = anchor ? 0.30 : 0.50;
         final reliability = ((1 - sigma) * 100).round();
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (skipping) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: AdminColors.surfaceAlt,
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: AdminColors.line)),
+              child: Row(children: [
+                const Icon(Icons.hourglass_bottom_rounded,
+                    size: 16, color: AdminColors.warn),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                      'Currently unranked · $placed/5 placement matches played. '
+                      'Pick the level that matches their real skill.',
+                      style: AdminText.small(AdminColors.inkFaint)),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 14),
+          ],
           Text('Rating', style: AdminText.strong(AdminColors.inkSoft)),
           const SizedBox(height: 7),
           // Inline scroll wheel — fits inside the sheet (no full-screen dropdown
@@ -737,8 +785,15 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
           ]),
           const SizedBox(height: 12),
           Text(
-              'Sets the rating server-side and marks the player established '
-              '(non-provisional). Logged to the audit trail.',
+              skipping
+                  ? 'Ranks the player at this level immediately — they will not '
+                      'have to finish their remaining ${5 - placed} placement '
+                      'match${5 - placed == 1 ? '' : 'es'}. Their rating still '
+                      'moves normally from here. Logged to the audit trail.'
+                  : 'Sets the rating server-side. Anchor also marks the player '
+                      'established (non-provisional); a leveling session leaves '
+                      'them provisional until their rating settles. Logged to '
+                      'the audit trail.',
               style: AdminText.small(AdminColors.inkFaint)),
         ]);
       }),
