@@ -718,8 +718,9 @@ class _StoreScreenState extends State<StoreScreen> {
   }
 
   void _openTradeIn() {
+    // Categories come back lowercase from the DB ('rackets') — normalise first.
     final rackets = _products
-        .where((p) => (p['category'] as String?) == 'Rackets')
+        .where((p) => _normCat(p['category'] as String?) == 'Rackets')
         .toList();
     showModalBottomSheet(
       context: context,
