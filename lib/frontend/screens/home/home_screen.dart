@@ -19,6 +19,7 @@ import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
 import 'package:padel_clay/backend/services/season_service.dart';
+import 'package:padel_clay/frontend/feature_flags.dart';
 import 'matchmaking_hero.dart';
 import '../leaderboard/season_leaderboard_screen.dart';
 import '../detail/match_detail_screen.dart';
@@ -144,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _fetchUnread(),
       _fetchDmUnread(),
       _fetchFeatured(),
-      _fetchCommunity(),
+      if (Features.community) _fetchCommunity(),
       _fetchBandCount(),
       _fetchResultHero(),
       _fetchSeason(),
@@ -571,27 +572,30 @@ class _HomeScreenState extends State<HomeScreen> {
                     onTap: () => _openLeaderboard(context),
                   ),
                 ],
-                if (!_communityLoaded) ...[
-                  const SizedBox(height: 24),
-                  const SectionHeader('Your Community'),
-                  _communitySkeleton(),
-                ] else ...[
-                  const SizedBox(height: 24),
-                  SectionHeader(
-                      _community == null
-                          ? 'Community'
-                          : (_community!.isMember
-                              ? 'Your Community'
-                              : 'Discover a Community'),
-                      action: (_community?.isMember ?? false) ? 'View' : 'Have a code?',
-                      onAction: (_community?.isMember ?? false)
-                          ? () => _openCommunity(context)
-                          : () => _promptJoinByCode(context)),
-                  if (_community != null)
-                    _communitySection()
-                  else
-                    _communityCodePrompt(),
-                ],
+                // Hidden for launch — see Features.community.
+                if (Features.community)
+                  if (!_communityLoaded) ...[
+                    const SizedBox(height: 24),
+                    const SectionHeader('Your Community'),
+                    _communitySkeleton(),
+                  ] else ...[
+                    const SizedBox(height: 24),
+                    SectionHeader(
+                        _community == null
+                            ? 'Community'
+                            : (_community!.isMember
+                                ? 'Your Community'
+                                : 'Discover a Community'),
+                        action:
+                            (_community?.isMember ?? false) ? 'View' : 'Have a code?',
+                        onAction: (_community?.isMember ?? false)
+                            ? () => _openCommunity(context)
+                            : () => _promptJoinByCode(context)),
+                    if (_community != null)
+                      _communitySection()
+                    else
+                      _communityCodePrompt(),
+                  ],
                 const SizedBox(height: AppSpacing.section),
                 SectionHeader('Upcoming Matches',
                     action: 'View All',
