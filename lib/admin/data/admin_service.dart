@@ -762,6 +762,24 @@ class AdminService {
     await _db.from('products').delete().eq('id', id);
   }
 
+  /// Units sold, revenue, cost and profit per product, keyed by product id.
+  /// Cancelled and refunded orders are excluded server-side. This is what
+  /// replaces "stock value" for made-to-order items, which never hold stock.
+  static Future<Map<String, Map<String, dynamic>>> productSales() async {
+    try {
+      final rows = await _db.rpc('admin_product_sales');
+      final out = <String, Map<String, dynamic>>{};
+      for (final r in List<Map<String, dynamic>>.from(rows as List)) {
+        final id = r['product_id'] as String?;
+        if (id != null) out[id] = r;
+      }
+      return out;
+    } catch (e) {
+      // Pre-migration DB — the console just shows no sales figures.
+      return {};
+    }
+  }
+
   // ── Product images / storage ──────────────────────────────────
 
   static const _bucket = 'product-images';

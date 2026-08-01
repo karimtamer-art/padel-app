@@ -29,6 +29,8 @@ class AdminInventoryScreen extends StatefulWidget {
 
 class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
   List<Map<String, dynamic>> _products = [];
+  /// Units sold / revenue / profit per product id, from admin_product_sales().
+  Map<String, Map<String, dynamic>> _sales = const {};
   bool _loading = true;
   String _stockFilter = 'all';
   bool _hideLowBadge = false; // app_settings 'hide_low_stock' — store-wide
@@ -77,14 +79,31 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
   Future<void> _load() async {
     if (!_loading) setState(() => _loading = true);
     final data = await AdminService.fetchProducts();
+    final sales = await AdminService.productSales();
     final hideLow = await AdminService.getSetting('hide_low_stock');
     if (!mounted) return;
     setState(() {
       _products = data;
+      _sales = sales;
       _hideLowBadge = hideLow == 'true';
       _loading = false;
     });
   }
+
+  // ── sales helpers ───────────────────────────────────────────────
+  static bool _madeToOrder(Map<String, dynamic> p) => p['made_to_order'] == true;
+
+  Map<String, dynamic>? _sale(Map<String, dynamic> p) =>
+      _sales[p['id'] as String? ?? ''];
+
+  int _sold(Map<String, dynamic> p) =>
+      ((_sale(p)?['units']) as num?)?.toInt() ?? 0;
+
+  int _revenue(Map<String, dynamic> p) =>
+      ((_sale(p)?['revenue']) as num?)?.round() ?? 0;
+
+  int _profit(Map<String, dynamic> p) =>
+      ((_sale(p)?['profit']) as num?)?.round() ?? 0;
 
   Future<void> _setHideLowBadge(bool v) async {
     setState(() => _hideLowBadge = v); // optimistic
@@ -108,18 +127,23 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Made-to-order items are never low or out, so they can't appear here.
     final lowOut =
         _products.where((p) => p['stock_status'] != 'in').toList();
-    final stockVal = _products.fold<int>(
+    // Stock value counts only what is actually held — a made-to-order racket
+    // has no stock, which is the whole point.
+    final stockVal = _products.where((p) => !_madeToOrder(p)).fold<int>(
         0,
         (s, p) =>
             s +
             _cost(p) *
                 ((p['stock'] as num?)?.toInt() ?? 0));
-    final unitsOnHand = _products.fold<int>(
-        0, (s, p) => s + ((p['stock'] as num?)?.toInt() ?? 0));
     final activeSku =
         _products.where((p) => p['is_visible'] == true).length;
+    final unitsSold = _products.fold<int>(0, (s, p) => s + _sold(p));
+    final revenue = _products.fold<int>(0, (s, p) => s + _revenue(p));
+    final profit = _products.fold<int>(0, (s, p) => s + _profit(p));
+    final madeToOrder = _products.where(_madeToOrder).length;
 
     return RefreshIndicator(
       color: AdminColors.primary,
@@ -129,27 +153,33 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
         children: [
           KpiGrid([
             StatCard(
-                icon: Icons.inventory_2_outlined,
+                icon: Icons.payments_outlined,
+                tone: AdminColors.green,
+                label: 'Revenue',
+                value: _egpShort(revenue),
+                foot: '$unitsSold sold'),
+            StatCard(
+                icon: Icons.trending_up_rounded,
                 tone: AdminColors.primary,
+                label: 'Profit',
+                value: _egpShort(profit),
+                foot: 'after cost'),
+            StatCard(
+                icon: Icons.inventory_2_outlined,
+                tone: AdminColors.info,
                 label: 'Active SKUs',
                 value: '$activeSku',
-                foot: '$unitsOnHand on hand'),
-            StatCard(
-                icon: Icons.layers_outlined,
-                tone: AdminColors.green,
-                label: 'Stock value',
-                value: _egpShort(stockVal)),
+                foot: madeToOrder > 0
+                    ? '$madeToOrder made to order'
+                    : '${_products.length} total'),
             StatCard(
                 icon: Icons.warning_amber_rounded,
                 tone: AdminColors.warn,
                 label: 'Need reorder',
                 value: '${lowOut.length}',
-                foot: '${_products.where((p) => p['stock_status'] == 'out').length} out of stock'),
-            StatCard(
-                icon: Icons.format_list_numbered_rounded,
-                tone: AdminColors.info,
-                label: 'Total SKUs',
-                value: '${_products.length}'),
+                foot: stockVal > 0
+                    ? '${_egpShort(stockVal)} held'
+                    : 'nothing held'),
           ]),
           const SizedBox(height: 16),
 
@@ -257,6 +287,8 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
     final price = (p['price'] as num?)?.toInt() ?? 0;
     final cost = _cost(p);
     final margin = price - cost;
+    final sold = _sold(p);
+    final madeToOrder = _madeToOrder(p);
     final stockStatus = p['stock_status'] as String? ?? 'in';
     final stockColor = stock == 0
         ? AdminColors.danger
@@ -321,9 +353,38 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
                     style: AdminText.sans(
                         11.5, FontWeight.w700, AdminColors.success)),
               ]),
+              if (sold > 0) ...[
+                const SizedBox(height: 5),
+                Text('$sold sold · ${_egp(_revenue(p))} earned',
+                    style: AdminText.small(AdminColors.green)),
+              ],
             ]),
           ),
           const SizedBox(width: 10),
+          // A made-to-order item has no stock to report — its sales are the
+          // number that matters, so show those instead of a meaningless 0.
+          if (madeToOrder)
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('$sold',
+                  style: AdminText.sans(18, FontWeight.w800, AdminColors.ink)),
+              const SizedBox(height: 4),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                    color: AdminColors.wash(AdminColors.info, 0.14),
+                    borderRadius: BorderRadius.circular(999)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.build_circle_outlined,
+                      size: 12, color: AdminColors.info),
+                  const SizedBox(width: 4),
+                  Text('To order',
+                      style: AdminText.sans(
+                          11, FontWeight.w700, AdminColors.info)),
+                ]),
+              ),
+            ])
+          else
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Text('$stock',
                 style: AdminText.sans(18, FontWeight.w800, stockColor)),
@@ -353,6 +414,30 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
       ),
     );
   }
+
+  /// Shown in place of the stock field when an item is made to order, so it's
+  /// clear why the number is gone and where the real figures live.
+  Widget _madeToOrderNote(int sold) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+        decoration: BoxDecoration(
+            color: AdminColors.wash(AdminColors.info, 0.10),
+            borderRadius: BorderRadius.circular(11)),
+        child: Row(children: [
+          const Icon(Icons.info_outline_rounded,
+              size: 17, color: AdminColors.info),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              sold > 0
+                  ? 'No stock is tracked — it stays sellable and never shows as '
+                      'out of stock. $sold sold so far.'
+                  : 'No stock is tracked — it stays sellable and never shows as '
+                      'out of stock. Sales are counted from real orders.',
+              style: AdminText.small(AdminColors.inkSoft).copyWith(height: 1.4),
+            ),
+          ),
+        ]),
+      );
 
   void _restock(Map<String, dynamic> p) {
     final add = ValueNotifier<int>(24);
@@ -466,6 +551,7 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
     var onSale  = (p['on_sale'] as bool?) ?? false;
     var visible = (p['is_visible'] as bool?) ?? true;
     var featured = (p['is_featured'] as bool?) ?? false;
+    var toOrder = (p['made_to_order'] as bool?) ?? false;
 
     adminSheet(
       context,
@@ -494,7 +580,10 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
                     descC.text.trim().isEmpty ? null : descC.text.trim(),
                 'price': int.tryParse(priceC.text) ?? p['price'],
                 'cost': int.tryParse(costC.text),
-                'stock': int.tryParse(stockC.text) ?? p['stock'],
+                // Made-to-order items hold nothing, so the number is forced to
+                // 0 rather than left as whatever placeholder was typed before.
+                'stock': toOrder ? 0 : (int.tryParse(stockC.text) ?? p['stock']),
+                'made_to_order': toOrder,
                 'on_sale': onSale,
                 'sale_price': onSale ? int.tryParse(saleC.text) : null,
                 'is_visible': visible,
@@ -532,7 +621,18 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
             Expanded(child: _field('Price', priceC, prefix: 'EGP')),
           ]),
           const SizedBox(height: 14),
-          _field('Stock on hand', stockC),
+          _toggleRow(
+              'Made to order',
+              'You source it once someone buys — never out of stock',
+              toOrder,
+              (v) => setSheet(() => toOrder = v)),
+          if (!toOrder) ...[
+            const SizedBox(height: 14),
+            _field('Stock on hand', stockC),
+          ] else ...[
+            const SizedBox(height: 10),
+            _madeToOrderNote(_sold(p)),
+          ],
           const SizedBox(height: 14),
           _toggleRow('On sale', 'Show a discounted price', onSale,
               (v) => setSheet(() => onSale = v)),
@@ -592,6 +692,9 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
     var onSale  = false;
     var visible = true;
     var featured = false;
+    // Rackets are the common case and they're sourced per order, so default the
+    // toggle on — that's what stops anyone typing a fake stock number again.
+    var toOrder = true;
     // Picked in the sheet, uploaded after the product row is created (needs id).
     final pendingImages = <({Uint8List bytes, String ext})>[];
 
@@ -616,7 +719,8 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
               'description': descC.text.trim().isEmpty ? null : descC.text.trim(),
               'price': int.tryParse(priceC.text) ?? 0,
               'cost': int.tryParse(costC.text) ?? 0,
-              'stock': int.tryParse(stockC.text) ?? 0,
+              'stock': toOrder ? 0 : (int.tryParse(stockC.text) ?? 0),
+              'made_to_order': toOrder,
               'on_sale': onSale,
               'sale_price': onSale ? int.tryParse(saleC.text) : null,
               'is_visible': visible,
@@ -655,7 +759,18 @@ class _AdminInventoryScreenState extends State<AdminInventoryScreen> {
             Expanded(child: _field('Price', priceC, prefix: 'EGP')),
           ]),
           const SizedBox(height: 14),
-          _field('Opening stock', stockC, hint: '≤5 flags as low stock'),
+          _toggleRow(
+              'Made to order',
+              'You source it once someone buys — never out of stock',
+              toOrder,
+              (v) => setSheet(() => toOrder = v)),
+          if (!toOrder) ...[
+            const SizedBox(height: 14),
+            _field('Opening stock', stockC, hint: '≤5 flags as low stock'),
+          ] else ...[
+            const SizedBox(height: 10),
+            _madeToOrderNote(0),
+          ],
           const SizedBox(height: 14),
           _toggleRow('On sale', 'Show a discounted price', onSale,
               (v) => setSheet(() => onSale = v)),

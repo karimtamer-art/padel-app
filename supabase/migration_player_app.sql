@@ -838,8 +838,13 @@ create table if not exists public.products (
   description  text,
   price        numeric(10,2) not null,
   stock        int not null default 0,
+  -- Rackets and the like are sourced per order, not held: a made-to-order item
+  -- is always sellable and its stock is never touched. See the alters below,
+  -- which also apply to the drifted live table.
+  made_to_order boolean not null default false,
   stock_status text generated always as (
-                 case when stock = 0 then 'out'
+                 case when made_to_order then 'in'
+                      when stock = 0 then 'out'
                       when stock <= 5 then 'low'
                       else 'in' end) stored,
   image_url    text,
@@ -856,6 +861,21 @@ alter table public.products add column if not exists slug text;
 alter table public.products add column if not exists sku text;
 alter table public.products add column if not exists currency text not null default 'EGP';
 create unique index if not exists products_slug_key on public.products (lower(slug)) where slug is not null;
+-- Drift-safe: the create-table above is skipped on the live DB, so apply the
+-- made-to-order column + the stock_status rule that depends on it here too.
+-- stock_status is generated (derived), so dropping and re-adding loses nothing;
+-- get_home_products has a string body and holds no dependency on it.
+alter table public.products
+  add column if not exists made_to_order boolean not null default false;
+alter table public.products drop column if exists stock_status;
+alter table public.products add column stock_status text
+  generated always as (
+    case when made_to_order then 'in'
+         when stock = 0     then 'out'
+         when stock <= 5    then 'low'
+         else 'in' end
+  ) stored;
+
 create index if not exists idx_products_category on public.products (category);
 
 alter table public.products drop constraint if exists products_category_chk;
@@ -3018,7 +3038,8 @@ begin
   for it in select * from jsonb_array_elements(coalesce(new.items, '[]'::jsonb)) loop
     update public.products
        set stock = greatest(0, coalesce(stock, 0) - coalesce((it->>'qty')::int, 0))
-     where id = nullif(it->>'product_id', '')::uuid;
+     where id = nullif(it->>'product_id', '')::uuid
+       and coalesce(made_to_order, false) = false;
   end loop;
   return new;
 end $$;
@@ -3045,7 +3066,8 @@ begin
     for it in select * from jsonb_array_elements(coalesce(new.items, '[]'::jsonb)) loop
       update public.products
          set stock = coalesce(stock, 0) + coalesce((it->>'qty')::int, 0)
-       where id = nullif(it->>'product_id', '')::uuid;
+       where id = nullif(it->>'product_id', '')::uuid
+         and coalesce(made_to_order, false) = false;
     end loop;
     new.voided_at := now();
     new.voided_by := auth.uid();
@@ -7009,5 +7031,52 @@ begin
      limit greatest(1, least(100, coalesce(p_limit, 25)));
 end $$;
 grant execute on function public.admin_season_find_players(uuid, text, int) to authenticated;
+-- ============================================================================
+-- What each product has actually sold. Cancelled and refunded orders are
+-- excluded entirely; `delivered_*` is the subset that has reached the customer,
+-- so the console can separate money banked from money still in flight.
+-- ============================================================================
+create or replace function public.admin_product_sales()
+returns table (
+  product_id        uuid,
+  units             int,
+  revenue           numeric,
+  delivered_units   int,
+  delivered_revenue numeric,
+  unit_cost         numeric,
+  profit            numeric,
+  order_count       int,
+  last_sold_at      timestamptz
+)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public._is_staff() then return; end if;
+  return query
+    with li as (
+      select o.id as order_id, o.status, o.created_at,
+             nullif(it->>'product_id', '')::uuid          as pid,
+             coalesce((it->>'qty')::int, 0)               as qty,
+             coalesce((it->>'unit_price')::numeric, 0)    as unit_price
+        from public.orders o,
+             lateral jsonb_array_elements(coalesce(o.items, '[]'::jsonb)) it
+       where coalesce(o.status, 'pending') not in ('cancelled', 'refunded')
+    )
+    select li.pid,
+           coalesce(sum(li.qty), 0)::int,
+           coalesce(sum(li.qty * li.unit_price), 0)::numeric,
+           coalesce(sum(li.qty) filter (where li.status = 'delivered'), 0)::int,
+           coalesce(sum(li.qty * li.unit_price)
+                      filter (where li.status = 'delivered'), 0)::numeric,
+           coalesce(pc.cost, 0)::numeric,
+           (coalesce(sum(li.qty * li.unit_price), 0)
+              - coalesce(sum(li.qty), 0) * coalesce(pc.cost, 0))::numeric,
+           count(distinct li.order_id)::int,
+           max(li.created_at)
+      from li
+      left join public.product_costs pc on pc.product_id = li.pid
+     where li.pid is not null
+     group by li.pid, pc.cost;
+end $$;
+grant execute on function public.admin_product_sales() to authenticated;
 
 notify pgrst, 'reload schema';
