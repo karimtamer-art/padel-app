@@ -13,6 +13,11 @@ const String kSupportPhone = '01501800943';
 /// What the dialer is handed — international form, so it works from abroad too.
 const String kSupportPhoneDial = '+201501800943';
 
+/// The legal page. One document covers BOTH the terms and the privacy policy
+/// ("Padel Rivals — Terms of Agreement"), so both tiles open the same URL.
+/// This is also the URL to give Google Play and App Store Connect.
+const String kLegalUrl = 'https://sites.google.com/view/padel-rivals/home';
+
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({super.key});
 
@@ -113,9 +118,10 @@ class HelpSupportScreen extends StatelessWidget {
         const SectionLabel('About'),
         TileGroup(children: [
           NavTile(icon: Icons.description_outlined, title: 'Terms of Service',
-              onTap: () => _launch(context, Uri.parse('https://padel.eg/terms'))),
+              subtitle: 'Terms & privacy — one document',
+              onTap: () => _launch(context, Uri.parse(kLegalUrl))),
           NavTile(icon: Icons.shield_outlined, title: 'Privacy Policy',
-              onTap: () => _launch(context, Uri.parse('https://padel.eg/privacy'))),
+              onTap: () => _launch(context, Uri.parse(kLegalUrl))),
           NavTile(icon: Icons.star_outline_rounded, title: 'Rate Padel',
               onTap: () => _comingSoon(context, 'App Store rating')),
         ]),
