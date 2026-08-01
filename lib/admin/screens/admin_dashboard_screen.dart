@@ -47,6 +47,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   String _fmt(String key) => _loading ? '—' : '${_counts[key] ?? 0}';
 
+  static String _egp(int n) {
+    if (n >= 1000000) return 'EGP ${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return 'EGP ${(n / 1000).toStringAsFixed(1)}K';
+    return 'EGP $n';
+  }
+
+  /// One half of the revenue card's split footer.
+  Widget _money(String label, int value, Color tone) => Column(children: [
+        Text(label.toUpperCase(), style: AdminText.kicker()),
+        const SizedBox(height: 4),
+        Text(_loading ? '—' : _egp(value),
+            style: AdminText.sans(14, FontWeight.w800, tone)),
+      ]);
+
   @override
   Widget build(BuildContext context) {
     const tierOrder = ['elite', 'gold', 'silver', 'bronze'];
@@ -90,40 +104,54 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ]),
           const SizedBox(height: 16),
 
-          // Revenue — pending Paymob (Phase 6)
+          // Revenue — real store takings (cash on delivery + InstaPay). This
+          // never needed a payment gateway; every order is already in the
+          // ledger, so the numbers are simply summed from it.
           AdminCard(
-            child: Row(children: [
-              Container(
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                    color: AdminColors.wash(AdminColors.info, 0.12),
-                    borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.payments_outlined,
-                    size: 19, color: AdminColors.info),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Revenue', style: AdminText.cardTitle()),
-                      const SizedBox(height: 2),
-                      Text('Available once Paymob is wired',
-                          style: AdminText.small()),
-                    ]),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                    color: AdminColors.surfaceAlt,
-                    borderRadius: BorderRadius.circular(999)),
-                child: Text('Phase 6',
-                    style: AdminText.sans(
-                        11, FontWeight.w700, AdminColors.inkFaint)),
-              ),
+            onTap: () => widget.onNavigate?.call('payments'),
+            child: Column(children: [
+              Row(children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: AdminColors.wash(AdminColors.green, 0.12),
+                      borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.payments_outlined,
+                      size: 19, color: AdminColors.green),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Revenue', style: AdminText.cardTitle()),
+                        const SizedBox(height: 2),
+                        Text(
+                            _loading
+                                ? '—'
+                                : '${_counts['orders'] ?? 0} order'
+                                    '${(_counts['orders'] ?? 0) == 1 ? '' : 's'}'
+                                    ' · cancelled excluded',
+                            style: AdminText.small()),
+                      ]),
+                ),
+                Text(_loading ? '—' : _egp(_counts['revenue'] ?? 0),
+                    style: AdminText.sans(19, FontWeight.w800, AdminColors.ink,
+                        ls: -0.5)),
+              ]),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(
+                    child: _money('Delivered', _counts['revenue_delivered'] ?? 0,
+                        AdminColors.green)),
+                Container(
+                    width: 1, height: 30, color: AdminColors.lineSoft),
+                Expanded(
+                    child: _money('Last 30 days', _counts['revenue_month'] ?? 0,
+                        AdminColors.ink)),
+              ]),
             ]),
           ),
           const SizedBox(height: 16),

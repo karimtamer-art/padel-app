@@ -808,7 +808,18 @@ begin
                       select coalesce(tier, 'bronze') as tier, count(*) as c
                         from public.profiles
                        where coalesce(is_admin, false) = false
-                       group by 1) t)
+                       group by 1) t),
+    -- Store money. The app takes cash on delivery and InstaPay transfers, so
+    -- this is real revenue today — it never depended on a payment gateway.
+    'revenue',           (select coalesce(sum(o.total), 0)::int from public.orders o
+                           where coalesce(o.status, 'pending') not in ('cancelled', 'refunded')),
+    'revenue_delivered', (select coalesce(sum(o.total), 0)::int from public.orders o
+                           where o.status = 'delivered'),
+    'revenue_month',     (select coalesce(sum(o.total), 0)::int from public.orders o
+                           where coalesce(o.status, 'pending') not in ('cancelled', 'refunded')
+                             and o.created_at >= now() - interval '30 days'),
+    'orders',            (select count(*)::int from public.orders o
+                           where coalesce(o.status, 'pending') not in ('cancelled', 'refunded'))
   );
 end $$;
 grant execute on function public.admin_dashboard_counts() to authenticated;

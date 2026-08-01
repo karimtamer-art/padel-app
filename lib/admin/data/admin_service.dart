@@ -151,6 +151,11 @@ class AdminService {
         'courts': (m['courts'] as num?)?.toInt() ?? 0,
         'tournaments': (m['tournaments'] as num?)?.toInt() ?? 0,
         'matches': (m['matches'] as num?)?.toInt() ?? 0,
+        // Store money. Absent on a pre-migration DB → the card shows zeroes.
+        'revenue': (m['revenue'] as num?)?.toInt() ?? 0,
+        'revenue_delivered': (m['revenue_delivered'] as num?)?.toInt() ?? 0,
+        'revenue_month': (m['revenue_month'] as num?)?.toInt() ?? 0,
+        'orders': (m['orders'] as num?)?.toInt() ?? 0,
       };
     } catch (e) {
       debugPrint('[AdminService] fetchDashboardCounts: $e');
