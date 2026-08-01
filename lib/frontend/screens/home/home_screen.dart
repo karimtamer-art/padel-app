@@ -26,6 +26,7 @@ import '../detail/match_detail_screen.dart';
 import '../detail/join_match_sheet.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import '../profile/notifications_screen.dart';
+import '../profile/recent_form_screen.dart';
 import '../community/community_hub_screen.dart';
 import '../chat/messages_inbox_screen.dart';
 
@@ -68,6 +69,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // Live season standings for the "Season Leaderboard" card. Null = no season
   // is published, and the whole section stays hidden.
   SeasonOverview? _season;
+  // Last 6 completed matches → the Recent Form strip and its recap.
+  List<FormMatch> _form = const [];
   List<MemberLite> _communityMembers = [];
   int _communityEventsWeek = 0;
   int _unread = 0;
@@ -149,6 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _fetchBandCount(),
       _fetchResultHero(),
       _fetchSeason(),
+      _fetchForm(),
     ]);
     if (mounted) setState(() => _loading = false);
   }
@@ -156,6 +160,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _fetchSeason() async {
     final s = await SeasonService.overview();
     if (mounted) _season = s;
+  }
+
+  Future<void> _fetchForm() async {
+    final f = await ProfileService.recentForm();
+    if (mounted) _form = f;
+  }
+
+  Future<void> _openRecap() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => RecentFormScreen(initial: _form)));
+    await _fetchForm();
+    if (mounted) setState(() {});
   }
 
   Future<void> _openLeaderboard(BuildContext c) async {
@@ -928,8 +944,10 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Recent Form ──────────────────────────────────────────────────────────
 
   Widget _recentForm() {
-    final recent = widget.profile.recent;
-    if (recent.isEmpty) {
+    if (_form.isEmpty) {
+      // Still loading on a cold start — hold the space rather than flash the
+      // "no matches" card at a player who has plenty.
+      if (_loading) return const SizedBox(height: 58);
       return Padding(
         padding: AppSpacing.screenH,
         child: AppCard(
@@ -956,43 +974,48 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final last = recent.take(5).toList();
-    final wins = last.where((m) => m.won).length;
     return Padding(
       padding: AppSpacing.screenH,
-      child: AppCard(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('$wins wins in last ${last.length} matches',
-                    style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
-                const SizedBox(height: 2),
-                Text(last.first.date,
-                    style: AppText.small().copyWith(fontSize: 12)),
-              ]),
-            ),
-            Row(children: [
-              // `recent` is newest-first; render it reversed so the strip reads
-              // oldest → newest and each new result lands on the RIGHT.
-              for (final m in last.reversed) ...[
-                const SizedBox(width: 5),
-                Container(
-                  width: 28, height: 28,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: (m.won ? AppColors.success : AppColors.danger)
-                        .withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: Text(m.won ? 'W' : 'L',
-                      style: AppText.stat(12,
-                          m.won ? AppColors.success : AppColors.danger)),
+      child: GestureDetector(
+        onTap: _openRecap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 14, 12),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: AppRadius.cardR,
+            border: Border.all(color: AppColors.line),
+            boxShadow: kCardShadow,
+          ),
+          child: Row(children: [
+            Text('Last ${_form.length}',
+                style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
+            const SizedBox(width: 12),
+            // `_form` is newest-first; reversed so the strip reads oldest →
+            // newest and each new result lands on the RIGHT.
+            for (final m in _form.reversed) ...[
+              Container(
+                width: 28,
+                height: 28,
+                margin: const EdgeInsets.only(right: 6),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: (m.won ? AppColors.success : AppColors.danger)
+                      .withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(9),
                 ),
-              ],
-            ]),
+                child: Text(m.won ? 'W' : 'L',
+                    style: AppText.stat(12,
+                        m.won ? AppColors.success : AppColors.danger)),
+              ),
+            ],
+            const Spacer(),
+            Text('Recap',
+                style: AppText.bodyStrong(AppColors.primary)
+                    .copyWith(fontSize: 13)),
+            const Icon(Icons.chevron_right_rounded,
+                size: 18, color: AppColors.primary),
           ]),
-        ]),
+        ),
       ),
     );
   }

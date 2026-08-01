@@ -4,6 +4,23 @@ import '../models/onboarding_models.dart';
 import '../models/ranking_scale.dart';
 import '../models/mock_data.dart';
 
+/// One completed match in the Recent Form strip / recap.
+class FormMatch {
+  final bool won;
+  /// Opponents, first names joined — "Adel Mansour & Amr Gamal".
+  final String opp;
+  /// Sets from MY perspective — "6-3, 6-4".
+  final String score;
+  /// "May 25"
+  final String date;
+  final String type; // Competitive | Casual
+  /// Signed rating change from `ranking_history`; null when nothing settled
+  /// (casual, or a pre-v2 row).
+  final double? delta;
+  const FormMatch(
+      this.won, this.opp, this.score, this.date, this.type, this.delta);
+}
+
 /// Reads/writes the onboarding fields on the `profiles` table.
 ///
 /// Pass an instance to [AuthGate]. The static methods (getProfile,
@@ -369,6 +386,99 @@ class ProfileService {
       );
     } catch (e) {
       debugPrint('[ProfileService] ensureProfile error: $e');
+    }
+  }
+
+  /// The last [limit] completed matches, newest first — opponents, score from
+  /// my side, and the settled rating change. Feeds the Home form strip and its
+  /// recap. Rating deltas come from `ranking_history` (v2); the legacy
+  /// match_players.elo_* columns are no longer written, so a 0 there would mean
+  /// "not recorded", not "no change".
+  static Future<List<FormMatch>> recentForm({int limit = 6}) async {
+    final db = Supabase.instance.client;
+    final uid = db.auth.currentUser?.id;
+    if (uid == null) return const [];
+    try {
+      final deltas = <String, double>{};
+      try {
+        final hist = await db
+            .from('ranking_history')
+            .select('match_id, delta')
+            .eq('profile_id', uid)
+            .not('match_id', 'is', null)
+            .limit(200);
+        for (final h in List<Map<String, dynamic>>.from(hist as List)) {
+          final mid = h['match_id'] as String?;
+          final d = (h['delta'] as num?)?.toDouble();
+          if (mid != null && d != null) deltas[mid] = d;
+        }
+      } catch (_) {
+        // pre-v2 database (no delta column) — the recap just shows no change
+      }
+
+      final rows = await db
+          .from('match_players')
+          .select('''
+            team,
+            matches!inner(
+              id, status, match_type, scheduled_at, winner_team,
+              score_team_a, score_team_b,
+              match_players(player_id, team, profiles(name))
+            )
+          ''')
+          .eq('player_id', uid)
+          .order('created_at', ascending: false)
+          .limit(60);
+
+      const months = ['Jan','Feb','Mar','Apr','May','Jun',
+                      'Jul','Aug','Sep','Oct','Nov','Dec'];
+      final out = <FormMatch>[];
+      for (final r in List<Map<String, dynamic>>.from(rows as List)) {
+        if (out.length >= limit) break;
+        final m = r['matches'] as Map?;
+        if (m == null || m['status'] != 'completed' || m['winner_team'] == null) {
+          continue;
+        }
+        final myTeam = r['team'] as String?;
+        final won = myTeam != null && myTeam == m['winner_team'];
+
+        final mps = (m['match_players'] as List?) ?? const [];
+        final opps = mps
+            .where((p) => p['team'] != myTeam && p['player_id'] != uid)
+            .map((p) =>
+                ((p['profiles'] as Map?)?['name'] as String? ?? 'Opponent')
+                    .split(' ')
+                    .first)
+            .toList();
+
+        final sa = m['score_team_a'] as String?;
+        final sb = m['score_team_b'] as String?;
+        String score = '—';
+        if (sa != null && sb != null) {
+          final a = sa.split(',');
+          final b = sb.split(',');
+          final mine = myTeam == 'a' ? a : b;
+          final theirs = myTeam == 'a' ? b : a;
+          score = [
+            for (int i = 0; i < mine.length && i < theirs.length; i++)
+              '${mine[i].trim()}-${theirs[i].trim()}'
+          ].join(', ');
+        }
+
+        final dt = DateTime.tryParse(m['scheduled_at'] as String? ?? '')?.toLocal();
+        out.add(FormMatch(
+          won,
+          opps.isEmpty ? 'Opponents' : opps.join(' & '),
+          score,
+          dt == null ? '—' : '${months[dt.month - 1]} ${dt.day}',
+          m['match_type'] == 'ranked' ? 'Competitive' : 'Casual',
+          deltas[m['id'] as String? ?? ''],
+        ));
+      }
+      return out;
+    } catch (e) {
+      debugPrint('[ProfileService] recentForm: $e');
+      return const [];
     }
   }
 }
