@@ -30,15 +30,30 @@ class HelpSupportScreen extends StatelessWidget {
           behavior: SnackBarBehavior.floating,
           content: Text('$what is coming soon — email us in the meantime.')));
 
+  // Keep these true to the app. Every answer below is checked against the
+  // live rules (rating engine v2, the match status machine, withdrawal refunds
+  // and the season ladder) — if you change those, change these.
   static const _faqs = [
-    ('How does the ELO ranking work?',
-        'You start with 5 placement matches that seed your initial rating. After that, every competitive match adjusts your ELO based on the result and your opponent\'s rating.'),
+    ('How is my level calculated?',
+        'Your level is a single number from 0 to 7. Every confirmed competitive match moves it based on who won, how strong the other pair was and how close the games were — beating stronger opponents moves you more than beating weaker ones. In doubles, each pair is judged on the average of its two levels. Casual matches never affect it.'),
+    ('What are placement matches?',
+        'You start unranked. Play 5 competitive matches and the app gives you a level. During placement your level moves in bigger steps so it can find your real standard quickly, then it settles down.'),
+    ('Why does my level say "provisional"?',
+        'Because the app isn\'t confident about it yet — that\'s the reliability figure on your profile. It rises every time you play a competitive match and falls if you go quiet for a while. Once you\'ve played enough, the provisional label disappears.'),
     ('How do divisions and tiers work?',
-        'Players are grouped into divisions (D → A) and tiers (Low / Mid / High) within each. Win consistently against players at or above your level to get promoted.'),
-    ('Can I cancel a registered tournament?',
-        'Yes — open the tournament from My Tournaments and tap Withdraw. Withdrawals close 48 hours before the first round.'),
+        'Your level places you in a division: D · Bronze (0–1.9), C · Silver (2.0–3.4), B · Gold (3.5–4.9) and A · Elite (5.0–7.0). Inside each division you sit in the Low, Mid or High third. Raise your level and you move up automatically — there\'s nothing to claim.'),
+    ('Does my level drop if I stop playing?',
+        'Only after a long break. Go 60 days without a competitive match and your level eases down very slightly over time. It will never fall below your division\'s floor, and never below 1.0, so a break can\'t undo your progress.'),
     ('How do I find a match?',
-        'Open Home to browse open matches near your level, or create your own from the + button and wait for players to join. You can contact players from the match lobby to coordinate.'),
+        'Tap Find a Match on Home — either right now, or pick a day and a time window. You\'ll see open matches near your level that you can join in one tap, and you can create your own from the + button and wait for players. Once a match is full you can contact the other players from the lobby.'),
+    ('Who enters the score, and who confirms it?',
+        'Any player in the match can submit the result after the start time. A player from the OTHER team then confirms it — only then does it count towards your level. If nobody confirms within 48 hours the submitted score stands. Disagree instead and the match is disputed, and an admin settles it. Casual matches are done as soon as the score goes in.'),
+    ('How does the Season Leaderboard work?',
+        'It\'s a separate ladder from your level. While a season is running, every confirmed competitive match earns season points — a win is worth more than a loss, and tournaments are worth far more than either. Finish inside a reward bracket when the season closes and you win what that bracket lists.'),
+    ('Can I cancel a tournament registration?',
+        'Yes — open the tournament and tap Withdraw, at any point. If you paid an entry fee, you get it back only if you withdraw BEFORE the tournament\'s start date; withdrawing on the day itself forfeits the fee.'),
+    ('How do payments work?',
+        'Tournament entry fees are sent by InstaPay to the organizer running the event, and the organizer confirms your payment. Store orders are cash on delivery, or an InstaPay transfer where you upload the receipt. There\'s no card payment in the app yet.'),
   ];
 
   @override
