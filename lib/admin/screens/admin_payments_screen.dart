@@ -111,8 +111,12 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
     return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
-  static String _customer(Map<String, dynamic> o) =>
-      (o['profiles'] as Map?)?['name'] as String? ?? 'Unknown';
+  /// The order survives the customer: deleting an account anonymises the row
+  /// (the sale is our tax record) rather than removing it.
+  static String _customer(Map<String, dynamic> o) {
+    if (o['customer_deleted'] == true) return 'Deleted account';
+    return (o['profiles'] as Map?)?['name'] as String? ?? 'Unknown';
+  }
 
   static String _shortId(Map<String, dynamic> o) {
     final id = o['id'] as String? ?? '';
