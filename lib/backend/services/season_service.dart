@@ -112,6 +112,22 @@ class SeasonService {
   static Future<String?> deleteBracket(String id) =>
       _call('admin_delete_season_bracket', {'p_id': id});
 
+  /// Search EVERY player, not just the ones already on the board — a season
+  /// that has just started has an empty ledger and therefore empty standings.
+  static Future<List<SeasonPlayerHit>> findPlayers(String seasonId,
+      {String? term}) async {
+    try {
+      final res = await _db.rpc('admin_season_find_players',
+          params: {'p_season_id': seasonId, 'p_term': term});
+      return ((res as List?) ?? const [])
+          .map((e) => SeasonPlayerHit.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } catch (e) {
+      debugPrint('[SeasonService] findPlayers: $e');
+      return const [];
+    }
+  }
+
   /// Everything known about one player in the season: profile, rating,
   /// standing, where every point came from, and the full ledger.
   static Future<SeasonPlayer?> playerDetail(
@@ -385,6 +401,37 @@ class SeasonOverview {
     }
     return 0;
   }
+}
+
+/// A player-search hit in the console — may or may not be on the board yet.
+class SeasonPlayerHit {
+  final String playerId, name, tier;
+  final String? avatarUrl;
+  final int pts;
+  final int? rank;
+  final bool scoring;
+
+  const SeasonPlayerHit({
+    required this.playerId,
+    required this.name,
+    required this.tier,
+    required this.pts,
+    required this.scoring,
+    this.avatarUrl,
+    this.rank,
+  });
+
+  factory SeasonPlayerHit.fromJson(Map<String, dynamic> j) => SeasonPlayerHit(
+        playerId: '${j['player_id']}',
+        name: (j['name'] as String?) ?? 'Player',
+        tier: (j['tier'] as String?) ?? 'bronze',
+        avatarUrl: j['avatar_url'] as String?,
+        pts: _int(j['pts']),
+        rank: j['rank'] == null ? null : _int(j['rank']),
+        scoring: j['scoring'] == true,
+      );
+
+  String get initials => initialsOf(name);
 }
 
 /// One line of "where the points came from".

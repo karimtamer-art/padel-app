@@ -22,6 +22,8 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
   bool _busy = false;
   String? _seasonId; // null = the live season
   String _query = '';
+  List<SeasonPlayerHit> _hits = const [];
+  int _searchSeq = 0; // drops results from stale keystrokes
 
   @override
   void initState() {
@@ -441,22 +443,19 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
 
   // ── standings ─────────────────────────────────────────────────────
   Widget _standings(SeasonConsole d) {
-    final q = _query.trim().toLowerCase();
-    final rows = q.isEmpty
-        ? d.standings
-        : d.standings.where((r) => r.name.toLowerCase().contains(q)).toList();
+    final searching = _query.trim().isNotEmpty;
     return AdminCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         AdminSection('Season standings',
             sub: '${d.standings.length} ranked · tap a player to see and edit everything'),
         TextField(
-          onChanged: (v) => setState(() => _query = v),
+          onChanged: _search,
           style: AdminText.body(),
           decoration: InputDecoration(
             isDense: true,
             prefixIcon: const Icon(Icons.search_rounded,
                 size: 18, color: AdminColors.inkFaint),
-            hintText: 'Find player…',
+            hintText: 'Find any player…',
             filled: true,
             fillColor: AdminColors.surfaceAlt,
             contentPadding:
@@ -471,19 +470,83 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        if (rows.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            child: Center(
-              child: Text(
-                  d.standings.isEmpty
-                      ? 'No points awarded yet this season.'
-                      : 'Nothing matches this search.',
-                  style: AdminText.small(AdminColors.inkFaint)),
-            ),
-          ),
-        for (final r in rows) _standingRow(d, r),
+        // Searching covers EVERY player, not just the ones already scoring —
+        // otherwise a fresh season (empty ledger) has nothing to tap.
+        if (searching) ...[
+          if (_hits.isEmpty)
+            _note('No player matches that name.')
+          else
+            for (final h in _hits) _hitRow(d, h),
+        ] else ...[
+          if (d.standings.isEmpty)
+            _note('Nobody has scored yet. Points land here automatically when a '
+                'ranked match is confirmed — or search for a player above to '
+                'open their record and award points by hand.'),
+          for (final r in d.standings) _standingRow(d, r),
+        ],
       ]),
+    );
+  }
+
+  Widget _note(String text) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+        child: Text(text,
+            textAlign: TextAlign.center,
+            style: AdminText.small(AdminColors.inkFaint).copyWith(height: 1.45)),
+      );
+
+  /// A search hit — already on the board, or not scoring yet.
+  Widget _hitRow(SeasonConsole d, SeasonPlayerHit h) {
+    final tone = AdminColors.tier(h.tier);
+    return GestureDetector(
+      onTap: () => _openPlayerRecord(d, h.playerId, h.name),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+            color: AdminColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(11)),
+        child: Row(children: [
+          SizedBox(
+            width: 34,
+            child: Text(h.rank == null ? '—' : '${h.rank}',
+                textAlign: TextAlign.right,
+                style: AdminText.mono(
+                    13,
+                    FontWeight.w800,
+                    h.rank == null ? AdminColors.inkFaint : AdminColors.ink)),
+          ),
+          const SizedBox(width: 10),
+          AdminAvatar(h.initials, size: 34, color: tone, imageUrl: h.avatarUrl),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(h.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AdminText.strong()),
+                  const SizedBox(height: 2),
+                  Text(
+                      h.scoring
+                          ? '${_titleCase(h.tier)} · on the board'
+                          : '${_titleCase(h.tier)} · not scoring yet',
+                      style: AdminText.small(AdminColors.inkFaint)),
+                ]),
+          ),
+          const SizedBox(width: 8),
+          Text(h.scoring ? _thousands(h.pts) : '—',
+              style: AdminText.mono(
+                  14,
+                  FontWeight.w800,
+                  h.scoring ? AdminColors.ink : AdminColors.inkFaint)),
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded,
+              size: 20, color: AdminColors.inkFaint),
+          const SizedBox(width: 2),
+        ]),
+      ),
     );
   }
 
@@ -556,10 +619,30 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
   }
 
   /// The player table row → everything about that player, all of it editable.
-  Future<void> _openPlayer(SeasonConsole d, Standing r) async {
+  Future<void> _openPlayer(SeasonConsole d, Standing r) =>
+      _openPlayerRecord(d, r.playerId, r.name);
+
+  Future<void> _openPlayerRecord(
+      SeasonConsole d, String playerId, String name) async {
     await showSeasonPlayerSheet(context,
-        seasonId: d.season!.id, playerId: r.playerId, playerName: r.name);
+        seasonId: d.season!.id, playerId: playerId, playerName: name);
     await _load();
+    if (_query.trim().isNotEmpty) await _search(_query);
+  }
+
+  /// Search every player in the app, not only those already on the board.
+  Future<void> _search(String v) async {
+    setState(() => _query = v);
+    final id = _data?.season?.id;
+    final term = v.trim();
+    if (id == null || term.isEmpty) {
+      if (mounted) setState(() => _hits = const []);
+      return;
+    }
+    final seq = ++_searchSeq;
+    final hits = await SeasonService.findPlayers(id, term: term);
+    if (!mounted || seq != _searchSeq) return; // a newer keystroke won
+    setState(() => _hits = hits);
   }
 
   static String _titleCase(String s) =>
