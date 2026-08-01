@@ -20,6 +20,7 @@ import 'screens/admin_reports_screen.dart';
 import 'screens/admin_promotions_screen.dart';
 import 'screens/admin_payments_screen.dart';
 import 'screens/admin_broadcasts_screen.dart';
+import 'screens/admin_leaderboards_screen.dart';
 
 class AdminConsole extends StatefulWidget {
   final VoidCallback? onExit;
@@ -207,6 +208,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     'payments':    ['Payments',     'Orders & transactions'],
     'requests':    ['Requests',     'Repairs & trade-ins'],
     'broadcasts':  ['Broadcasts',   'Push notifications'],
+    'leaderboards':['Leaderboards', 'Season standings & rewards'],
     'team':        ['Team & Roles', 'Invite & assign access'],
   };
 
@@ -229,6 +231,7 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'payments':    return const AdminPaymentsScreen();
       case 'requests':    return const AdminRequestsScreen();
       case 'broadcasts':  return AdminBroadcastsScreen(organizerId: orgId);
+      case 'leaderboards': return const AdminLeaderboardsScreen();
       case 'team':        return const AdminTeamScreen();
       default:
         return AdminDashboardScreen(onNavigate: _navTo);

@@ -18,7 +18,9 @@ import 'package:padel_clay/backend/services/community_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
+import 'package:padel_clay/backend/services/season_service.dart';
 import 'matchmaking_hero.dart';
+import '../leaderboard/season_leaderboard_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../detail/join_match_sheet.dart';
 import '../tournaments/tournament_detail_screen.dart';
@@ -62,6 +64,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _featured = [];
   Community? _community;
   bool _communityLoaded = false;
+  // Live season standings for the "Season Leaderboard" card. Null = no season
+  // is published, and the whole section stays hidden.
+  SeasonOverview? _season;
   List<MemberLite> _communityMembers = [];
   int _communityEventsWeek = 0;
   int _unread = 0;
@@ -142,8 +147,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _fetchCommunity(),
       _fetchBandCount(),
       _fetchResultHero(),
+      _fetchSeason(),
     ]);
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _fetchSeason() async {
+    final s = await SeasonService.overview();
+    if (mounted) _season = s;
+  }
+
+  Future<void> _openLeaderboard(BuildContext c) async {
+    await Navigator.of(c).push(MaterialPageRoute(
+        builder: (_) => SeasonLeaderboardScreen(initial: _season)));
+    await _fetchSeason();
+    if (mounted) setState(() {});
   }
 
   Future<void> _fetchMatches() async {
@@ -543,6 +561,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
                 _recentForm(),
+                if (_season != null) ...[
+                  const SizedBox(height: 24),
+                  SectionHeader('Season Leaderboard',
+                      action: 'View',
+                      onAction: () => _openLeaderboard(context)),
+                  SeasonHomeCard(
+                    data: _season!,
+                    onTap: () => _openLeaderboard(context),
+                  ),
+                ],
                 if (!_communityLoaded) ...[
                   const SizedBox(height: 24),
                   const SectionHeader('Your Community'),

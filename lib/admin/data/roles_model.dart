@@ -156,11 +156,17 @@ Section? homeSectionFor(RoleId r) => switch (r) {
     };
 
 /// Role-specific sections appended after the granted ones (e.g. an organizer's
-/// Community). Not part of the grantable catalogue.
+/// Community, the super admin's season console). Not part of the grantable
+/// catalogue — the season RPCs guard on `_is_admin()`, so granting Leaderboards
+/// to a lesser role could only ever produce "Not authorised".
 List<Section> extraSectionsFor(RoleId r) => switch (r) {
       RoleId.organizer => const [
           Section('community', 'Community', Icons.groups_2_outlined, 'Community',
               'Members & inbox'),
+        ],
+      RoleId.superAdmin => const [
+          Section('leaderboards', 'Leaderboards', Icons.military_tech_outlined,
+              'Season', 'Standings, points & rewards'),
         ],
       _ => const [],
     };
