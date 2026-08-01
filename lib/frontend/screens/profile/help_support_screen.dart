@@ -121,7 +121,7 @@ class HelpSupportScreen extends StatelessWidget {
         ]),
         const SizedBox(height: 18),
         Center(
-          child: Text('Padel Rivals · v$kAppVersion ($kAppBuild)',
+          child: Text('Padel Rivals · v$kAppVersion',
               style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 11, letterSpacing: 0.5)),
         ),
       ],
