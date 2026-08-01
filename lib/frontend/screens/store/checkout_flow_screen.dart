@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
@@ -72,6 +73,7 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
 
   // InstaPay
   String _handle = 'padelpro@instapay';
+  String _payLink = ''; // optional InstaPay link set in the admin console
   final _sender = TextEditingController();
   Uint8List? _proofBytes;
   String _proofExt = 'jpg';
@@ -86,6 +88,9 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
     _loadAddresses();
     OrderService.fetchInstapayHandle().then((h) {
       if (mounted) setState(() => _handle = h);
+    });
+    OrderService.fetchInstapayLink().then((l) {
+      if (mounted) setState(() => _payLink = l);
     });
   }
 
@@ -690,6 +695,15 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
                 style: AppText.small().copyWith(fontSize: 12.5, height: 1.45)),
             const SizedBox(height: 10),
             _copyField('Send to · InstaPay username', _handle, mono: true),
+            if (_payLink.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              AppButton('Open payment link',
+                  icon: Icons.open_in_new_rounded,
+                  variant: AppBtnVariant.outline,
+                  full: true,
+                  onPressed: () => launchUrl(Uri.parse(_payLink),
+                      mode: LaunchMode.externalApplication)),
+            ],
             const SizedBox(height: 10),
             _copyField('Amount', MockData.egp(widget.total), copyable: false),
             const SizedBox(height: 12),

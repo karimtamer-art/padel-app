@@ -17,6 +17,7 @@ class AdminPaymentsScreen extends StatefulWidget {
 class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
   List<Map<String, dynamic>> _orders = [];
   String _handle = '';
+  String _link = ''; // app_settings 'instapay_link' — the pair's other half
   bool _loading = true;
   String _filter = 'all';
 
@@ -48,10 +49,12 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
     try {
       final data = await AdminService.fetchOrders();
       final handle = await AdminService.getSetting('instapay_handle');
+      final link = await AdminService.getSetting('instapay_link');
       if (mounted) {
         setState(() {
           _orders = data;
           _handle = handle ?? '';
+          _link = link ?? '';
           _loading = false;
         });
       }
@@ -230,28 +233,54 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
 
   Widget _handleCard() => AdminCard(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(children: [
-          const Icon(Icons.account_balance_wallet_outlined, size: 18, color: AdminColors.primary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('INSTAPAY HANDLE', style: AdminText.kicker()),
-              const SizedBox(height: 2),
-              Text(_handle.isEmpty ? 'Not set' : _handle,
-                  style: AdminText.mono(13, FontWeight.w700, AdminColors.ink)),
-            ]),
-          ),
-          AdminButton('Edit', variant: AdminBtn.ghost, height: 34, icon: Icons.edit_outlined, onPressed: _editHandle),
+        child: Column(children: [
+          Row(children: [
+            const Icon(Icons.account_balance_wallet_outlined, size: 18, color: AdminColors.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('INSTAPAY HANDLE', style: AdminText.kicker()),
+                const SizedBox(height: 2),
+                Text(_handle.isEmpty ? 'Not set' : _handle,
+                    style: AdminText.mono(13, FontWeight.w700, AdminColors.ink)),
+              ]),
+            ),
+            AdminButton('Edit', variant: AdminBtn.ghost, height: 34, icon: Icons.edit_outlined, onPressed: _editHandle),
+          ]),
+          // The payment link is the second half of the pair — an organizer has
+          // had both since July; the platform account only ever had the handle.
+          const SizedBox(height: 10),
+          Row(children: [
+            const Icon(Icons.link_rounded, size: 18, color: AdminColors.inkFaint),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('PAYMENT LINK', style: AdminText.kicker()),
+                const SizedBox(height: 2),
+                Text(_link.isEmpty ? 'Not set — optional' : _link,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AdminText.sans(
+                        12.5,
+                        FontWeight.w600,
+                        _link.isEmpty ? AdminColors.inkFaint : AdminColors.ink)),
+              ]),
+            ),
+          ]),
         ]),
       );
 
   Future<void> _editHandle() async {
-    final ctrl = TextEditingController(text: _handle);
+    // The field holds only the name — "@instapay" is fixed, since InstaPay
+    // always completes the address.
+    final ctrl =
+        TextEditingController(text: AdminService.instapayName(_handle));
+    final linkCtrl = TextEditingController(text: _link);
     final saved = await adminSheet<bool>(
       context,
-      title: 'InstaPay handle',
-      sub: 'The account buyers transfer to at checkout',
-      heightFactor: 0.5,
+      title: 'InstaPay payout',
+      sub: 'Where buyers transfer at checkout',
+      heightFactor: 0.62,
       body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('HANDLE', style: AdminText.kicker()),
         const SizedBox(height: 6),
@@ -263,29 +292,61 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
               borderRadius: AdminUI.fieldR,
               border: Border.all(color: AdminColors.line)),
           alignment: Alignment.centerLeft,
+          child: Row(children: [
+            Expanded(
+              child: TextField(
+                controller: ctrl,
+                autofocus: true,
+                style: AdminText.mono(14, FontWeight.w700, AdminColors.ink),
+                decoration:
+                    const InputDecoration.collapsed(hintText: 'padelpro'),
+              ),
+            ),
+            Text(AdminService.instapaySuffix,
+                style:
+                    AdminText.mono(14, FontWeight.w700, AdminColors.inkFaint)),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        Text('PAYMENT LINK (OPTIONAL)', style: AdminText.kicker()),
+        const SizedBox(height: 6),
+        Container(
+          height: 50,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+              color: AdminColors.surfaceAlt,
+              borderRadius: AdminUI.fieldR,
+              border: Border.all(color: AdminColors.line)),
+          alignment: Alignment.centerLeft,
           child: TextField(
-            controller: ctrl,
-            autofocus: true,
-            style: AdminText.mono(14, FontWeight.w700, AdminColors.ink),
-            decoration: const InputDecoration.collapsed(hintText: 'padelpro@instapay'),
+            controller: linkCtrl,
+            keyboardType: TextInputType.url,
+            style: AdminText.sans(13, FontWeight.w600, AdminColors.ink),
+            decoration: const InputDecoration.collapsed(
+                hintText: 'https://ipn.eg/… (optional)'),
           ),
         ),
       ]),
       footer: Builder(
-        builder: (ctx) => AdminButton('Save handle',
+        builder: (ctx) => AdminButton('Save',
             full: true, height: 48, icon: Icons.check_rounded, onPressed: () => Navigator.pop(ctx, true)),
       ),
     );
     if (saved != true) return;
-    final value = ctrl.text.trim();
-    if (value.isEmpty) return;
-    final err = await AdminService.setSetting('instapay_handle', value);
+    final handle = AdminService.normalizeInstapay(ctrl.text);
+    final link = linkCtrl.text.trim();
+    if (handle == null) return;
+    final err = await AdminService.setSetting('instapay_handle', handle);
+    final linkErr = await AdminService.setSetting('instapay_link', link);
     if (!mounted) return;
-    if (err != null) {
-      adminToast(context, err, ok: false);
+    if (err != null || linkErr != null) {
+      adminToast(context, err ?? linkErr!, ok: false);
     } else {
-      setState(() => _handle = value);
-      adminToast(context, 'InstaPay handle updated');
+      setState(() {
+        _handle = handle;
+        _link = link;
+      });
+      adminToast(context, 'Payout details updated');
     }
   }
 

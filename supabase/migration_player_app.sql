@@ -4336,7 +4336,10 @@ returns jsonb language sql stable security definer set search_path = public as $
       nullif(btrim(p.instapay_handle), ''),
       nullif(btrim((select value from public.app_settings where key = 'instapay_handle')), ''),
       'padelpro@instapay'),
-    'link', nullif(btrim(p.instapay_link), ''))
+    -- The link resolves the same way as the handle: organizer, then platform.
+    'link', coalesce(
+      nullif(btrim(p.instapay_link), ''),
+      nullif(btrim((select value from public.app_settings where key = 'instapay_link')), '')))
     from public.tournaments t
     left join public.profiles p on p.id = t.organizer_id
    where t.id = p_tournament_id;

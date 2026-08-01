@@ -41,7 +41,9 @@ class _OrganizerPayoutCardState extends State<OrganizerPayoutCard> {
   bool get _set => (_handle ?? '').isNotEmpty || (_link ?? '').isNotEmpty;
 
   Future<void> _edit() async {
-    final handleC = TextEditingController(text: _handle ?? '');
+    // The field holds only the name — "@instapay" is fixed on the right.
+    final handleC =
+        TextEditingController(text: AdminService.instapayName(_handle));
     final linkC = TextEditingController(text: _link ?? '');
     adminSheet(
       context,
@@ -56,15 +58,16 @@ class _OrganizerPayoutCardState extends State<OrganizerPayoutCard> {
         color: AdminColors.gold,
         onPressed: () async {
           Navigator.pop(context);
+          final handle = AdminService.normalizeInstapay(handleC.text);
           final err = await AdminService.setMyInstapay(
-              handle: handleC.text.trim(), link: linkC.text.trim());
+              handle: handle ?? '', link: linkC.text.trim());
           if (!mounted) return;
           if (err != null) {
             adminToast(context, err, ok: false);
             return;
           }
           setState(() {
-            _handle = handleC.text.trim().isEmpty ? null : handleC.text.trim();
+            _handle = handle;
             _link = linkC.text.trim().isEmpty ? null : linkC.text.trim();
           });
           adminToast(context, 'Payout details saved');
@@ -89,7 +92,7 @@ class _OrganizerPayoutCardState extends State<OrganizerPayoutCard> {
         const SizedBox(height: 14),
         Text('INSTAPAY USERNAME', style: AdminText.kicker()),
         const SizedBox(height: 7),
-        _field(handleC, 'yourname@instapay'),
+        _field(handleC, 'yourname', suffix: AdminService.instapaySuffix),
         const SizedBox(height: 14),
         Text('PAYMENT LINK (OPTIONAL)', style: AdminText.kicker()),
         const SizedBox(height: 7),
@@ -100,7 +103,7 @@ class _OrganizerPayoutCardState extends State<OrganizerPayoutCard> {
   }
 
   static Widget _field(TextEditingController c, String hint,
-          {TextInputType? keyboard}) =>
+          {TextInputType? keyboard, String? suffix}) =>
       TextField(
         controller: c,
         keyboardType: keyboard,
@@ -109,6 +112,9 @@ class _OrganizerPayoutCardState extends State<OrganizerPayoutCard> {
           isDense: true,
           hintText: hint,
           hintStyle: AdminText.body(AdminColors.inkFaint),
+          // Fixed, non-editable — InstaPay always completes the address.
+          suffixText: suffix,
+          suffixStyle: AdminText.sans(13.5, FontWeight.w700, AdminColors.inkSoft),
           filled: true,
           fillColor: AdminColors.surfaceAlt,
           contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),

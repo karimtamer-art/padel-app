@@ -31,6 +31,21 @@ class OrderService {
     return 'padelpro@instapay';
   }
 
+  /// Optional InstaPay payment link for the merchant account — the other half
+  /// of the handle/link pair the admin sets in Payments. Empty when unset.
+  static Future<String> fetchInstapayLink() async {
+    try {
+      final row = await _db
+          .from('app_settings')
+          .select('value')
+          .eq('key', 'instapay_link')
+          .maybeSingle();
+      return ((row?['value'] as String?) ?? '').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
   /// Uploads an InstaPay transfer screenshot to the private proofs bucket.
   /// Returns `(path: ..., error: null)` on success — the storage path (not a
   /// URL; admins sign it to view) — or `(path: null, error: <reason>)` so the

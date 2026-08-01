@@ -1384,6 +1384,31 @@ class AdminService {
 
   /// Sets the organizer's payout username + link. Returns null on success,
   /// else an error string.
+  /// InstaPay addresses end in `@instapay`, so the UI only ever asks for the
+  /// name and appends this. A user who types a full address keeps it — some
+  /// IPAs are issued against a bank (`name@cib`), and forcing @instapay on
+  /// those would break the transfer.
+  static const instapaySuffix = '@instapay';
+
+  /// What to store: "karim" → "karim@instapay"; "karim@cib" → unchanged;
+  /// blank → null.
+  static String? normalizeInstapay(String raw) {
+    var v = raw.trim();
+    if (v.startsWith('@')) v = v.substring(1).trim();
+    if (v.isEmpty) return null;
+    return v.contains('@') ? v : '$v$instapaySuffix';
+  }
+
+  /// What to put in the text field: "karim@instapay" → "karim". A non-instapay
+  /// address is shown whole, since its suffix is meaningful.
+  static String instapayName(String? stored) {
+    final v = (stored ?? '').trim();
+    if (v.isEmpty) return '';
+    return v.toLowerCase().endsWith(instapaySuffix)
+        ? v.substring(0, v.length - instapaySuffix.length)
+        : v;
+  }
+
   static Future<String?> setMyInstapay(
       {required String handle, required String link}) async {
     try {
