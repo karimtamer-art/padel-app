@@ -2,6 +2,7 @@
 import 'package:url_launcher/url_launcher.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
+import 'package:padel_clay/app_version.dart';
 import 'settings_common.dart';
 
 /// Support contact details. Referenced anywhere the app tells a player how to
@@ -105,7 +106,7 @@ class HelpSupportScreen extends StatelessWidget {
         ]),
         const SizedBox(height: 18),
         Center(
-          child: Text('Padel Rivals · v1.0.0',
+          child: Text('Padel Rivals · v$kAppVersion ($kAppBuild)',
               style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 11, letterSpacing: 0.5)),
         ),
       ],
