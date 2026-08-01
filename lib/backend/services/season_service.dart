@@ -112,6 +112,31 @@ class SeasonService {
   static Future<String?> deleteBracket(String id) =>
       _call('admin_delete_season_bracket', {'p_id': id});
 
+  /// Everything known about one player in the season: profile, rating,
+  /// standing, where every point came from, and the full ledger.
+  static Future<SeasonPlayer?> playerDetail(
+      String seasonId, String playerId) async {
+    try {
+      final res = await _db.rpc('admin_season_player',
+          params: {'p_season_id': seasonId, 'p_player_id': playerId});
+      if (res == null) return null;
+      return SeasonPlayer.fromJson(Map<String, dynamic>.from(res as Map));
+    } catch (e) {
+      debugPrint('[SeasonService] playerDetail: $e');
+      return null;
+    }
+  }
+
+  /// Stop a single ledger entry counting (or let it count again). The row is
+  /// never deleted — it stays in the ledger, flagged.
+  static Future<String?> voidPoints(String entryId, bool voided,
+          {String? reason}) =>
+      _call('admin_void_season_points', {
+        'p_id': entryId,
+        'p_void': voided,
+        'p_reason': reason,
+      });
+
   static Future<String?> adjustPoints({
     required String seasonId,
     required String playerId,
@@ -148,7 +173,9 @@ class SeasonService {
 
 // ── Models ────────────────────────────────────────────────────────
 
-int _int(dynamic v) => v is int ? v : int.tryParse('${v ?? ''}') ?? 0;
+int _int(dynamic v) => v is int
+    ? v
+    : (v is num ? v.round() : (int.tryParse('${v ?? ''}') ?? 0));
 double _num(dynamic v) =>
     v is num ? v.toDouble() : double.tryParse('${v ?? ''}') ?? 0;
 
@@ -358,6 +385,158 @@ class SeasonOverview {
     }
     return 0;
   }
+}
+
+/// One line of "where the points came from".
+class SeasonBreakdown {
+  final String code, label, icon;
+  final int count, pts;
+  const SeasonBreakdown(this.code, this.label, this.icon, this.count, this.pts);
+
+  factory SeasonBreakdown.fromJson(Map<String, dynamic> j) => SeasonBreakdown(
+        '${j['code']}',
+        (j['label'] as String?) ?? '${j['code']}',
+        (j['icon'] as String?) ?? 'star',
+        _int(j['n']),
+        _int(j['pts']),
+      );
+}
+
+/// One entry in the season points ledger.
+class SeasonLedgerEntry {
+  final String id, code, label, icon, source;
+  final int pts;
+  final DateTime? at;
+  final String? reason, by, voidReason;
+  final bool voided;
+
+  const SeasonLedgerEntry({
+    required this.id,
+    required this.code,
+    required this.label,
+    required this.icon,
+    required this.source,
+    required this.pts,
+    required this.voided,
+    this.at,
+    this.reason,
+    this.by,
+    this.voidReason,
+  });
+
+  factory SeasonLedgerEntry.fromJson(Map<String, dynamic> j) =>
+      SeasonLedgerEntry(
+        id: '${j['id']}',
+        code: '${j['code']}',
+        label: (j['label'] as String?) ?? '${j['code']}',
+        icon: (j['icon'] as String?) ?? 'star',
+        source: (j['source'] as String?) ?? '—',
+        pts: _int(j['pts']),
+        voided: j['voided'] == true,
+        at: DateTime.tryParse('${j['created_at']}'),
+        reason: j['reason'] as String?,
+        by: j['by'] as String?,
+        voidReason: j['void_reason'] as String?,
+      );
+}
+
+/// The console's per-player sheet: profile + standing + ledger.
+class SeasonPlayer {
+  final String? error;
+  final String seasonName;
+
+  // profile
+  final String id, name, tier, status;
+  final String? username, avatarUrl, city, phone, email;
+  final double rating, sigma;
+  final int reliability, competitiveMatches;
+  final bool isProvisional, isAnchor;
+  final DateTime? joined, lastSeen;
+
+  // season
+  final int? rank;
+  final int pts, played, trend, wins, losses, voidedCount;
+  final SeasonBracket? bracket;
+  final List<SeasonBreakdown> breakdown;
+  final List<SeasonLedgerEntry> ledger;
+
+  const SeasonPlayer({
+    required this.id,
+    required this.name,
+    required this.tier,
+    required this.status,
+    required this.seasonName,
+    required this.rating,
+    required this.sigma,
+    required this.reliability,
+    required this.competitiveMatches,
+    required this.isProvisional,
+    required this.isAnchor,
+    required this.pts,
+    required this.played,
+    required this.trend,
+    required this.wins,
+    required this.losses,
+    required this.voidedCount,
+    required this.breakdown,
+    required this.ledger,
+    this.error,
+    this.username,
+    this.avatarUrl,
+    this.city,
+    this.phone,
+    this.email,
+    this.joined,
+    this.lastSeen,
+    this.rank,
+    this.bracket,
+  });
+
+  factory SeasonPlayer.fromJson(Map<String, dynamic> j) {
+    final p = Map<String, dynamic>.from((j['player'] ?? const {}) as Map);
+    final s = Map<String, dynamic>.from((j['season'] ?? const {}) as Map);
+    return SeasonPlayer(
+      error: j['error'] as String?,
+      seasonName: (j['season_name'] as String?) ?? 'Season',
+      id: '${p['id']}',
+      name: (p['name'] as String?) ?? 'Player',
+      username: p['username'] as String?,
+      avatarUrl: p['avatar_url'] as String?,
+      city: p['city'] as String?,
+      phone: p['phone'] as String?,
+      email: p['email'] as String?,
+      joined: DateTime.tryParse('${p['joined']}'),
+      lastSeen: DateTime.tryParse('${p['last_seen']}'),
+      rating: _num(p['rating']),
+      tier: (p['tier'] as String?) ?? 'bronze',
+      sigma: _num(p['sigma']),
+      reliability: _int(p['reliability']),
+      competitiveMatches: _int(p['competitive_matches']),
+      isProvisional: p['is_provisional'] == true,
+      isAnchor: p['is_anchor'] == true,
+      status: (p['status'] as String?) ?? 'active',
+      rank: s['rank'] == null ? null : _int(s['rank']),
+      pts: _int(s['pts']),
+      played: _int(s['played']),
+      trend: _int(s['trend']),
+      wins: _int(s['wins']),
+      losses: _int(s['losses']),
+      voidedCount: _int(s['voided']),
+      bracket: s['bracket'] == null
+          ? null
+          : SeasonBracket.fromJson(Map<String, dynamic>.from(s['bracket'] as Map)),
+      breakdown: ((j['breakdown'] as List?) ?? const [])
+          .map((e) =>
+              SeasonBreakdown.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList(),
+      ledger: ((j['ledger'] as List?) ?? const [])
+          .map((e) =>
+              SeasonLedgerEntry.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList(),
+    );
+  }
+
+  String get initials => initialsOf(name);
 }
 
 /// A season row in the console's season grid.

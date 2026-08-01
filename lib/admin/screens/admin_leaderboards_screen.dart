@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../backend/services/season_service.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
+import 'season_player_sheet.dart';
 
 /// Season console (super admin only — every RPC behind this guards on
 /// `_is_admin()`). Run the season: lifecycle, points engine, reward brackets,
@@ -50,38 +51,11 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
     await _load();
   }
 
-  static String _egp(int n) => 'EGP ${_thousands(n)}';
-
-  static String _thousands(int n) {
-    final s = n.abs().toString();
-    final b = StringBuffer();
-    for (var i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) b.write(',');
-      b.write(s[i]);
-    }
-    return '${n < 0 ? '-' : ''}$b';
-  }
-
-  static Color _bracketTone(String key) => switch (key) {
-        'gold' => AdminColors.gold,
-        'silver' => AdminColors.silver,
-        'primary' => AdminColors.primary,
-        'bronzegold' => AdminColors.bronze,
-        _ => AdminColors.inkSoft,
-      };
-
-  static IconData _ruleIcon(String name) => switch (name) {
-        'crown' => Icons.workspace_premium_rounded,
-        'medal' => Icons.military_tech_rounded,
-        'trophy' => Icons.emoji_events_rounded,
-        'star' => Icons.star_rounded,
-        'shield' => Icons.shield_rounded,
-        'bolt' => Icons.bolt_rounded,
-        'fire' => Icons.local_fire_department_rounded,
-        'check' => Icons.check_circle_rounded,
-        'dash' => Icons.remove_rounded,
-        _ => Icons.star_rounded,
-      };
+  // One source of truth for season formatting — see season_player_sheet.dart.
+  static String _egp(int n) => 'EGP ${seasonThousands(n)}';
+  static String _thousands(int n) => seasonThousands(n);
+  static Color _bracketTone(String key) => seasonBracketTone(key);
+  static IconData _ruleIcon(String name) => seasonRuleIcon(name);
 
   @override
   Widget build(BuildContext context) {
@@ -474,7 +448,7 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
     return AdminCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         AdminSection('Season standings',
-            sub: '${d.standings.length} ranked · adjust points manually when needed'),
+            sub: '${d.standings.length} ranked · tap a player to see and edit everything'),
         TextField(
           onChanged: (v) => setState(() => _query = v),
           style: AdminText.body(),
@@ -516,7 +490,9 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
   Widget _standingRow(SeasonConsole d, Standing r) {
     final b = d.bracketFor(r.rank);
     final tone = AdminColors.tier(r.tier == 'elite' ? 'elite' : r.tier);
-    return Container(
+    return GestureDetector(
+      onTap: () => _openPlayer(d, r),
+      child: Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -570,14 +546,20 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
         const SizedBox(width: 8),
         Text(_thousands(r.pts),
             style: AdminText.mono(14, FontWeight.w800, AdminColors.ink)),
-        IconButton(
-          icon: const Icon(Icons.tune_rounded,
-              size: 17, color: AdminColors.inkSoft),
-          tooltip: 'Adjust',
-          onPressed: () => _adjust(d, r),
-        ),
+        const SizedBox(width: 4),
+        const Icon(Icons.chevron_right_rounded,
+            size: 20, color: AdminColors.inkFaint),
+        const SizedBox(width: 2),
       ]),
+      ),
     );
+  }
+
+  /// The player table row → everything about that player, all of it editable.
+  Future<void> _openPlayer(SeasonConsole d, Standing r) async {
+    await showSeasonPlayerSheet(context,
+        seasonId: d.season!.id, playerId: r.playerId, playerName: r.name);
+    await _load();
   }
 
   static String _titleCase(String s) =>
@@ -749,135 +731,6 @@ class _AdminLeaderboardsScreenState extends State<AdminLeaderboardsScreen> {
       if (b.rankTo >= n) n = b.rankTo + 1;
     }
     return n;
-  }
-
-  Future<void> _adjust(SeasonConsole d, Standing r) async {
-    final delta = TextEditingController(text: '0');
-    final reason = TextEditingController();
-    final saved = await adminSheet<bool>(
-      context,
-      title: 'Adjust season points',
-      sub: '${r.name} · currently #${r.rank}',
-      heightFactor: 0.78,
-      body: StatefulBuilder(
-        builder: (ctx, setSheet) {
-          final dNow = int.tryParse(delta.text.trim()) ?? 0;
-          return Column(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                  color: AdminColors.surfaceAlt,
-                  borderRadius: BorderRadius.circular(11)),
-              child: Row(children: [
-                Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('CURRENT', style: AdminText.kicker()),
-                        const SizedBox(height: 4),
-                        Text('${_thousands(r.pts)} pts',
-                            style: AdminText.sans(
-                                16, FontWeight.w800, AdminColors.ink)),
-                      ]),
-                ),
-                const Icon(Icons.arrow_forward_rounded,
-                    size: 18, color: AdminColors.inkFaint),
-                Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text('NEW', style: AdminText.kicker()),
-                        const SizedBox(height: 4),
-                        Text('${_thousands(r.pts + dNow)} pts',
-                            style: AdminText.sans(
-                                16, FontWeight.w800, AdminColors.primary)),
-                      ]),
-                ),
-              ]),
-            ),
-            const SizedBox(height: 14),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              for (final v in const [-50, -20, 20, 50, 120, 250])
-                GestureDetector(
-                  onTap: () => setSheet(() => delta.text = '$v'),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: dNow == v
-                          ? AdminColors.primary
-                          : AdminColors.surfaceAlt,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                          color: dNow == v
-                              ? AdminColors.primary
-                              : AdminColors.line),
-                    ),
-                    child: Text(v > 0 ? '+$v' : '$v',
-                        style: AdminText.mono(
-                            12,
-                            FontWeight.w800,
-                            dNow == v
-                                ? AdminColors.primaryInk
-                                : AdminColors.inkSoft)),
-                  ),
-                ),
-            ]),
-            const SizedBox(height: 14),
-            _field('Adjustment', delta,
-                prefix: 'PTS',
-                hint: 'Negative values deduct points',
-                onChanged: (_) => setSheet(() {})),
-            const SizedBox(height: 14),
-            _field('Reason (logged to the audit trail)', reason,
-                maxLines: 2,
-                hint: 'e.g. Title not auto-counted, no-show penalty…'),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-              decoration: BoxDecoration(
-                  color: AdminColors.wash(AdminColors.warn, 0.12),
-                  borderRadius: BorderRadius.circular(11)),
-              child: Row(children: [
-                const Icon(Icons.info_outline_rounded,
-                    size: 17, color: AdminColors.warn),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'The player is notified and standings re-sort immediately. '
-                    'Recorded against your account.',
-                    style: AdminText.small(AdminColors.warn)
-                        .copyWith(height: 1.4),
-                  ),
-                ),
-              ]),
-            ),
-          ]);
-        },
-      ),
-      footer: Row(children: [
-        Expanded(
-          child: AdminButton('Apply adjustment',
-              icon: Icons.check_rounded,
-              full: true,
-              onPressed: () => Navigator.pop(context, true)),
-        ),
-      ]),
-    );
-    if (saved != true) return;
-    final v = int.tryParse(delta.text.trim()) ?? 0;
-    if (v == 0) {
-      if (mounted) adminToast(context, 'Enter an adjustment', ok: false);
-      return;
-    }
-    await _run(
-      () => SeasonService.adjustPoints(
-          seasonId: d.season!.id,
-          playerId: r.playerId,
-          delta: v,
-          reason: reason.text.trim()),
-      '${r.name} ${v > 0 ? '+' : ''}$v pts',
-    );
   }
 
   Future<void> _newSeason() async {
