@@ -4,6 +4,14 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'settings_common.dart';
 
+/// Support contact details. Referenced anywhere the app tells a player how to
+/// reach us, so there is one place to change them.
+const String kSupportEmail = 'Padelrivals@gmail.com';
+/// As shown to players (local Egyptian format).
+const String kSupportPhone = '01501800943';
+/// What the dialer is handed — international form, so it works from abroad too.
+const String kSupportPhoneDial = '+201501800943';
+
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({super.key});
 
@@ -75,10 +83,10 @@ class HelpSupportScreen extends StatelessWidget {
         const SectionLabel('Contact'),
         TileGroup(children: [
           NavTile(icon: Icons.chat_bubble_outline_rounded, title: 'Live Chat', subtitle: 'Coming soon', onTap: () => _comingSoon(context, 'Live chat')),
-          NavTile(icon: Icons.mail_outline_rounded, title: 'Email Support', subtitle: 'help@padel.eg',
-              onTap: () => _launch(context, Uri(scheme: 'mailto', path: 'help@padel.eg', queryParameters: {'subject': 'Padel Rivals support'}))),
-          NavTile(icon: Icons.phone_outlined, title: 'Call Us', subtitle: '+20 2 1234 5678',
-              onTap: () => _launch(context, Uri(scheme: 'tel', path: '+20212345678'))),
+          NavTile(icon: Icons.mail_outline_rounded, title: 'Email Support', subtitle: kSupportEmail,
+              onTap: () => _launch(context, Uri(scheme: 'mailto', path: kSupportEmail, queryParameters: {'subject': 'Padel Rivals support'}))),
+          NavTile(icon: Icons.phone_outlined, title: 'Call Us', subtitle: kSupportPhone,
+              onTap: () => _launch(context, Uri(scheme: 'tel', path: kSupportPhoneDial))),
         ]),
         const SizedBox(height: 22),
 

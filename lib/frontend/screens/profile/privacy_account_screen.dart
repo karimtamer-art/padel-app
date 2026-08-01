@@ -4,6 +4,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import 'settings_common.dart';
+import 'help_support_screen.dart' show kSupportEmail;
 
 class PrivacyAccountScreen extends StatefulWidget {
   const PrivacyAccountScreen({super.key});
@@ -72,7 +73,7 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
         const SectionLabel('Data'),
         TileGroup(children: [
           NavTile(icon: Icons.download_outlined, title: 'Download My Data',
-              onTap: () => _snack('Email help@padel.eg and we\'ll send your data export.')),
+              onTap: () => _snack('Email $kSupportEmail and we\'ll send your data export.')),
           NavTile(icon: Icons.block_rounded, title: 'Blocked Players', subtitle: 'None',
               onTap: () => _snack('You haven\'t blocked anyone.')),
         ]),
