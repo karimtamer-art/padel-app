@@ -973,7 +973,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ]),
             ),
             Row(children: [
-              for (final m in last) ...[
+              // `recent` is newest-first; render it reversed so the strip reads
+              // oldest → newest and each new result lands on the RIGHT.
+              for (final m in last.reversed) ...[
                 const SizedBox(width: 5),
                 Container(
                   width: 28, height: 28,
