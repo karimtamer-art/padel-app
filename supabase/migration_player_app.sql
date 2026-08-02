@@ -2292,14 +2292,44 @@ exception when duplicate_object then null; end $$;
 -- Table-level privilege (separate from RLS): without this the role is rejected
 -- before any policy is evaluated → "permission denied for table trade_requests".
 grant select, insert, update on public.trade_requests to authenticated;
--- Named FK so PostgREST can resolve profiles!trade_requests_player_id_fkey.
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'trade_requests_player_id_fkey') then
+-- Named FK so PostgREST can resolve profiles!trade_requests_player_profile_fkey.
+-- Guarded on the FK's TARGET, not its name: migrations/0003 created the table
+-- with player_id → auth.users under the auto name `trade_requests_player_id_fkey`,
+-- so a name-only guard skipped and the admin embed stayed broken.
+do $$
+declare c text;
+begin
+  select con.conname into c
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_class tgt on tgt.oid = con.confrelid
+   where con.contype = 'f'
+     and rel.relname = 'trade_requests'
+     and rel.relnamespace = 'public'::regnamespace
+     and tgt.relname = 'profiles'
+     and tgt.relnamespace = 'public'::regnamespace
+   limit 1;
+  if c is null then
+    -- NOT VALID: legacy rows whose player has no profiles row would block
+    -- validation. PostgREST reads pg_constraint, so the embed resolves anyway.
     alter table public.trade_requests
-      add constraint trade_requests_player_id_fkey
-      foreign key (player_id) references public.profiles(id);
+      add constraint trade_requests_player_profile_fkey
+      foreign key (player_id) references public.profiles(id) not valid;
+  elsif c <> 'trade_requests_player_profile_fkey' then
+    execute format(
+      'alter table public.trade_requests rename constraint %I to trade_requests_player_profile_fkey', c);
   end if;
 end $$;
+-- The trade-in sheet submits human labels ('Like New', 'Good', 'Fair', 'Worn'),
+-- so 0003's snake_case enum check has to go or every submission fails.
+alter table public.trade_requests
+  drop constraint if exists trade_requests_condition_chk;
+-- Status vocabulary must include 'rejected' (admin declines a request).
+alter table public.trade_requests
+  drop constraint if exists trade_requests_status_chk;
+alter table public.trade_requests
+  add constraint trade_requests_status_chk
+  check (status in ('pending','offer_made','accepted','rejected','declined','completed'));
 
 -- Repair requests: players submit their own; admins read/update the queue.
 -- (Table created earlier alongside broadcasts; policies live here, after
@@ -2318,6 +2348,36 @@ do $$ begin
     for update using (public._is_admin());
 exception when duplicate_object then null; end $$;
 grant select, insert, update on public.repair_requests to authenticated;
+-- Same FK story as trade_requests: 0003 pointed player_id at auth.users, which
+-- PostgREST cannot embed — the admin queue needs a relationship to profiles.
+do $$
+declare c text;
+begin
+  select con.conname into c
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_class tgt on tgt.oid = con.confrelid
+   where con.contype = 'f'
+     and rel.relname = 'repair_requests'
+     and rel.relnamespace = 'public'::regnamespace
+     and tgt.relname = 'profiles'
+     and tgt.relnamespace = 'public'::regnamespace
+   limit 1;
+  if c is null then
+    alter table public.repair_requests
+      add constraint repair_requests_player_profile_fkey
+      foreign key (player_id) references public.profiles(id) not valid;
+  elsif c <> 'repair_requests_player_profile_fkey' then
+    execute format(
+      'alter table public.repair_requests rename constraint %I to repair_requests_player_profile_fkey', c);
+  end if;
+end $$;
+-- 'rejected' is written when an admin declines; 0003's check omitted it.
+alter table public.repair_requests
+  drop constraint if exists repair_requests_status_chk;
+alter table public.repair_requests
+  add constraint repair_requests_status_chk
+  check (status in ('pending','quoted','in_repair','ready','collected','rejected'));
 
 -- Key/value app settings (admin-editable). The InstaPay merchant handle
 -- lives here so the receiving account can change without a rebuild.

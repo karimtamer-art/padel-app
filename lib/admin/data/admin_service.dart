@@ -1176,30 +1176,74 @@ class AdminService {
 
   // ── Repair requests ───────────────────────────────────────────
 
-  static Future<List<Map<String, dynamic>>> fetchRepairs() async {
-    final res = await _db
-        .from('repair_requests')
-        .select('*, profiles!repair_requests_player_id_fkey(name, phone)')
-        .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(res as List);
-  }
+  static Future<List<Map<String, dynamic>>> fetchRepairs() =>
+      _fetchRequests('repair_requests');
 
-  static Future<void> updateRepair(String id, Map<String, dynamic> data) async {
-    await _db.from('repair_requests').update(data).eq('id', id);
-  }
+  /// Returns an error string, or null on success.
+  static Future<String?> updateRepair(
+          String id, Map<String, dynamic> data) async =>
+      _updateRequest('repair_requests', id, data);
 
   // ── Trade requests ────────────────────────────────────────────
 
-  static Future<List<Map<String, dynamic>>> fetchTrades() async {
-    final res = await _db
-        .from('trade_requests')
-        .select('*, profiles!trade_requests_player_id_fkey(name, phone)')
-        .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(res as List);
+  static Future<List<Map<String, dynamic>>> fetchTrades() =>
+      _fetchRequests('trade_requests');
+
+  /// Returns an error string, or null on success.
+  static Future<String?> updateTrade(
+          String id, Map<String, dynamic> data) async =>
+      _updateRequest('trade_requests', id, data);
+
+  // Requests + the submitting player. The embed needs an FK from the request
+  // table to `profiles`; both tables originally only had the legacy FK to
+  // auth.users, which PostgREST cannot embed — so fall back to a plain read
+  // plus a name lookup rather than letting the whole screen fail.
+  static Future<List<Map<String, dynamic>>> _fetchRequests(String table) async {
+    try {
+      final res = await _db
+          .from(table)
+          .select('*, profiles!${table}_player_profile_fkey(name, phone)')
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] $table join failed, retrying plain: $e');
+      final res =
+          await _db.from(table).select('*').order('created_at', ascending: false);
+      final rows = List<Map<String, dynamic>>.from(res as List);
+      final ids = rows
+          .map((r) => r['player_id'] as String?)
+          .whereType<String>()
+          .toSet()
+          .toList();
+      if (ids.isNotEmpty) {
+        try {
+          final people =
+              await _db.from('profiles').select('id, name, phone').inFilter('id', ids);
+          final byId = {
+            for (final p in List<Map<String, dynamic>>.from(people as List))
+              p['id'] as String: p
+          };
+          for (final r in rows) {
+            final p = byId[r['player_id']];
+            if (p != null) {
+              r['profiles'] = {'name': p['name'], 'phone': p['phone']};
+            }
+          }
+        } catch (_) {}
+      }
+      return rows;
+    }
   }
 
-  static Future<void> updateTrade(String id, Map<String, dynamic> data) async {
-    await _db.from('trade_requests').update(data).eq('id', id);
+  static Future<String?> _updateRequest(
+      String table, String id, Map<String, dynamic> data) async {
+    try {
+      await _db.from(table).update(data).eq('id', id);
+      return null;
+    } catch (e) {
+      debugPrint('[AdminService] $table update failed: $e');
+      return e is PostgrestException ? e.message : e.toString();
+    }
   }
 
   // ── Broadcasts ────────────────────────────────────────────────

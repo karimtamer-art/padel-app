@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import '../theme/admin_colors.dart';
 import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
@@ -14,6 +15,7 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   List<Map<String, dynamic>> _repairs = [];
   List<Map<String, dynamic>> _trades = [];
   bool _loading = true;
+  String? _error;
 
   // DB status values: pending / quoted / in_repair / ready / collected
   static const _repairFlow = [
@@ -35,17 +37,28 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
 
   Future<void> _load() async {
     if (!_loading) setState(() => _loading = true);
+    // Load the two queues independently: one failing (RLS, missing table)
+    // must not leave the whole screen stuck on the spinner.
     final results = await Future.wait([
-      AdminService.fetchRepairs(),
-      AdminService.fetchTrades(),
+      AdminService.fetchRepairs().then<Object>((v) => v).catchError((e) => e),
+      AdminService.fetchTrades().then<Object>((v) => v).catchError((e) => e),
     ]);
     if (!mounted) return;
+    final repairs = results[0];
+    final trades = results[1];
     setState(() {
-      _repairs = results[0];
-      _trades = results[1];
+      if (repairs is List<Map<String, dynamic>>) _repairs = repairs;
+      if (trades is List<Map<String, dynamic>>) _trades = trades;
+      _error = repairs is List<Map<String, dynamic>> &&
+              trades is List<Map<String, dynamic>>
+          ? null
+          : _msg(repairs is List ? trades : repairs);
       _loading = false;
     });
   }
+
+  static String _msg(Object e) =>
+      e is PostgrestException ? e.message : e.toString();
 
   static String _playerName(Map row) =>
       (row['profiles'] as Map?)?['name'] as String? ?? 'Player';
@@ -96,6 +109,30 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
         child: _seg(newRepairs, newTrades),
       ),
+      if (_error != null && !_loading)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+                color: AdminColors.danger.withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(
+                    color: AdminColors.danger.withValues(alpha: .3))),
+            child: Row(children: [
+              const Icon(Icons.error_outline_rounded,
+                  size: 17, color: AdminColors.danger),
+              const SizedBox(width: 9),
+              Expanded(
+                  child: Text("Couldn't load requests: $_error",
+                      style: AdminText.small(AdminColors.danger))),
+              TextButton(
+                  onPressed: _load,
+                  child: Text('Retry',
+                      style: AdminText.strong(AdminColors.danger))),
+            ]),
+          ),
+        ),
       Expanded(
         child: _loading
             ? const Center(
@@ -285,12 +322,19 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
             ? AdminButton('Send quote', full: true, height: 50,
                 icon: Icons.check_rounded, onPressed: () async {
                 Navigator.pop(context);
-                await AdminService.updateRepair(r['id'] as String, {
+                final err = await AdminService.updateRepair(r['id'] as String, {
                   'status': 'quoted',
                   'quote_amount': int.tryParse(quoteC.text) ?? 0,
                 });
                 await _load();
-                if (mounted) adminToast(context, 'Quote sent to ${_playerName(r)}');
+                if (mounted) {
+                  adminToast(
+                      context,
+                      err == null
+                          ? 'Quote sent to ${_playerName(r)}'
+                          : "Couldn't send quote: $err",
+                      ok: err == null);
+                }
               })
             : next != null && next != 'collected'
                 // Label the CURRENT step's action (keyed by `status`), not the
@@ -298,22 +342,33 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
                 ? AdminButton(advanceLabel[status]!, full: true, height: 50,
                     icon: Icons.check_rounded, onPressed: () async {
                     Navigator.pop(context);
-                    await AdminService.updateRepair(
+                    final err = await AdminService.updateRepair(
                         r['id'] as String, {'status': next});
                     await _load();
                     if (mounted) {
-                      adminToast(context,
-                          '${_shortId(r['id'] as String?)} → ${_repairLabel[next]}');
+                      adminToast(
+                          context,
+                          err == null
+                              ? '${_shortId(r['id'] as String?)} → ${_repairLabel[next]}'
+                              : "Couldn't update: $err",
+                          ok: err == null);
                     }
                   })
                 : next == 'collected'
                     ? AdminButton('Mark collected', full: true, height: 50,
                         variant: AdminBtn.success, onPressed: () async {
                         Navigator.pop(context);
-                        await AdminService.updateRepair(
+                        final err = await AdminService.updateRepair(
                             r['id'] as String, {'status': 'collected'});
                         await _load();
-                        if (mounted) adminToast(context, 'Repair complete');
+                        if (mounted) {
+                          adminToast(
+                              context,
+                              err == null
+                                  ? 'Repair complete'
+                                  : "Couldn't update: $err",
+                              ok: err == null);
+                        }
                       })
                     : const SizedBox.shrink()),
         if (status != 'collected' && status != 'rejected') ...[
@@ -540,24 +595,36 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
             ? AdminButton('Send offer', full: true, height: 50,
                 icon: Icons.check_rounded, onPressed: () async {
                 Navigator.pop(context);
-                await AdminService.updateTrade(t['id'] as String, {
+                final err = await AdminService.updateTrade(t['id'] as String, {
                   'status': 'offer_made',
                   'offer_credit': int.tryParse(offerC.text) ?? 0,
                 });
                 await _load();
-                if (mounted) adminToast(context, 'Offer sent to ${_playerName(t)}');
+                if (mounted) {
+                  adminToast(
+                      context,
+                      err == null
+                          ? 'Offer sent to ${_playerName(t)}'
+                          : "Couldn't send offer: $err",
+                      ok: err == null);
+                }
               })
             : status == 'offer_made'
                 ? AdminButton('Mark accepted', full: true, height: 50,
                     variant: AdminBtn.success, onPressed: () async {
                     Navigator.pop(context);
-                    await AdminService.updateTrade(
+                    final err = await AdminService.updateTrade(
                         t['id'] as String, {'status': 'accepted'});
                     await _load();
                     // No wallet/store-credit ledger exists yet, so credit is
                     // arranged manually — don't claim it was auto-issued.
                     if (mounted) {
-                      adminToast(context, 'Trade accepted — arrange store credit');
+                      adminToast(
+                          context,
+                          err == null
+                              ? 'Trade accepted — arrange store credit'
+                              : "Couldn't accept: $err",
+                          ok: err == null);
                     }
                   })
                 : const SizedBox.shrink()),
@@ -625,16 +692,26 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
 
   Future<void> _declineRepair(Map<String, dynamic> r) async {
     Navigator.pop(context);
-    await AdminService.updateRepair(r['id'] as String, {'status': 'rejected'});
+    final err =
+        await AdminService.updateRepair(r['id'] as String, {'status': 'rejected'});
     await _load();
-    if (mounted) adminToast(context, 'Repair request declined');
+    if (mounted) {
+      adminToast(context,
+          err == null ? 'Repair request declined' : "Couldn't decline: $err",
+          ok: err == null);
+    }
   }
 
   Future<void> _declineTrade(Map<String, dynamic> t) async {
     Navigator.pop(context);
-    await AdminService.updateTrade(t['id'] as String, {'status': 'rejected'});
+    final err =
+        await AdminService.updateTrade(t['id'] as String, {'status': 'rejected'});
     await _load();
-    if (mounted) adminToast(context, 'Trade-in declined');
+    if (mounted) {
+      adminToast(context,
+          err == null ? 'Trade-in declined' : "Couldn't decline: $err",
+          ok: err == null);
+    }
   }
 
   Widget _kv(String k, String v) => Expanded(
