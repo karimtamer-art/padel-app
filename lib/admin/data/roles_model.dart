@@ -2,8 +2,11 @@
 // roles_model.dart — role-based access model (RBAC) for the admin console.
 //
 // One console, filtered per role. A Super Admin grants roles; each role sees
-// only the sections it can open (hidden gating). The DB is the real guard —
-// only super admins keep `is_admin = true` (see 2026-07-10_rbac_roles.sql).
+// only the sections it can open (hidden gating). The DB is the real guard: it
+// reads the SAME granted set back out of `profiles.admin_access` via
+// `_has_access(section)` / `_can_edit(section)`, so a section granted outside a
+// role's default set actually works (see 2026-08-03_rbac_section_access.sql).
+// `defaultAccess` below is mirrored by SQL `_role_default()` — change both.
 //
 // Section ids here MUST match the ids the console switches on in
 // admin_console.dart (`dashboard, reports, players, matches, tournaments,

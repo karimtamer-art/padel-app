@@ -350,7 +350,7 @@ returns text
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_old text;
 begin
-  if not public._can_moderate() then return 'Not authorised.'; end if;
+  if not public._can_edit('matches') then return 'Not authorised.'; end if;
   select status into v_old from public.matches where id = p_match_id;
   if not found then return 'Match not found.'; end if;
   update public.matches set status = 'cancelled' where id = p_match_id;
@@ -458,7 +458,7 @@ create or replace function public.admin_resolve_match(
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_status text;
 begin
-  if not public._can_moderate() then return 'Not authorised.'; end if;
+  if not public._can_edit('matches') then return 'Not authorised.'; end if;
   if p_winner not in ('a','b') then return 'Pick the winning team.'; end if;
   select status into v_status from public.matches where id = p_match_id for update;
   if not found then return 'Match not found.'; end if;
@@ -504,7 +504,7 @@ returns table(
 )
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if not public._is_admin() then return; end if;
+  if not public._has_access('matches') then return; end if;
   return query
     select m.id, m.status, m.match_type, m.scheduled_at, m.created_by,
            (select p.name from public.profiles p where p.id = m.created_by),
@@ -752,6 +752,15 @@ returns boolean language sql stable security definer set search_path = public as
   select coalesce((select is_admin from profiles where id = auth.uid()), false);
 $$;
 
+-- RBAC columns. Their canonical home (with the CHECK, index and backfill) is
+-- the block further down, but the guards below are `language sql` and so are
+-- parsed at CREATE time — they need these columns to already exist on a fresh
+-- database. `if not exists` makes the duplicate declaration a no-op.
+alter table public.profiles add column if not exists admin_role   text;
+alter table public.profiles add column if not exists admin_access jsonb;
+alter table public.profiles add column if not exists admin_scope  text;
+alter table public.profiles add column if not exists is_owner     boolean not null default false;
+
 -- Staff gate (RBAC, 2026-07-18). Only super_admin has is_admin=true; organizer/
 -- support/analyst are is_admin=false but DO hold a console role. The shared
 -- read consoles (players/matches/dashboard) must let any staffer see data —
@@ -777,13 +786,80 @@ returns boolean language sql stable security definer set search_path = public as
 $$;
 grant execute on function public._can_moderate() to authenticated;
 
+-- ── Section access (RBAC phase 2, 2026-08-03) ──────────────────
+-- `admin_grant_role` stores the ticked section ids in profiles.admin_access,
+-- but until now nothing in the DB read them: every guard was role-shaped, so a
+-- section granted OUTSIDE the role's default set showed in the nav and then
+-- answered "Not authorised." on every call. These three functions are the one
+-- resolver all section-scoped guards go through.
+-- `_is_admin()` stays "super admin" on purpose — it is the blanket god-check
+-- behind unrelated RLS; only the section guards moved.
+-- The defaults below MUST stay in lockstep with kRoles in
+-- lib/admin/data/roles_model.dart.
+create or replace function public._role_default(p_role text)
+returns text[] language sql immutable set search_path = public as $$
+  select case p_role
+    when 'super_admin' then array['dashboard','reports','players','matches',
+                                  'tournaments','formats','courts','store',
+                                  'promotions','payments','requests',
+                                  'broadcasts','team']
+    when 'organizer'   then array['tournaments','formats','courts','broadcasts']
+    when 'support'     then array['players','matches','requests']
+    when 'analyst'     then array['dashboard','reports']
+    else '{}'::text[] end;
+$$;
+grant execute on function public._role_default(text) to authenticated;
+
+-- The caller's effective sections: super admin → everything (this also covers a
+-- legacy admin whose admin_role backfill never ran); otherwise admin_access,
+-- falling back to the role's default set when it is null/empty.
+create or replace function public._access_ids()
+returns text[] language plpgsql stable security definer set search_path = public as $$
+declare
+  v_is_admin boolean; v_role text; v_access jsonb;
+begin
+  select coalesce(is_admin, false), admin_role, admin_access
+    into v_is_admin, v_role, v_access
+    from public.profiles where id = auth.uid();
+  if not found then return '{}'::text[]; end if;
+  if v_is_admin then return public._role_default('super_admin'); end if;
+  if v_role is null then return '{}'::text[]; end if;
+  if jsonb_typeof(v_access) = 'array' and jsonb_array_length(v_access) > 0 then
+    return (select array(select jsonb_array_elements_text(v_access)));
+  end if;
+  return public._role_default(v_role);
+end $$;
+grant execute on function public._access_ids() to authenticated;
+
+-- Can the caller OPEN this console section?
+create or replace function public._has_access(p_section text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select p_section = any (public._access_ids());
+$$;
+grant execute on function public._has_access(text) to authenticated;
+
+-- Can the caller CHANGE things in it? Analysts are read-only by definition.
+create or replace function public._can_edit(p_section text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select public._has_access(p_section)
+     and coalesce((select is_admin or admin_role is distinct from 'analyst'
+                     from public.profiles where id = auth.uid()), false);
+$$;
+grant execute on function public._can_edit(text) to authenticated;
+
 -- Admin read on matches (OR'd with the participant policy above). Defined here
--- because it needs _is_admin(); the participant policy earlier deliberately
--- avoids referencing it so it can be created before this function exists.
-do $$ begin
-  create policy "matches: admin read" on public.matches for select
-    using (public._is_admin());
-exception when duplicate_object then null; end $$;
+-- because it needs the guards above; the participant policy earlier
+-- deliberately avoids referencing them so it can be created first.
+drop policy if exists "matches: admin read" on public.matches;
+create policy "matches: admin read" on public.matches for select
+  using (public._has_access('matches'));
+
+-- The Broadcasts console inserts straight into `broadcasts` (the fan-out
+-- trigger does the rest). Players only ever read it — see the policy above.
+drop policy if exists "broadcasts: staff write" on public.broadcasts;
+create policy "broadcasts: staff write" on public.broadcasts
+  for insert to authenticated with check (public._can_edit('broadcasts'));
+grant select, insert on public.broadcasts to authenticated;
 
 -- ── Admin dashboard stats ──────────────────────────────────────
 -- Aggregate counts + division breakdown for the admin Dashboard. SECURITY DEFINER
@@ -898,10 +974,10 @@ alter table public.products add constraint products_stock_chk check (stock >= 0)
 alter table public.products enable row level security;
 drop policy if exists "products: read visible" on public.products;
 create policy "products: read visible" on public.products
-  for select using (is_visible = true or public._is_admin());
+  for select using (is_visible = true or public._has_access('store'));
 drop policy if exists "products: admin write" on public.products;
 create policy "products: admin write" on public.products
-  for all using (public._is_admin()) with check (public._is_admin());
+  for all using (public._can_edit('store')) with check (public._can_edit('store'));
 
 drop trigger if exists trg_products_touch on public.products;
 create trigger trg_products_touch before update on public.products
@@ -915,7 +991,7 @@ create table if not exists public.product_costs (
 alter table public.product_costs enable row level security;
 drop policy if exists "product_costs: admin only" on public.product_costs;
 create policy "product_costs: admin only" on public.product_costs
-  for all using (public._is_admin()) with check (public._is_admin());
+  for all using (public._can_edit('store')) with check (public._can_edit('store'));
 
 -- ── Home "featured" products ───────────────────────────────────
 -- The Home store section shows best-sellers; if nothing has sold yet it falls
@@ -977,10 +1053,10 @@ drop policy if exists "product_images: read" on public.product_images;
 create policy "product_images: read" on public.product_images
   for select using (exists (
     select 1 from public.products p
-    where p.id = product_id and (p.is_visible or public._is_admin())));
+    where p.id = product_id and (p.is_visible or public._has_access('store'))));
 drop policy if exists "product_images: admin write" on public.product_images;
 create policy "product_images: admin write" on public.product_images
-  for all using (public._is_admin()) with check (public._is_admin());
+  for all using (public._can_edit('store')) with check (public._can_edit('store'));
 
 grant select on public.products, public.product_images to anon, authenticated;
 grant select, insert, update, delete on public.products, public.product_images to authenticated;
@@ -994,8 +1070,8 @@ insert into storage.buckets (id, name, public)
 drop policy if exists "product-images admin write" on storage.objects;
 create policy "product-images admin write" on storage.objects
   for all to authenticated
-  using (bucket_id = 'product-images' and public._is_admin())
-  with check (bucket_id = 'product-images' and public._is_admin());
+  using (bucket_id = 'product-images' and public._can_edit('store'))
+  with check (bucket_id = 'product-images' and public._can_edit('store'));
 
 -- public Storage bucket for profile avatars — public read (bucket flag); each
 -- user writes only inside their own `<uid>/…` folder (set at sign-up).
@@ -1040,10 +1116,10 @@ alter table public.banners add column if not exists updated_at   timestamptz not
 alter table public.banners enable row level security;
 drop policy if exists "banners: read active" on public.banners;
 create policy "banners: read active" on public.banners
-  for select using (is_active = true or public._is_admin());
+  for select using (is_active = true or public._has_access('promotions'));
 drop policy if exists "banners: admin write" on public.banners;
 create policy "banners: admin write" on public.banners
-  for all using (public._is_admin()) with check (public._is_admin());
+  for all using (public._can_edit('promotions')) with check (public._can_edit('promotions'));
 drop trigger if exists trg_banners_touch on public.banners;
 create trigger trg_banners_touch before update on public.banners
   for each row execute function public.touch_updated_at();
@@ -1061,8 +1137,8 @@ insert into storage.buckets (id, name, public)
 drop policy if exists "banner-images admin write" on storage.objects;
 create policy "banner-images admin write" on storage.objects
   for all to authenticated
-  using (bucket_id = 'banner-images' and public._is_admin())
-  with check (bucket_id = 'banner-images' and public._is_admin());
+  using (bucket_id = 'banner-images' and public._can_edit('promotions'))
+  with check (bucket_id = 'banner-images' and public._can_edit('promotions'));
 
 -- Save a banner + its sale items atomically (admin only). p_items is
 -- [{product_id, sale_price}]; sale_price null/'' → derive from p_discount_pct
@@ -1084,7 +1160,7 @@ language plpgsql security definer set search_path = public as $$
 declare
   v_id uuid;
 begin
-  if not public._is_admin() then
+  if not public._can_edit('promotions') then
     raise exception 'admin only';
   end if;
 
@@ -1137,7 +1213,7 @@ create or replace function public.admin_delete_banner(p_id uuid)
 returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if not public._is_admin() then raise exception 'admin only'; end if;
+  if not public._can_edit('promotions') then raise exception 'admin only'; end if;
   update public.products set banner_id = null, on_sale = false, sale_price = null
     where banner_id = p_id;
   delete from public.banners where id = p_id;
@@ -2260,13 +2336,14 @@ alter table public.orders add column if not exists instapay_proof_url text;
 
 -- Admins manage every order (verify InstaPay, advance fulfilment). The
 -- existing player policies only cover own-row read + insert.
-do $$ begin
-  create policy "orders: admin read" on public.orders for select using (public._is_admin());
-exception when duplicate_object then null; end $$;
-do $$ begin
-  create policy "orders: admin update" on public.orders for update
-    using (public._is_admin()) with check (public._is_admin());
-exception when duplicate_object then null; end $$;
+-- Both the Payments section and Store & Orders work these rows.
+drop policy if exists "orders: admin read" on public.orders;
+create policy "orders: admin read" on public.orders for select
+  using (public._has_access('payments') or public._has_access('store'));
+drop policy if exists "orders: admin update" on public.orders;
+create policy "orders: admin update" on public.orders for update
+  using (public._can_edit('payments') or public._can_edit('store'))
+  with check (public._can_edit('payments') or public._can_edit('store'));
 -- Table-level privilege (separate from RLS): without this the role is rejected
 -- before any policy is evaluated → "permission denied for table orders".
 grant select, insert, update on public.orders to authenticated;
@@ -2282,13 +2359,12 @@ end $$;
 
 -- Trade-in access (defined here because it needs public._is_admin() above).
 -- Players create + read their own; admins read all and update (offer/accept).
-do $$ begin
-  create policy "trades: admin read" on public.trade_requests for select using (public._is_admin());
-exception when duplicate_object then null; end $$;
-do $$ begin
-  create policy "trades: admin update" on public.trade_requests for update
-    using (public._is_admin()) with check (public._is_admin());
-exception when duplicate_object then null; end $$;
+drop policy if exists "trades: admin read" on public.trade_requests;
+create policy "trades: admin read" on public.trade_requests for select
+  using (player_id = auth.uid() or public._has_access('requests'));
+drop policy if exists "trades: admin update" on public.trade_requests;
+create policy "trades: admin update" on public.trade_requests for update
+  using (public._can_edit('requests')) with check (public._can_edit('requests'));
 -- Table-level privilege (separate from RLS): without this the role is rejected
 -- before any policy is evaluated → "permission denied for table trade_requests".
 grant select, insert, update on public.trade_requests to authenticated;
@@ -2335,18 +2411,17 @@ alter table public.trade_requests
 -- (Table created earlier alongside broadcasts; policies live here, after
 -- _is_admin is defined.)
 alter table public.repair_requests enable row level security;
-do $$ begin
-  create policy "repair: read own or admin" on public.repair_requests
-    for select using (player_id = auth.uid() or public._is_admin());
-exception when duplicate_object then null; end $$;
+drop policy if exists "repair: read own or admin" on public.repair_requests;
+create policy "repair: read own or admin" on public.repair_requests
+  for select using (player_id = auth.uid() or public._has_access('requests'));
 do $$ begin
   create policy "repair: insert own" on public.repair_requests
     for insert with check (auth.uid() = player_id);
 exception when duplicate_object then null; end $$;
-do $$ begin
-  create policy "repair: admin update" on public.repair_requests
-    for update using (public._is_admin());
-exception when duplicate_object then null; end $$;
+drop policy if exists "repair: admin update" on public.repair_requests;
+create policy "repair: admin update" on public.repair_requests
+  for update using (public._can_edit('requests'))
+  with check (public._can_edit('requests'));
 grant select, insert, update on public.repair_requests to authenticated;
 -- Same FK story as trade_requests: 0003 pointed player_id at auth.users, which
 -- PostgREST cannot embed — the admin queue needs a relationship to profiles.
@@ -2965,7 +3040,8 @@ create policy "payment-proofs upload" on storage.objects
 drop policy if exists "payment-proofs admin read" on storage.objects;
 create policy "payment-proofs admin read" on storage.objects
   for select to authenticated
-  using (bucket_id = 'payment-proofs' and public._is_admin());
+  using (bucket_id = 'payment-proofs'
+         and (public._has_access('payments') or public._has_access('store')));
 
 -- ============================================================
 -- Notifications: per-user inbox (orders pass)
@@ -3826,7 +3902,7 @@ do $$ begin
     using (
       exists (select 1 from public.match_players mp
                where mp.match_id = match_result_submissions.match_id and mp.player_id = auth.uid())
-      or public._is_admin()
+      or public._has_access('matches')
     );
 exception when duplicate_object then null; end $$;
 grant select on public.match_result_submissions to authenticated;
@@ -3905,7 +3981,7 @@ language plpgsql security definer set search_path = public as $$
 declare
   v_old_rating numeric; v_rating numeric;
 begin
-  if not public._is_admin() then return 'Not authorised.'; end if;
+  if not public._can_edit('players') then return 'Not authorised.'; end if;
   v_rating := public.level_from_elo(greatest(800, least(2200, p_elo)));
   select coalesce(rating, coalesce(level, 0)) into v_old_rating
     from public.profiles where id = p_player_id;
@@ -3976,7 +4052,7 @@ declare
   v_rating numeric; v_sigma numeric;
   v_old_rating numeric; v_old_sigma numeric; v_old_anchor boolean;
 begin
-  if not public._is_admin() then return 'Not authorised.'; end if;
+  if not public._can_edit('players') then return 'Not authorised.'; end if;
   v_rating := round(greatest(0.0, least(7.0, p_rating)), 2);
   v_sigma  := round(greatest(0.12, least(1.0, p_sigma)), 4);
   select coalesce(rating, coalesce(level, 0)), coalesce(sigma, 0.85), coalesce(is_anchor, false)
@@ -4018,7 +4094,7 @@ returns text
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_old text; v_target_admin boolean;
 begin
-  if not public._can_moderate() then return 'Not authorised.'; end if;
+  if not public._can_edit('players') then return 'Not authorised.'; end if;
   if p_status not in ('active','banned','flagged') then return 'Invalid status.'; end if;
   select coalesce(status, 'active'), coalesce(is_admin, false)
     into v_old, v_target_admin
@@ -4088,8 +4164,9 @@ language plpgsql security definer set search_path = public as $$
 declare
   v_uid uuid := auth.uid();
   v_old_role text; v_old_access jsonb; v_old_scope text; v_owner boolean;
+  v_wanted text[]; v_bad text;
 begin
-  if not public._is_admin() then return 'Not authorised.'; end if;
+  if not public._can_edit('team') then return 'Not authorised.'; end if;
   if p_role not in ('super_admin','organizer','support','analyst') then
     return 'Unknown role.';
   end if;
@@ -4098,6 +4175,24 @@ begin
     from public.profiles where id = p_user;
   if not found then return 'User not found.'; end if;
   if v_owner then return 'The owner always has full access and can''t be changed.'; end if;
+  -- The Team section is grantable, so a non-super-admin can reach this. They
+  -- must not be able to escalate: no minting/editing super admins, and no
+  -- handing out a section they don't hold themselves.
+  if not public._is_admin() then
+    if p_role = 'super_admin' or v_old_role = 'super_admin' then
+      return 'Only a super admin can manage super admins.';
+    end if;
+    v_wanted := case
+      when jsonb_typeof(p_access) = 'array' and jsonb_array_length(p_access) > 0
+        then (select array(select jsonb_array_elements_text(p_access)))
+      else public._role_default(p_role)
+    end;
+    select t.sec into v_bad from unnest(v_wanted) as t(sec)
+     where not public._has_access(t.sec) limit 1;
+    if v_bad is not null then
+      return 'You can only grant access you have yourself (' || v_bad || ').';
+    end if;
+  end if;
   update public.profiles set
     admin_role   = p_role,
     admin_access = p_access,
@@ -4121,11 +4216,14 @@ declare
   v_uid uuid := auth.uid();
   v_old_role text; v_owner boolean;
 begin
-  if not public._is_admin() then return 'Not authorised.'; end if;
+  if not public._can_edit('team') then return 'Not authorised.'; end if;
   select admin_role, coalesce(is_owner, false) into v_old_role, v_owner
     from public.profiles where id = p_user;
   if not found then return 'User not found.'; end if;
   if v_owner then return 'The owner can''t be removed.'; end if;
+  if v_old_role = 'super_admin' and not public._is_admin() then
+    return 'Only a super admin can manage super admins.';
+  end if;
   update public.profiles set
     admin_role = null, admin_access = null, admin_scope = null, is_admin = false
   where id = p_user;
@@ -4144,7 +4242,7 @@ returns table (
   is_owner boolean, avatar_url text, level numeric)
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if not public._is_admin() then return; end if;
+  if not public._has_access('team') then return; end if;
   return query
     select p.id, p.name, u.email::text, p.username,
            p.admin_role, p.admin_access, p.admin_scope,
@@ -4160,7 +4258,7 @@ create or replace function public.admin_search_users(p_term text)
 returns table (id uuid, name text, email text, level numeric, avatar_url text)
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if not public._is_admin() then return; end if;
+  if not public._has_access('team') then return; end if;
   if length(btrim(coalesce(p_term, ''))) < 2 then return; end if;
   return query
     select p.id, p.name, u.email::text, p.level::numeric, p.avatar_url
@@ -4191,14 +4289,19 @@ returns text language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.current_admin_role() to authenticated;
 
+-- Organizers stay scoped to their OWN events; any other staffer holding the
+-- Tournaments (or Format Builder) section manages all of them, like an admin.
 create or replace function public.owns_tournament(p_tid uuid)
 returns boolean language sql stable security definer set search_path = public as $$
-  select public._is_admin() or exists (
-    select 1 from public.tournaments t
-     where t.id = p_tid
-       and t.organizer_id = auth.uid()
-       and public.current_admin_role() = 'organizer'
-  );
+  select public._is_admin()
+      or (
+        (public._can_edit('tournaments') or public._can_edit('formats'))
+        and (
+          coalesce(public.current_admin_role(), '') <> 'organizer'
+          or exists (select 1 from public.tournaments t
+                      where t.id = p_tid and t.organizer_id = auth.uid())
+        )
+      );
 $$;
 grant execute on function public.owns_tournament(uuid) to authenticated;
 
@@ -4307,7 +4410,7 @@ create or replace function public.organizer_broadcast(
 returns text language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_ids uuid[]; v_n int; v_cid uuid; v_aid uuid;
 begin
-  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+  if not public._can_edit('broadcasts') then
     return 'Organizers only.';
   end if;
   if btrim(coalesce(p_title, '')) = '' then return 'Title required.'; end if;
@@ -5461,7 +5564,7 @@ create or replace function public.organizer_save_court(
 returns uuid language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_id uuid;
 begin
-  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+  if not public._can_edit('courts') then
     raise exception 'Organizers only';
   end if;
   if p_id is null then
@@ -5492,7 +5595,7 @@ grant execute on function public.organizer_save_court(uuid, text, text, text, te
 create or replace function public.organizer_delete_court(p_id uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+  if not public._can_edit('courts') then
     raise exception 'Organizers only';
   end if;
   delete from public.courts
@@ -5503,7 +5606,7 @@ grant execute on function public.organizer_delete_court(uuid) to authenticated;
 create or replace function public.organizer_set_court_maintenance(p_id uuid, p_on boolean)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+  if not public._can_edit('courts') then
     raise exception 'Organizers only';
   end if;
   update public.courts set in_maintenance = coalesce(p_on, false)
@@ -5514,7 +5617,7 @@ grant execute on function public.organizer_set_court_maintenance(uuid, boolean) 
 create or replace function public.organizer_set_court_active(p_id uuid, p_on boolean)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if public.current_admin_role() <> 'organizer' and not public._is_admin() then
+  if not public._can_edit('courts') then
     raise exception 'Organizers only';
   end if;
   update public.courts set is_active = coalesce(p_on, true)

@@ -1285,8 +1285,9 @@ class AdminService {
   }
 
   // ── Team & Roles (RBAC) ───────────────────────────────────────
-  // Reads/writes go through SECURITY DEFINER RPCs; all are gated to super
-  // admins server-side, so a lower role calling them gets nothing / an error.
+  // Reads/writes go through SECURITY DEFINER RPCs, gated on the 'team' section
+  // server-side. A staffer granted Team can manage people but never mint or
+  // edit a super admin, and never grant access they don't hold themselves.
 
   /// The signed-in staffer's own role + access row (plain own-read select).
   /// Returns null when not signed in. `admin_role` may be null for a legacy

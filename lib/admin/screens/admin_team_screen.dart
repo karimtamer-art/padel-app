@@ -851,6 +851,14 @@ class _AccessSheetState extends State<_AccessSheet> {
       ],
       const SizedBox(height: 14),
       _label('Sections this person can open'),
+      if (def.readonly)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+              'Analysts can open these but never change anything — the database '
+              'refuses every write from this role, whatever is ticked below.',
+              style: AdminText.small()),
+        ),
       for (final entry in sectionsByGroup().entries) ...[
         Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 8),
