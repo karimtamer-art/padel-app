@@ -172,6 +172,16 @@ class _AdminConsoleState extends State<AdminConsole> {
   Future<void> _openAlerts() async {
     final alerts = await AdminService.recentAdminAlerts();
     if (!mounted) return;
+    // Clear the badges as the sheet opens, not after it closes — the counts
+    // are stale the moment the list is on screen, and waiting for dismissal
+    // left the bell lit while you were reading it.
+    setState(() {
+      _adminAlerts = 0;
+      _sectionAlerts = {};
+    });
+    // Not awaited here (the sheet should open instantly) but awaited before
+    // the re-sync below, so _loadAlerts can't read pre-write counts back.
+    final marking = AdminService.markAdminNotificationsRead();
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: AdminColors.canvas,
@@ -188,8 +198,9 @@ class _AdminConsoleState extends State<AdminConsole> {
         },
       ),
     );
-    // Opening the bell clears the unread state (badge + per-section counts).
-    await AdminService.markAdminNotificationsRead();
+    // Re-sync on the way out: anything that landed while the sheet was open
+    // is genuinely unread and should badge again.
+    await marking;
     await _loadAlerts();
   }
 

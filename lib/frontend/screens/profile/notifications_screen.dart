@@ -104,7 +104,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
     items.sort((a, b) =>
         (b.at ?? DateTime(0)).compareTo(a.at ?? DateTime(0)));
-    if (mounted) setState(() => _items = items);
+    if (!mounted) return;
+    setState(() => _items = items);
+
+    // Opening the bell IS the read receipt — seeing the list is what "read"
+    // means here, so nobody should have to tap "Mark all" to clear the badge.
+    if (items.any((n) => n.unread)) await _markAllRead();
   }
 
   Future<void> _markAllRead() async {
@@ -139,13 +144,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     return SettingsScaffold(
       title: 'Notifications',
-      actions: [
-        GestureDetector(
-          onTap: _markAllRead,
-          child: Text('Mark all',
-              style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 14)),
-        ),
-      ],
+      // No "Mark all" action — opening this screen already marks everything
+      // read, so the button would never have anything left to do.
       children: [
         const SectionLabel('Recent'),
         if (_items.isEmpty)
