@@ -9,6 +9,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/frontend/widgets/copy_icon.dart';
+import 'package:padel_clay/frontend/widgets/instapay_field.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
@@ -1365,7 +1366,9 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
   }
 
   Future<void> _submit() async {
-    final sender = _sender.text.trim();
+    // The field holds the username only — the @instapay suffix is fixed in
+    // the UI and added back here.
+    final sender = InstapayHandle.compose(_sender.text);
     if (sender.isEmpty || _proofBytes == null) return;
     setState(() => _busy = true);
     final res = await OrderService.uploadPaymentProof(_proofBytes!, _proofExt);
@@ -1473,10 +1476,15 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                 const SizedBox(height: 7),
                 TextField(
                   controller: _sender,
+                  inputFormatters: InstapayHandle.formatters,
+                  autocorrect: false,
                   style: AppText.body(),
                   decoration: InputDecoration(
                     isDense: true,
-                    hintText: 'e.g. yourname@instapay',
+                    hintText: 'e.g. yourname',
+                    // Fixed — nobody should have to type "@instapay".
+                    suffixText: InstapayHandle.suffix,
+                    suffixStyle: AppText.bodyStrong(AppColors.inkFaint),
                     filled: true,
                     fillColor: AppColors.field,
                     contentPadding: const EdgeInsets.symmetric(

@@ -8,6 +8,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/frontend/widgets/copy_icon.dart';
+import 'package:padel_clay/frontend/widgets/instapay_field.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/address_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
@@ -204,7 +205,8 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
       promoCode: widget.promoCode,
       paymentMethod: _method,
       address: _addr,
-      instapaySender: _method == 'instapay' ? _sender.text.trim() : null,
+      instapaySender:
+          _method == 'instapay' ? InstapayHandle.compose(_sender.text) : null,
       instapayProofPath: proofPath,
     );
     if (!mounted) return;
@@ -723,14 +725,23 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
                   child: TextField(
                     controller: _sender,
                     onChanged: (_) => setState(() {}),
+                    inputFormatters: InstapayHandle.formatters,
+                    autocorrect: false,
                     style: AppText.bodyStrong().copyWith(fontSize: 14.5),
                     decoration: InputDecoration.collapsed(
-                        hintText: 'yourname@instapay',
+                        hintText: 'yourname',
                         hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 14.5)),
                   ),
                 ),
-                if (ready)
-                  const Icon(Icons.check_circle_rounded, size: 18, color: AppColors.success),
+                // Fixed, non-editable — nobody should have to type "@instapay".
+                Text(InstapayHandle.suffix,
+                    style: AppText.bodyStrong(AppColors.inkFaint)
+                        .copyWith(fontSize: 14.5)),
+                if (ready) ...[
+                  const SizedBox(width: 7),
+                  const Icon(Icons.check_circle_rounded,
+                      size: 18, color: AppColors.success),
+                ],
               ]),
             ),
             const SizedBox(height: 12),
