@@ -43,6 +43,12 @@
 	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Trade-in flow: the player photographs the racket they want to trade.
+	     iOS terminates the app on ImageSource.camera without this key. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Take photos of your racket so our team can value your trade-in.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose photos of your racket, payment receipts, or your profile picture.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

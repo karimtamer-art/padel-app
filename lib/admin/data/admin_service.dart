@@ -995,6 +995,24 @@ class AdminService {
     }
   }
 
+  /// Signs the private `trade-photos` paths on a trade-in request so the
+  /// console can show the racket. Signing is done in one call; a failure
+  /// yields an empty list rather than breaking the sheet.
+  static Future<List<String>> signTradePhotoUrls(List<String> paths) async {
+    if (paths.isEmpty) return const [];
+    try {
+      final res =
+          await _db.storage.from('trade-photos').createSignedUrls(paths, 3600);
+      return [
+        for (final r in res)
+          if (r.signedUrl.isNotEmpty) r.signedUrl,
+      ];
+    } catch (e) {
+      debugPrint('[AdminService] signTradePhotoUrls: $e');
+      return const [];
+    }
+  }
+
   /// Signs a private payment-proof storage path so the admin can view the
   /// InstaPay screenshot. Returns null if there's no proof or signing fails.
   static Future<String?> signProofUrl(String? path) async {

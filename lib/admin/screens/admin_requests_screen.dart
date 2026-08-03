@@ -92,6 +92,17 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   static String _egp(dynamic n) =>
       n == null ? '—' : 'EGP ${(n as num).toInt()}';
 
+  /// Storage paths of the racket photos the player attached. Requests made
+  /// before photos existed have none, so this is often empty.
+  static List<String> _photos(Map row) {
+    final raw = row['photos'];
+    if (raw is! List) return const [];
+    return [
+      for (final p in raw)
+        if (p is String && p.isNotEmpty) p,
+    ];
+  }
+
   static String _egpShort(int n) {
     if (n >= 1000) return 'EGP ${(n / 1000).toStringAsFixed(0)}K';
     return 'EGP $n';
@@ -565,6 +576,22 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
                                     style: AdminText.sans(12, FontWeight.w700,
                                         AdminColors.primary)),
                               ],
+                              const Spacer(),
+                              // Whether there's anything to look at before
+                              // opening the request.
+                              Icon(
+                                  _photos(t).isEmpty
+                                      ? Icons.no_photography_outlined
+                                      : Icons.photo_camera_outlined,
+                                  size: 13,
+                                  color: _photos(t).isEmpty
+                                      ? AdminColors.inkFaint
+                                      : AdminColors.inkSoft),
+                              const SizedBox(width: 3),
+                              Text('${_photos(t).length}',
+                                  style: AdminText.small(_photos(t).isEmpty
+                                      ? AdminColors.inkFaint
+                                      : AdminColors.inkSoft)),
                             ]),
                           ]),
                     ),
@@ -635,6 +662,10 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
         ],
       ]),
       body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('THE RACKET', style: AdminText.kicker()),
+        const SizedBox(height: 8),
+        _tradePhotos(_photos(t)),
+        const SizedBox(height: 14),
         Row(children: [
           _kv('Condition', t['condition'] as String? ?? '—'),
           const SizedBox(width: 10),
@@ -688,6 +719,125 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
         ],
       ]),
     );
+  }
+
+  /// The player's racket shots. The bucket is private, so the paths are
+  /// signed once and the strip is built from the resulting URLs.
+  Widget _tradePhotos(List<String> paths) {
+    if (paths.isEmpty) return _noPhotos();
+    return FutureBuilder<List<String>>(
+      future: AdminService.signTradePhotoUrls(paths),
+      builder: (ctx, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const SizedBox(
+              height: 120,
+              child: Center(
+                  child: CircularProgressIndicator(color: AdminColors.primary)));
+        }
+        final urls = snap.data ?? const <String>[];
+        if (urls.isEmpty) return _noPhotos(couldNotLoad: true);
+        return SizedBox(
+          height: 120,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: urls.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) => GestureDetector(
+              onTap: () => _viewPhoto(urls, i),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(urls[i],
+                    width: 120,
+                    height: 120,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                          width: 120,
+                          height: 120,
+                          color: AdminColors.surfaceAlt,
+                          child: const Icon(Icons.broken_image_outlined,
+                              color: AdminColors.inkFaint),
+                        )),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _noPhotos({bool couldNotLoad = false}) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 14),
+        decoration: BoxDecoration(
+            color: AdminColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(12)),
+        child: Column(children: [
+          Icon(
+              couldNotLoad
+                  ? Icons.broken_image_outlined
+                  : Icons.no_photography_outlined,
+              color: AdminColors.inkFaint),
+          const SizedBox(height: 7),
+          Text(
+              couldNotLoad
+                  ? 'Could not load the photos.'
+                  : 'No photos attached — this request predates photo uploads. '
+                      'Inspect the racket in person before making an offer.',
+              textAlign: TextAlign.center,
+              style: AdminText.small(AdminColors.inkFaint)),
+        ]),
+      );
+
+  /// Full-screen, pinch-to-zoom viewer — the edge guard and any hairline
+  /// cracks are the whole reason for the photos, and they don't read at 120px.
+  void _viewPhoto(List<String> urls, int index) {
+    final page = PageController(initialPage: index);
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      builder: (dialogCtx) => Stack(children: [
+        PageView.builder(
+          controller: page,
+          itemCount: urls.length,
+          itemBuilder: (_, i) => InteractiveViewer(
+            minScale: 1,
+            maxScale: 5,
+            child: Center(
+              child: Image.network(urls[i],
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(
+                      Icons.broken_image_outlined,
+                      color: Colors.white54,
+                      size: 48)),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 44,
+          right: 16,
+          child: GestureDetector(
+            onTap: () => Navigator.pop(dialogCtx),
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.close_rounded, color: Colors.white),
+            ),
+          ),
+        ),
+        if (urls.length > 1)
+          Positioned(
+            bottom: 42,
+            left: 0,
+            right: 0,
+            child: Text('${urls.length} photos — swipe to see the rest',
+                textAlign: TextAlign.center,
+                style: AdminText.small(Colors.white70)),
+          ),
+      ]),
+    ).whenComplete(page.dispose);
   }
 
   Future<void> _declineRepair(Map<String, dynamic> r) async {

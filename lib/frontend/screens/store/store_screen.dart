@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -11,6 +13,7 @@ import 'package:padel_clay/frontend/widgets/skeleton.dart';
 import 'package:padel_clay/frontend/widgets/micro.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/store_service.dart';
+import 'package:padel_clay/backend/services/trade_service.dart';
 import 'product_detail_screen.dart';
 
 class StoreScreen extends StatefulWidget {
@@ -883,9 +886,18 @@ class _Condition {
   const _Condition(this.label, this.desc);
 }
 
+/// One picked-but-not-yet-uploaded racket shot. Bytes are held locally so the
+/// review step can show them and an abandoned sheet leaves nothing in storage;
+/// the upload happens on submit.
+class _Shot {
+  final Uint8List bytes;
+  final String ext;
+  const _Shot(this.bytes, this.ext);
+}
+
 /// Trade-In — multi-step submission:
-///   0. Condition  1. Details  2. Trade toward
-///   3. Review     4. Submitted (confirmation + reference number)
+///   0. Condition  1. Details  2. Photos  3. Trade toward
+///   4. Review     5. Submitted (confirmation + reference number)
 /// No asking price — the credit is set by our team after inspection.
 class _TradeInSheet extends StatefulWidget {
   final List<Map<String, dynamic>> rackets;
@@ -902,8 +914,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
     _Condition('Worn', 'Heavy use, still functional'),
   ];
 
-  static const _steps = ['Condition', 'Details', 'Trade for', 'Review'];
-  static const _last = 3; // Review; step 4 = submitted
+  static const _steps = ['Condition', 'Details', 'Photos', 'Trade for', 'Review'];
+  static const _last = 4; // Review; step 5 = submitted
 
   List<Map<String, dynamic>> get _rackets => widget.rackets;
 
@@ -913,6 +925,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
   final _nameC = TextEditingController();
   final _brandC = TextEditingController();
   final _notesC = TextEditingController();
+  final List<_Shot> _shots = [];
   int _target = -1;
   String _ref = '';
 
@@ -945,6 +958,10 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         return _nameC.text.trim().isNotEmpty &&
             _brandC.text.trim().isNotEmpty;
       case 2:
+        // At least one photo — the whole point of this step is that the team
+        // can't value a racket they can't see.
+        return _shots.isNotEmpty;
+      case 3:
         return _target >= 0;
       default:
         return true;
@@ -952,8 +969,8 @@ class _TradeInSheetState extends State<_TradeInSheet> {
   }
 
   String get _ctaLabel {
-    if (_step < 2) return 'Continue';
-    if (_step == 2) return 'Review Request';
+    if (_step < 3) return 'Continue';
+    if (_step == 3) return 'Review Request';
     if (_step == _last) return _busy ? 'Submitting…' : 'Submit Request';
     return 'Done';
   }
@@ -968,9 +985,16 @@ class _TradeInSheetState extends State<_TradeInSheet> {
     }
   }
 
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: AppColors.danger,
+        content: Text(msg)));
+  }
+
   Future<void> _submit() async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null) return;
     setState(() => _busy = true);
     final brand = _brandC.text.trim();
     final name = _nameC.text.trim();
@@ -981,34 +1005,37 @@ class _TradeInSheetState extends State<_TradeInSheet> {
       if (tp != null)
         'Wants to trade toward: ${_name(tp)} (${MockData.egp(_targetPrice)}).',
     ].join('\n');
-    try {
-      final row = await Supabase.instance.client
-          .from('trade_requests')
-          .insert({
-            'player_id': uid,
-            'racket_desc': desc.isEmpty ? 'Racket trade-in' : desc,
-            'condition': _conditions[_cond].label,
-            // no asking price — our team sets the credit after inspection
-            'note': note,
-            'status': 'pending',
-          })
-          .select('id')
-          .single();
-      if (!mounted) return;
-      final id = (row['id'] as String?) ?? '';
-      setState(() {
-        _ref = id.isNotEmpty ? 'TD-${id.substring(0, 6).toUpperCase()}' : 'TD-PENDING';
-        _busy = false;
-        _step = _last + 1; // submitted
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: AppColors.danger,
-          content: Text("Couldn't submit the trade-in. Try again.")));
+
+    // Photos go up first — a request whose images failed would leave the team
+    // with nothing to price, so a failed upload aborts the whole submission.
+    final paths = <String>[];
+    for (final s in _shots) {
+      final r = await TradeService.uploadPhoto(s.bytes, s.ext);
+      if (r.path == null) {
+        _fail(r.error ?? "Couldn't upload your photos. Try again.");
+        return;
+      }
+      paths.add(r.path!);
     }
+
+    final res = await TradeService.submit(
+      racketDesc: desc,
+      condition: _conditions[_cond].label,
+      // no asking price — our team sets the credit after inspection
+      note: note,
+      photoPaths: paths,
+    );
+    if (res.id == null) {
+      _fail(res.error ?? "Couldn't submit the trade-in. Try again.");
+      return;
+    }
+    if (!mounted) return;
+    final id = res.id!;
+    setState(() {
+      _ref = id.isNotEmpty ? 'TD-${id.substring(0, 6).toUpperCase()}' : 'TD-PENDING';
+      _busy = false;
+      _step = _last + 1; // submitted
+    });
   }
 
   @override
@@ -1111,8 +1138,10 @@ class _TradeInSheetState extends State<_TradeInSheet> {
       case 1:
         return _detailsStep();
       case 2:
-        return _tradeForStep();
+        return _photosStep();
       case 3:
+        return _tradeForStep();
+      case 4:
         return _reviewStep();
       default:
         return _submittedStep();
@@ -1255,7 +1284,159 @@ class _TradeInSheetState extends State<_TradeInSheet> {
         ],
       );
 
-  // ── STEP 2 — trade toward ──
+  // ── STEP 2 — photos ──
+
+  Future<void> _addShot(ImageSource source) async {
+    try {
+      final f = await ImagePicker().pickImage(
+        source: source,
+        // Plenty for judging condition, small enough to upload on 3G.
+        maxWidth: 1600,
+        imageQuality: 82,
+      );
+      if (f == null) return;
+      final bytes = await f.readAsBytes();
+      final ext = f.name.contains('.') ? f.name.split('.').last : 'jpg';
+      if (!mounted) return;
+      setState(() => _shots.add(_Shot(bytes, ext)));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppColors.danger,
+          content: Text("Couldn't open that photo. Try another.")));
+    }
+  }
+
+  void _pickSource() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 8),
+          ListTile(
+            leading: const Icon(Icons.camera_alt_rounded, color: AppColors.primary),
+            title: Text('Take a photo', style: AppText.bodyStrong()),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _addShot(ImageSource.camera);
+            },
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.photo_library_rounded, color: AppColors.primary),
+            title: Text('Choose from gallery', style: AppText.bodyStrong()),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _addShot(ImageSource.gallery);
+            },
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
+  Widget _photosStep() {
+    final full = _shots.length >= TradeService.maxPhotos;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _heading('Add photos of your racket',
+            'Our team prices your trade-in from these — at least one is required.'),
+        Container(
+          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: AppColors.wash(AppColors.primary),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.lightbulb_outline_rounded,
+                size: 18, color: AppColors.primary),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                'Shoot the face, the back, and the edge guard in good light. '
+                'Show any cracks or chips — hiding them just slows the offer down.',
+                style: AppText.small(AppColors.inkSoft)
+                    .copyWith(fontSize: 11.5, height: 1.45),
+              ),
+            ),
+          ]),
+        ),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (int i = 0; i < _shots.length; i++) _shotTile(i),
+            if (!full) _addTile(),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          full
+              ? 'Maximum ${TradeService.maxPhotos} photos.'
+              : '${_shots.length} of ${TradeService.maxPhotos} added',
+          style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5),
+        ),
+      ],
+    );
+  }
+
+  Widget _shotTile(int i) => SizedBox(
+        width: 96,
+        height: 96,
+        child: Stack(children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.memory(_shots[i].bytes,
+                width: 96, height: 96, fit: BoxFit.cover),
+          ),
+          Positioned(
+            top: 3,
+            right: 3,
+            child: GestureDetector(
+              onTap: () => setState(() => _shots.removeAt(i)),
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: AppColors.ink.withValues(alpha: 0.62),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close_rounded,
+                    size: 15, color: Colors.white),
+              ),
+            ),
+          ),
+        ]),
+      );
+
+  Widget _addTile() => GestureDetector(
+        onTap: _pickSource,
+        child: Container(
+          width: 96,
+          height: 96,
+          decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.line, width: 1.5),
+          ),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            const Icon(Icons.add_a_photo_outlined,
+                size: 24, color: AppColors.primary),
+            const SizedBox(height: 5),
+            Text('Add photo',
+                style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 11)),
+          ]),
+        ),
+      );
+
+  // ── STEP 3 — trade toward ──
   Widget _tradeForStep() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1358,7 +1539,7 @@ class _TradeInSheetState extends State<_TradeInSheet> {
     );
   }
 
-  // ── STEP 3 — review ──
+  // ── STEP 4 — review ──
   Widget _reviewStep() {
     final tp = _targetP;
     return Column(
@@ -1378,9 +1559,16 @@ class _TradeInSheetState extends State<_TradeInSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                // the player's own racket — always the placeholder, they don't
-                // upload a photo
-                _thumb(null, 60),
+                // the player's own racket — their first shot, or the striped
+                // placeholder if they somehow got here without one
+                if (_shots.isEmpty)
+                  _thumb(null, 60)
+                else
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.memory(_shots.first.bytes,
+                        width: 60, height: 60, fit: BoxFit.cover),
+                  ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -1401,6 +1589,17 @@ class _TradeInSheetState extends State<_TradeInSheet> {
                 const SizedBox(height: 10),
                 Text(_notesC.text,
                     style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 12, height: 1.4)),
+              ],
+              if (_shots.length > 1) ...[
+                const SizedBox(height: 10),
+                Wrap(spacing: 6, runSpacing: 6, children: [
+                  for (final s in _shots.skip(1))
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(s.bytes,
+                          width: 44, height: 44, fit: BoxFit.cover),
+                    ),
+                ]),
               ],
             ],
           ),

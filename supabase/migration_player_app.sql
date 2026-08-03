@@ -533,6 +533,12 @@ create table if not exists public.trade_requests (
 -- `note`, but the app (store trade-in sheet) writes `note`. Without this, every
 -- real trade-in submission fails with "column note does not exist". Idempotent.
 alter table public.trade_requests add column if not exists note text;
+-- Photos of the racket being traded in (storage PATHS in the private
+-- `trade-photos` bucket, not URLs — the console signs them to view). Without
+-- these the admin was pricing a trade-in from a text description alone.
+-- Bucket + policies live further down, after _has_access() is defined.
+alter table public.trade_requests
+  add column if not exists photos text[] not null default '{}';
 alter table public.trade_requests enable row level security;
 do $$ begin
   create policy "own trades read" on public.trade_requests for select using (auth.uid() = player_id);
@@ -2406,6 +2412,24 @@ alter table public.trade_requests
 alter table public.trade_requests
   add constraint trade_requests_status_chk
   check (status in ('pending','offer_made','accepted','rejected','declined','completed'));
+
+-- Private bucket for trade-in racket photos (see trade_requests.photos above).
+-- Players write only inside their own <uid>/ folder; the owner and requests
+-- staff can read. Full notes: supabase/changes/2026-08-03_trade_photos.sql
+insert into storage.buckets (id, name, public)
+  values ('trade-photos', 'trade-photos', false)
+  on conflict (id) do update set public = false;
+drop policy if exists "trade-photos owner write" on storage.objects;
+create policy "trade-photos owner write" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'trade-photos'
+              and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "trade-photos read" on storage.objects;
+create policy "trade-photos read" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'trade-photos'
+         and ((storage.foldername(name))[1] = auth.uid()::text
+              or public._has_access('requests')));
 
 -- Repair requests: players submit their own; admins read/update the queue.
 -- (Table created earlier alongside broadcasts; policies live here, after
@@ -7315,6 +7339,10 @@ begin
   begin
     delete from storage.objects
      where bucket_id = 'payment-proofs' and name like 'proofs/' || uid::text || '/%';
+  exception when others then null; end;
+  begin
+    delete from storage.objects
+     where bucket_id = 'trade-photos' and name like uid::text || '/%';
   exception when others then null; end;
 
   -- 6. Remove the auth user; profiles + all profile-cascade data go with it.
