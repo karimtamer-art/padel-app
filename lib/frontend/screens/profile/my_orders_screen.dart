@@ -6,6 +6,7 @@ import '../../widgets/common.dart';
 import '../../widgets/padel_refresh.dart';
 import '../../widgets/skeleton.dart';
 import '../../../backend/models/mock_data.dart';
+import '../../../backend/models/order_cancel_reason.dart';
 import '../../../backend/services/order_service.dart';
 
 /// Customer "My orders": list of the signed-in player's store orders →
@@ -249,19 +250,44 @@ class OrderDetailsScreen extends StatelessWidget {
   Widget _timeline(Map<String, dynamic> o, OrderStatusSpec spec) {
     final status = (o['status'] as String?) ?? 'pending';
     if (status == 'cancelled' || status == 'refunded') {
+      // Why it died, in the admin's own words. Falls back to the old generic
+      // line for orders cancelled before reasons were recorded.
+      final why = CancelReason.playerExplanation(
+        o['cancel_reason'] as String?,
+        o['cancel_note'] as String?,
+        instapay: o['payment_method'] == 'instapay',
+      );
       return AppCard(
-        child: Row(children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              width: 40, height: 40, alignment: Alignment.center,
+              decoration: BoxDecoration(color: spec.color.withValues(alpha: 0.13), shape: BoxShape.circle),
+              child: Icon(spec.icon, size: 20, color: spec.color),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(spec.label, style: AppText.bodyStrong().copyWith(fontSize: 14)),
+                const SizedBox(height: 2),
+                Text(spec.note, style: AppText.small().copyWith(height: 1.4)),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 12),
           Container(
-            width: 40, height: 40, alignment: Alignment.center,
-            decoration: BoxDecoration(color: spec.color.withValues(alpha: 0.13), shape: BoxShape.circle),
-            child: Icon(spec.icon, size: 20, color: spec.color),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.field,
+              borderRadius: BorderRadius.circular(12),
+            ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(spec.label, style: AppText.bodyStrong().copyWith(fontSize: 14)),
-              const SizedBox(height: 2),
-              Text(spec.note, style: AppText.small().copyWith(height: 1.4)),
+              Text('WHY', style: AppText.kicker()),
+              const SizedBox(height: 6),
+              Text(why,
+                  style: AppText.small(AppColors.inkSoft)
+                      .copyWith(fontSize: 12.5, height: 1.5)),
             ]),
           ),
         ]),

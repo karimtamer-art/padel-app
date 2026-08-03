@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:padel_clay/backend/models/order_cancel_reason.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
@@ -432,7 +433,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
         const SizedBox(width: 10),
         AdminButton('Reject',
             height: 50, variant: AdminBtn.danger,
-            onPressed: () => setStatus('cancelled', '${_shortId(o)} rejected — customer notified', ok: false)),
+            onPressed: () => _askReason(o, status: 'cancelled', verb: 'rejected')),
       ]);
     } else if (eff == 'pending') {
       // COD order: nothing to verify (cash collected on delivery), so the first
@@ -446,7 +447,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
         const SizedBox(width: 10),
         AdminButton('Cancel',
             height: 50, variant: AdminBtn.danger,
-            onPressed: () => setStatus('cancelled', '${_shortId(o)} cancelled — customer notified', ok: false)),
+            onPressed: () => _askReason(o, status: 'cancelled', verb: 'cancelled')),
       ]);
     } else if (_flow[eff] != null) {
       final next = _flow[eff]!;
@@ -459,12 +460,12 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
         const SizedBox(width: 10),
         AdminButton('Refund',
             height: 50, variant: AdminBtn.danger,
-            onPressed: () => setStatus('refunded', '${_shortId(o)} refunded', ok: false)),
+            onPressed: () => _askReason(o, status: 'refunded', verb: 'refunded')),
       ]);
     } else if (eff == 'delivered') {
       footer = AdminButton('Refund',
           full: true, height: 50, variant: AdminBtn.danger,
-          onPressed: () => setStatus('refunded', '${_shortId(o)} refunded', ok: false));
+          onPressed: () => _askReason(o, status: 'refunded', verb: 'refunded'));
     } else {
       footer = const SizedBox.shrink();
     }
@@ -486,6 +487,28 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
             Text(_methodLabel(o['payment_method'] as String?), style: AdminText.strong()),
           ]),
         ]),
+
+        // What the customer was told, on an order that was killed.
+        if (eff == 'cancelled' || eff == 'refunded') ...[
+          const SizedBox(height: 14),
+          Text('REASON GIVEN TO THE CUSTOMER', style: AdminText.kicker()),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(11)),
+            child: Text(
+              CancelReason.playerExplanation(
+                o['cancel_reason'] as String?,
+                o['cancel_note'] as String?,
+                instapay: _isInstaPay(o),
+              ),
+              style: AdminText.body().copyWith(height: 1.5),
+            ),
+          ),
+        ],
 
         // InstaPay verification
         if (eff == 'verify') ...[
@@ -583,6 +606,172 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
         ]),
       ]),
     );
+  }
+
+  // ── Rejection reason ──────────────────────────────────────────
+
+  /// Killing an order asks WHY first. The player is told the reason verbatim,
+  /// so this is the difference between "your order was cancelled" and "the
+  /// item sold out — your transfer is coming back".
+  Future<void> _askReason(
+    Map<String, dynamic> o, {
+    required String status,
+    required String verb,
+  }) async {
+    final id = o['id'] as String;
+    final instapay = _isInstaPay(o);
+    final reasons = CancelReason.forOrder(instapay: instapay);
+    final noteC = TextEditingController();
+    CancelReason? picked;
+
+    Navigator.pop(context); // close the order sheet first
+
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AdminColors.canvas,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) {
+          final needsNote = picked?.noteRequired ?? false;
+          final ready = picked != null &&
+              (!needsNote || noteC.text.trim().isNotEmpty);
+          return Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Why is ${_shortId(o)} being $verb?',
+                      style: AdminText.cardTitle()),
+                  const SizedBox(height: 4),
+                  Text('The customer is told this — pick the closest match.',
+                      style: AdminText.small()),
+                  const SizedBox(height: 14),
+                  for (final r in reasons)
+                    GestureDetector(
+                      onTap: () => setSheet(() => picked = r),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: picked == r
+                              ? AdminColors.wash(AdminColors.primary, 0.10)
+                              : AdminColors.surfaceAlt,
+                          borderRadius: BorderRadius.circular(11),
+                          border: Border.all(
+                              color: picked == r
+                                  ? AdminColors.primary
+                                  : AdminColors.line,
+                              width: 1.4),
+                        ),
+                        child: Row(children: [
+                          Icon(
+                              picked == r
+                                  ? Icons.radio_button_checked_rounded
+                                  : Icons.radio_button_unchecked_rounded,
+                              size: 19,
+                              color: picked == r
+                                  ? AdminColors.primary
+                                  : AdminColors.inkFaint),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(r.adminLabel, style: AdminText.strong()),
+                                  if (r.playerLine.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    Text('"${r.playerLine}"',
+                                        style: AdminText.small()
+                                            .copyWith(height: 1.35)),
+                                  ],
+                                ]),
+                          ),
+                          // Flags, at a glance, that money has to go back.
+                          if (r.refunds && instapay)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 3),
+                              decoration: BoxDecoration(
+                                  color: AdminColors.wash(
+                                      AdminColors.warn, 0.16),
+                                  borderRadius: BorderRadius.circular(999)),
+                              child: Text('REFUND',
+                                  style: AdminText.mono(8.5, FontWeight.w800,
+                                      AdminColors.warn, ls: 0.8)),
+                            ),
+                        ]),
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                  Text(needsNote ? 'NOTE · REQUIRED' : 'NOTE · OPTIONAL',
+                      style: AdminText.kicker()),
+                  const SizedBox(height: 7),
+                  TextField(
+                    controller: noteC,
+                    maxLines: 3,
+                    onChanged: (_) => setSheet(() {}),
+                    style: AdminText.body(),
+                    decoration: InputDecoration(
+                      hintText: 'Anything else the customer should know…',
+                      hintStyle: AdminText.small(AdminColors.inkFaint),
+                      isDense: true,
+                      filled: true,
+                      fillColor: AdminColors.surfaceAlt,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 13, vertical: 12),
+                      enabledBorder: OutlineInputBorder(
+                          borderRadius: AdminUI.fieldR,
+                          borderSide: const BorderSide(color: AdminColors.line)),
+                      focusedBorder: OutlineInputBorder(
+                          borderRadius: AdminUI.fieldR,
+                          borderSide: const BorderSide(
+                              color: AdminColors.primary, width: 1.6)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  AdminButton('Confirm — $verb',
+                      full: true,
+                      height: 50,
+                      variant: AdminBtn.danger,
+                      onPressed: ready
+                          ? () => Navigator.pop(sheetCtx, true)
+                          : null),
+                  const SizedBox(height: 8),
+                  AdminButton('Back',
+                      full: true,
+                      height: 44,
+                      variant: AdminBtn.ghost,
+                      onPressed: () => Navigator.pop(sheetCtx, false)),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    final reason = picked;
+    if (confirmed != true || reason == null) {
+      noteC.dispose();
+      return;
+    }
+    final err = await AdminService.cancelOrder(id,
+        status: status, reason: reason.code, note: noteC.text);
+    noteC.dispose();
+    if (!mounted) return;
+    if (err != null) {
+      adminToast(context, err, ok: false);
+      return;
+    }
+    adminToast(
+        context, '${_shortId(o)} $verb — customer told why', ok: false);
+    _load();
   }
 
   // ── pieces ────────────────────────────────────────────────────

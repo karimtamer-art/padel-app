@@ -995,6 +995,38 @@ class AdminService {
     }
   }
 
+  /// Kills an order WITH a reason. The reason and note must land in the same
+  /// UPDATE as the status: `notify_order_status` fires on the status change
+  /// and reads them off the new row, so writing them afterwards would send
+  /// the player a reasonless message and then silently fix the row.
+  static Future<String?> cancelOrder(
+    String id, {
+    required String status, // 'cancelled' or 'refunded'
+    required String reason,
+    String? note,
+  }) async {
+    try {
+      final trimmed = note?.trim();
+      await _db.from('orders').update({
+        'status': status,
+        'cancel_reason': reason,
+        'cancel_note': (trimmed == null || trimmed.isEmpty) ? null : trimmed,
+      }).eq('id', id);
+      return null;
+    } on PostgrestException catch (e) {
+      // The reason columns are the newest part of this flow — a database
+      // without the delta should say so, not fail cryptically.
+      final m = e.message.toLowerCase();
+      if (m.contains('cancel_reason') || m.contains('cancel_note')) {
+        return 'Rejection reasons are not set up on this database yet — '
+            'run the 2026-08-03_order_cancel_reason delta.';
+      }
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Signs the private `trade-photos` paths on a trade-in request so the
   /// console can show the racket. Signing is done in one call; a failure
   /// yields an empty list rather than breaking the sheet.
