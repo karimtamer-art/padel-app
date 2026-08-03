@@ -18,6 +18,7 @@ import 'package:padel_clay/backend/services/community_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
+import 'package:padel_clay/backend/services/ticket_service.dart';
 import 'package:padel_clay/backend/services/season_service.dart';
 import 'package:padel_clay/frontend/feature_flags.dart';
 import 'matchmaking_hero.dart';
@@ -394,9 +395,14 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) _unread = n;
   }
 
+  /// The chat badge covers everything behind that icon — 1-on-1 DMs plus the
+  /// automatic match tickets, which share the inbox.
   Future<void> _fetchDmUnread() async {
-    final n = await DmService.unreadCount();
-    if (mounted) _dmUnread = n;
+    final counts = await Future.wait([
+      DmService.unreadCount(),
+      TicketService.unreadCount(),
+    ]);
+    if (mounted) _dmUnread = counts[0] + counts[1];
   }
 
   Future<void> _fetchBandCount() async {
