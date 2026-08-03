@@ -168,8 +168,11 @@ List<Section> extraSectionsFor(RoleId r) => switch (r) {
               'Members & inbox'),
         ],
       RoleId.superAdmin => const [
+          // Grouped under Operations rather than a "Season" group of its own:
+          // a one-item group stranded it at the bottom of the sidebar, below
+          // Team & Roles, when it is day-to-day competition work.
           Section('leaderboards', 'Leaderboards', Icons.military_tech_outlined,
-              'Season', 'Standings, points & rewards'),
+              'Operations', 'Standings, points & rewards'),
         ],
       _ => const [],
     };
