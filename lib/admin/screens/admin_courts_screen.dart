@@ -42,9 +42,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     return 'active';
   }
 
-  static String _egp(dynamic n) =>
-      n == null ? '—' : 'EGP ${(n as num).toInt()}';
-
   @override
   Widget build(BuildContext context) {
     final total = _courts.length;
@@ -150,12 +147,12 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 ),
               ]),
             ],
-            const SizedBox(height: 12),
-            Wrap(spacing: 6, runSpacing: 6, children: [
-              _tag(Icons.payments_outlined, '${_egp(row['price_per_hour'])}/hr'),
-              if ((row['city'] as String?)?.isNotEmpty == true)
+            if ((row['city'] as String?)?.isNotEmpty == true) ...[
+              const SizedBox(height: 12),
+              Wrap(spacing: 6, runSpacing: 6, children: [
                 _tag(Icons.place_outlined, row['city'] as String),
-            ]),
+              ]),
+            ],
             const Divider(height: 22, color: AdminColors.lineSoft),
             Row(children: [
               Expanded(
@@ -322,8 +319,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
     final nameCt = TextEditingController(text: row?['name'] ?? '');
     final areaCt = TextEditingController(text: row?['area'] ?? '');
     final cityCt = TextEditingController(text: row?['city'] ?? '');
-    final priceCt =
-        TextEditingController(text: row?['price_per_hour']?.toString() ?? '');
     final addressCt = TextEditingController(text: row?['address'] ?? '');
     final locCt = TextEditingController(
         text: (row?['lat'] != null && row?['lng'] != null)
@@ -362,7 +357,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 name: nameCt.text.trim(),
                 area: areaCt.text.trim(),
                 city: cityCt.text.trim(),
-                price: num.tryParse(priceCt.text),
                 indoor: v,
                 lat: ll?.$1,
                 lng: ll?.$2,
@@ -375,7 +369,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
-                  'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
                   'lat': ll?.$1,
                   'lng': ll?.$2,
@@ -393,7 +386,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                   'name': nameCt.text.trim().isEmpty ? 'Court' : nameCt.text.trim(),
                   'area': areaCt.text.trim(),
                   'city': cityCt.text.trim().isEmpty ? null : cityCt.text.trim(),
-                  'price_per_hour': num.tryParse(priceCt.text),
                   'indoor': v,
                   'lat': ll?.$1,
                   'lng': ll?.$2,
@@ -434,8 +426,6 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
                 'Powers the player "Directions" button. On Google Maps: long-press the '
                 'spot → copy the coordinates, or share → copy link, then paste here.',
                 style: AdminText.small(AdminColors.inkFaint)),
-            const SizedBox(height: 16),
-            _field('Price / hour', priceCt, prefix: 'EGP'),
             const SizedBox(height: 16),
             _check('Indoor court', v, () => indoor.value = !v),
           ],
@@ -490,21 +480,15 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
         ]),
       );
 
-  Widget _field(String label, TextEditingController c,
-      {String? hint, String? prefix}) {
+  Widget _field(String label, TextEditingController c, {String? hint}) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(label, style: AdminText.strong(AdminColors.inkSoft)),
       const SizedBox(height: 7),
       TextField(
         controller: c,
-        keyboardType:
-            prefix != null ? TextInputType.number : TextInputType.text,
         style: AdminText.body(),
         decoration: InputDecoration(
           isDense: true,
-          prefixText: prefix != null ? '$prefix ' : null,
-          prefixStyle:
-              AdminText.mono(12, FontWeight.w700, AdminColors.inkFaint),
           filled: true,
           fillColor: AdminColors.surfaceAlt,
           contentPadding:
