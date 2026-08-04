@@ -1169,7 +1169,7 @@ class AdminService {
   /// bell routing and the per-item sidebar badges.
   static String? sectionForAlertType(String? type) => switch (type) {
         'admin_order' => 'payments',
-        'admin_trade' || 'admin_repair' => 'requests',
+        'admin_trade' || 'admin_repair' || 'admin_report' => 'requests',
         'admin_tournament' => 'tournaments',
         'admin_community' => 'community',
         _ => null,
@@ -1177,7 +1177,7 @@ class AdminService {
 
   static const Map<String, List<String>> _sectionTypes = {
     'payments': ['admin_order'],
-    'requests': ['admin_trade', 'admin_repair'],
+    'requests': ['admin_trade', 'admin_repair', 'admin_report'],
     'tournaments': ['admin_tournament'],
     'community': ['admin_community'],
   };
@@ -1231,6 +1231,44 @@ class AdminService {
   static Future<String?> updateRepair(
           String id, Map<String, dynamic> data) async =>
       _updateRequest('repair_requests', id, data);
+
+  // ── Moderation reports ────────────────────────────────────────
+
+  /// The moderation queue: open reports first, newest first. Empty on a
+  /// database without the block/report delta, so the console still works.
+  static Future<List<Map<String, dynamic>>> fetchReports() async {
+    try {
+      final res = await _db.rpc('admin_reports');
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] fetchReports: $e');
+      return [];
+    }
+  }
+
+  /// Resolves a report. [delete] removes the offending message outright —
+  /// that is what Apple means by acting on a report.
+  /// Returns an error string, or null on success.
+  static Future<String?> resolveReport(
+    String id, {
+    required String status, // 'actioned' or 'dismissed'
+    String? note,
+    bool delete = false,
+  }) async {
+    try {
+      await _db.rpc('admin_resolve_report', params: {
+        'p_id': id,
+        'p_status': status,
+        'p_note': note,
+        'p_delete': delete,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
 
   // ── Trade requests ────────────────────────────────────────────
 

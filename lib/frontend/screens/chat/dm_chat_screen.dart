@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
+import 'package:padel_clay/frontend/widgets/moderation_sheet.dart';
 
 /// 1-on-1 chat between two players. The conversation is resolved/created on
 /// open; messages stream live via Supabase realtime. Reached from the match
@@ -149,6 +150,16 @@ class _DMChatScreenState extends State<DMChatScreen> {
                       style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 11)),
               ]),
             ),
+            // Report / block. Blocking closes the thread, since its messages
+            // are hidden from this point on.
+            _glassBtn(Icons.more_horiz_rounded, () {
+              ModerationSheet.show(
+                context,
+                userId: widget.otherId,
+                userName: widget.name,
+                onBlocked: () => Navigator.of(context).pop(),
+              );
+            }),
           ]),
         ),
       );
@@ -199,7 +210,20 @@ class _DMChatScreenState extends State<DMChatScreen> {
           ConstrainedBox(
             constraints:
                 BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-            child: Container(
+            // Long-press to report the specific message — reporting the whole
+            // person is in the header menu. No point offering it on your own.
+            child: GestureDetector(
+              onLongPress: mine
+                  ? null
+                  : () => ModerationSheet.show(
+                        context,
+                        userId: widget.otherId,
+                        userName: widget.name,
+                        targetType: 'dm_message',
+                        targetId: m['id'] as String?,
+                        onBlocked: () => Navigator.of(context).pop(),
+                      ),
+              child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
               decoration: BoxDecoration(
                 color: mine ? AppColors.primary : AppColors.surface,
@@ -211,9 +235,10 @@ class _DMChatScreenState extends State<DMChatScreen> {
                   bottomRight: Radius.circular(mine ? 4 : 16),
                 ),
               ),
-              child: Text(m['text'] as String? ?? '',
-                  style: AppText.body(mine ? AppColors.primaryInk : AppColors.ink)
-                      .copyWith(fontSize: 13.5, height: 1.4)),
+                child: Text(m['text'] as String? ?? '',
+                    style: AppText.body(mine ? AppColors.primaryInk : AppColors.ink)
+                        .copyWith(fontSize: 13.5, height: 1.4)),
+              ),
             ),
           ),
           const SizedBox(height: 3),

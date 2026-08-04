@@ -7,6 +7,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/backend/services/ticket_service.dart';
+import 'package:padel_clay/frontend/widgets/moderation_sheet.dart';
 
 /// The automatic group thread for one match: all four players, a greeting
 /// explaining what it is for, and everyone's phone number.
@@ -555,8 +556,20 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
           ConstrainedBox(
             constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.76),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+            // Long-press to report. Blocking here hides their messages but
+            // leaves the roster alone — you are still playing this match.
+            child: GestureDetector(
+              onLongPress: mine
+                  ? null
+                  : () => ModerationSheet.show(
+                        context,
+                        userId: m['sender_id'] as String,
+                        userName: name,
+                        targetType: 'ticket_message',
+                        targetId: m['id'] as String?,
+                      ),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
               decoration: BoxDecoration(
                 color: mine ? AppColors.primary : AppColors.surface,
                 border: mine ? null : Border.all(color: AppColors.lineSoft),
@@ -567,10 +580,11 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
                   bottomRight: Radius.circular(mine ? 5 : 16),
                 ),
               ),
-              child: Text(m['text'] as String? ?? '',
-                  style: AppText.body(
-                          mine ? AppColors.primaryInk : AppColors.ink)
-                      .copyWith(fontSize: 13.5, height: 1.4)),
+                child: Text(m['text'] as String? ?? '',
+                    style: AppText.body(
+                            mine ? AppColors.primaryInk : AppColors.ink)
+                        .copyWith(fontSize: 13.5, height: 1.4)),
+              ),
             ),
           ),
           const SizedBox(height: 3),
@@ -668,16 +682,33 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
                 ]),
           ),
           // Nothing to do on your own row — you have your own number.
-          if (!me && phone.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            _roundBtn(Icons.copy_rounded, filled: false, onTap: () {
-              Clipboard.setData(ClipboardData(text: phone));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  behavior: SnackBarBehavior.floating,
-                  content: Text('Number copied')));
-            }),
-            const SizedBox(width: 7),
-            _roundBtn(Icons.call_rounded, filled: true, onTap: () => _call(phone)),
+          if (!me) ...[
+            if (phone.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              _roundBtn(Icons.copy_rounded, filled: false, onTap: () {
+                Clipboard.setData(ClipboardData(text: phone));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    behavior: SnackBarBehavior.floating,
+                    content: Text('Number copied')));
+              }),
+              const SizedBox(width: 7),
+              _roundBtn(Icons.call_rounded, filled: true, onTap: () => _call(phone)),
+            ],
+            const SizedBox(width: 4),
+            // Report/block the player themselves, not one message.
+            GestureDetector(
+              onTap: () => ModerationSheet.show(
+                context,
+                userId: p['player_id'] as String,
+                userName: name,
+                onBlocked: () => setState(() {}),
+              ),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                child: Icon(Icons.more_vert_rounded,
+                    size: 18, color: AppColors.inkFaint),
+              ),
+            ),
           ],
         ]),
       ),

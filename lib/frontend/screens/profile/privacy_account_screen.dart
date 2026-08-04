@@ -3,7 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
+import 'package:padel_clay/backend/services/moderation_service.dart';
 import 'settings_common.dart';
+import 'blocked_players_screen.dart';
 import 'help_support_screen.dart' show kSupportEmail;
 
 class PrivacyAccountScreen extends StatefulWidget {
@@ -15,11 +17,18 @@ class PrivacyAccountScreen extends StatefulWidget {
 class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
   User? get _user => Supabase.instance.client.auth.currentUser;
   String? _phone; // from profiles.phone (the auth user's phone is empty here)
+  int? _blocked; // null until loaded, so the tile doesn't flash "None"
 
   @override
   void initState() {
     super.initState();
     _loadPhone();
+    _loadBlocked();
+  }
+
+  Future<void> _loadBlocked() async {
+    final rows = await ModerationService.blockedUsers();
+    if (mounted) setState(() => _blocked = rows.length);
   }
 
   Future<void> _loadPhone() async {
@@ -74,8 +83,17 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
         TileGroup(children: [
           NavTile(icon: Icons.download_outlined, title: 'Download My Data',
               onTap: () => _snack('Email $kSupportEmail and we\'ll send your data export.')),
-          NavTile(icon: Icons.block_rounded, title: 'Blocked Players', subtitle: 'None',
-              onTap: () => _snack('You haven\'t blocked anyone.')),
+          NavTile(
+              icon: Icons.block_rounded,
+              title: 'Blocked Players',
+              subtitle: _blocked == null
+                  ? 'Manage who you\'ve blocked'
+                  : (_blocked == 0 ? 'None' : '$_blocked blocked'),
+              onTap: () async {
+                await Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const BlockedPlayersScreen()));
+                _loadBlocked(); // the count may have changed
+              }),
         ]),
         const SizedBox(height: 22),
 
