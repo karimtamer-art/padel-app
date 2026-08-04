@@ -14,6 +14,11 @@ Future<void> main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
   ));
+  // Portrait only. Every screen is laid out for an upright phone; iOS is also
+  // locked in Info.plist, but Android has no manifest lock so this is what
+  // stops it rotating there.
+  await SystemChrome.setPreferredOrientations(
+      [DeviceOrientation.portraitUp]);
   await Supabase.initialize(
     url: 'https://lxihwifpcufhieppfeza.supabase.co',
     anonKey:
