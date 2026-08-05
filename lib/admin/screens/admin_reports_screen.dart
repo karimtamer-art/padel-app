@@ -177,7 +177,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               lines: _report.outLines,
               total: _report.moneyOut,
               foot: 'Cost of goods sold and trade-in credit are counted '
-                  'automatically from the store and trade-in ledgers.',
+                  'automatically from the store and trade-in ledgers. '
+                  'Everything else is what you recorded below.',
             ),
             const SizedBox(height: 18),
             _expensesCard(),
@@ -391,7 +392,9 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('Recorded expenses', style: AdminText.cardTitle()),
               const SizedBox(height: 2),
-              Text('${_expenses.length} in $_periodLabel'.toLowerCase(),
+              Text(
+                  'Money spent outside the app · '
+                  '${_expenses.length} in ${_periodLabel.toLowerCase()}',
                   style: AdminText.small()),
             ]),
           ),
@@ -406,10 +409,9 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
         if (_expenses.isEmpty)
           Text(
             widget.canEdit
-                ? 'Nothing recorded yet. Add what the platform paid out — '
-                    'courts, prizes, ads, wages. Buying stock doesn\'t belong '
-                    'here: set the product\'s cost in Store & Orders and it is '
-                    'counted when the item sells.'
+                ? 'Nothing recorded yet. Add anything you paid for outside the '
+                    'app — materials and supplies, court hire, prizes, ads, '
+                    'wages — and it counts against profit straight away.'
                 : 'Nothing recorded in this period.',
             style: AdminText.small().copyWith(height: 1.35),
           )
@@ -732,7 +734,7 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
         text: e == null ? '' : ((e['amount'] as num?) ?? 0).round().toString());
     _vendor = TextEditingController(text: (e?['vendor'] as String?) ?? '');
     _note = TextEditingController(text: (e?['note'] as String?) ?? '');
-    _category = (e?['category'] as String?) ?? 'court_rent';
+    _category = (e?['category'] as String?) ?? 'materials';
     final ymd = e?['spent_on'] as String?;
     _date = ymd == null ? DateTime.now() : DateTime.parse(ymd);
   }
@@ -846,7 +848,7 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
                       Text(_editing ? 'Edit expense' : 'Record an expense',
                           style: AdminText.h2()),
                       const SizedBox(height: 2),
-                      Text('Money the platform paid out',
+                      Text('Something you paid for outside the app',
                           style: AdminText.small()),
                     ]),
               ),
@@ -960,10 +962,11 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
                         const SizedBox(width: 9),
                         Expanded(
                           child: Text(
-                            'Buying stock isn\'t an expense here — set the '
-                            'product\'s cost in Store & Orders and it counts '
-                            'against profit as cost of goods sold when the item '
-                            'sells. Recording both would double the cost.',
+                            'Materials you buy and use up belong here. Stock '
+                            'you buy to RESELL does not — set that product\'s '
+                            'cost in Store & Orders and it counts against '
+                            'profit when the item sells. Recording it in both '
+                            'places would charge you for it twice.',
                             style: AdminText.small(AdminColors.info)
                                 .copyWith(height: 1.35),
                           ),

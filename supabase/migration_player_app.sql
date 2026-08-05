@@ -8096,8 +8096,8 @@ alter table public.expenses add column if not exists updated_at    timestamptz n
 -- change both. Deliberately no 'stock': see the COGS note in the header.
 alter table public.expenses drop constraint if exists expenses_category_chk;
 alter table public.expenses add constraint expenses_category_chk check (
-  category in ('court_rent','prizes','marketing','salaries','shipping',
-               'software','equipment','other'));
+  category in ('materials','court_rent','prizes','marketing','salaries',
+               'shipping','software','equipment','other'));
 
 alter table public.expenses drop constraint if exists expenses_amount_chk;
 alter table public.expenses add constraint expenses_amount_chk check (amount >= 0);

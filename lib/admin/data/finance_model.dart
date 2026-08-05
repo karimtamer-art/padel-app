@@ -45,6 +45,9 @@ class ExpenseCategory {
 }
 
 const List<ExpenseCategory> kExpenseCategories = [
+  ExpenseCategory('materials', 'Materials & supplies', Icons.category_outlined,
+      AdminColors.bronze,
+      'Strings, grips, balls, packaging — things you buy and use up'),
   ExpenseCategory('court_rent', 'Courts & venue', Icons.place_outlined,
       AdminColors.green, 'Court hire for matches and events'),
   ExpenseCategory('prizes', 'Prizes & trophies', Icons.emoji_events_outlined,
@@ -54,11 +57,11 @@ const List<ExpenseCategory> kExpenseCategories = [
   ExpenseCategory('salaries', 'Staff & coaches', Icons.badge_outlined,
       AdminColors.info, 'Wages, referees, coaching fees'),
   ExpenseCategory('shipping', 'Delivery & courier', Icons.local_shipping_outlined,
-      AdminColors.bronze, 'What the courier charges us per order'),
+      AdminColors.silver, 'What the courier charges us per order'),
   ExpenseCategory('software', 'Software & fees', Icons.cloud_outlined,
       AdminColors.elite, 'Hosting, Supabase, stores, transfer fees'),
   ExpenseCategory('equipment', 'Equipment & upkeep', Icons.handyman_outlined,
-      AdminColors.warn, 'Nets, balls, machines, repairs to our own kit'),
+      AdminColors.warn, 'Nets, machines, tools — kit that lasts'),
   ExpenseCategory('other', 'Other', Icons.more_horiz_rounded,
       AdminColors.inkSoft, 'Anything that fits nowhere else'),
 ];
