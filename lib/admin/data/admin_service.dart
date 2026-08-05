@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../backend/models/format_model.dart';
+import 'finance_model.dart' show LedgerKind, LedgerKindX;
 
 /// Centralised Supabase access for the admin console.
 /// All methods return raw maps so screens can evolve their models independently.
@@ -1167,9 +1168,12 @@ class AdminService {
 
   /// The nav section that surfaces a given admin alert type — drives both the
   /// bell routing and the per-item sidebar badges.
+  // 'admin_report' is the moderation queue, which moved from Requests to the
+  // Reports tab — the bell must land on the section that actually holds it.
   static String? sectionForAlertType(String? type) => switch (type) {
         'admin_order' => 'payments',
-        'admin_trade' || 'admin_repair' || 'admin_report' => 'requests',
+        'admin_trade' || 'admin_repair' => 'requests',
+        'admin_report' => 'reports',
         'admin_tournament' => 'tournaments',
         'admin_community' => 'community',
         _ => null,
@@ -1177,7 +1181,8 @@ class AdminService {
 
   static const Map<String, List<String>> _sectionTypes = {
     'payments': ['admin_order'],
-    'requests': ['admin_trade', 'admin_repair', 'admin_report'],
+    'requests': ['admin_trade', 'admin_repair'],
+    'reports': ['admin_report'],
     'tournaments': ['admin_tournament'],
     'community': ['admin_community'],
   };
@@ -1597,39 +1602,43 @@ class AdminService {
     }
   }
 
-  /// Recorded expenses in a window (newest first). RLS keeps this to the
+  /// Hand-kept ledger rows in a window (newest first) — expenses or income,
+  /// which differ only in their table and date column. RLS keeps both to the
   /// finance roles, so a lesser staffer simply gets an empty list.
-  static Future<List<Map<String, dynamic>>> fetchExpenses({
+  static Future<List<Map<String, dynamic>>> fetchLedger(
+    LedgerKind kind, {
     DateTime? from,
     DateTime? to,
     int limit = 200,
   }) async {
+    final date = kind.dateColumn;
     try {
-      var q = _db.from('expenses').select(
-          'id, spent_on, category, amount, vendor, note, tournament_id, created_at');
-      if (from != null) q = q.gte('spent_on', _ymd(from));
-      if (to != null) q = q.lte('spent_on', _ymd(to));
+      var q = _db.from(kind.table).select('id, $date, category, amount, '
+          '${kind.partyColumn}, note, tournament_id, created_at');
+      if (from != null) q = q.gte(date, _ymd(from));
+      if (to != null) q = q.lte(date, _ymd(to));
       final res = await q
-          .order('spent_on', ascending: false)
+          .order(date, ascending: false)
           .order('created_at', ascending: false)
           .limit(limit);
       return List<Map<String, dynamic>>.from(res as List);
     } catch (e) {
-      debugPrint('[AdminService] fetchExpenses: $e');
+      debugPrint('[AdminService] fetchLedger(${kind.table}): $e');
       return const [];
     }
   }
 
-  /// Inserts or updates one expense. Pass `id` in [data] to edit. Returns null
-  /// on success, else an error string.
-  static Future<String?> saveExpense(Map<String, dynamic> data) async {
+  /// Inserts or updates one ledger row. Pass `id` in [data] to edit. Returns
+  /// null on success, else an error string.
+  static Future<String?> saveLedger(
+      LedgerKind kind, Map<String, dynamic> data) async {
     try {
       final id = data['id'] as String?;
       final row = Map<String, dynamic>.from(data)..remove('id');
       if (id == null) {
-        await _db.from('expenses').insert(row);
+        await _db.from(kind.table).insert(row);
       } else {
-        await _db.from('expenses').update(row).eq('id', id);
+        await _db.from(kind.table).update(row).eq('id', id);
       }
       return null;
     } on PostgrestException catch (e) {
@@ -1639,9 +1648,9 @@ class AdminService {
     }
   }
 
-  static Future<String?> deleteExpense(String id) async {
+  static Future<String?> deleteLedger(LedgerKind kind, String id) async {
     try {
-      await _db.from('expenses').delete().eq('id', id);
+      await _db.from(kind.table).delete().eq('id', id);
       return null;
     } on PostgrestException catch (e) {
       return e.message;

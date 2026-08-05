@@ -4,18 +4,29 @@ import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
 import '../data/finance_model.dart';
+import 'admin_moderation_view.dart';
 
-/// Reports — the money side of the platform: what we pay, what we get back,
-/// and the profit between them, plus a Monday-to-Sunday weekly report.
+/// Reports — two things under one tab:
 ///
-/// Every figure comes from `admin_finance_summary` / `admin_weekly_finance`
-/// (see supabase/changes/2026-08-06_expenses_and_pl.sql). Nothing is computed
-/// here — the server refuses anyone who isn't a super admin or a Reports-holding
-/// analyst, so a lesser staffer sees a locked card instead of numbers.
+///  • **Money** — what we pay, what we get back, the profit between them, and a
+///    Monday-to-Sunday weekly report. Every figure comes from
+///    `admin_finance_summary` / `admin_weekly_finance`; nothing is computed
+///    here. The server refuses anyone who isn't a super admin or a
+///    Reports-holding analyst, so a lesser staffer sees a locked card.
+///  • **Moderation** — the player-report queue, moved here from Requests. Its
+///    own server guard (`_can_edit('requests')`) is unchanged.
 class AdminReportsScreen extends StatefulWidget {
-  /// Super admins record expenses; everyone else reads.
+  /// Super admins record money in and out; everyone else reads.
   final bool canEdit;
-  const AdminReportsScreen({super.key, this.canEdit = false});
+
+  /// Holds the Requests section — the moderation queue's real permission.
+  final bool canModerate;
+
+  const AdminReportsScreen({
+    super.key,
+    this.canEdit = false,
+    this.canModerate = false,
+  });
 
   @override
   State<AdminReportsScreen> createState() => _AdminReportsScreenState();
@@ -33,14 +44,19 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
   String _period = 'week';
   bool _loading = true;
+  bool _showModeration = false;
   FinanceReport _report = const FinanceReport();
   FinanceReport? _prev; // same-length window immediately before, for the delta
   List<FinanceWeek> _weeks = const [];
   List<Map<String, dynamic>> _expenses = const [];
+  List<Map<String, dynamic>> _income = const [];
 
+  /// A staffer with Requests but no finance access lands straight on the queue
+  /// — the Money half would only ever show them a locked card.
   @override
   void initState() {
     super.initState();
+    _showModeration = widget.canModerate && !widget.canEdit;
     _load();
   }
 
@@ -97,7 +113,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
       else
         Future.value(<String, dynamic>{'error': 'no_baseline'}),
       AdminService.weeklyFinance(weeks: 8),
-      AdminService.fetchExpenses(from: from, to: to),
+      AdminService.fetchLedger(LedgerKind.expense, from: from, to: to),
+      AdminService.fetchLedger(LedgerKind.income, from: from, to: to),
     ]);
 
     if (!mounted) return;
@@ -109,6 +126,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           .map(FinanceWeek.fromJson)
           .toList();
       _expenses = results[3] as List<Map<String, dynamic>>;
+      _income = results[4] as List<Map<String, dynamic>>;
       _loading = false;
     });
   }
@@ -123,6 +141,20 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Both halves available → a segmented switch above everything else.
+    final bothHalves = widget.canModerate && !_report.locked;
+
+    if (_showModeration) {
+      return Column(children: [
+        if (bothHalves)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+            child: _halfSwitch(),
+          ),
+        const Expanded(child: AdminModerationView()),
+      ]);
+    }
+
     if (_loading) {
       return const Center(
           child: CircularProgressIndicator(color: AdminColors.primary));
@@ -134,7 +166,41 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 40),
         children: [
+          if (bothHalves) ...[
+            _halfSwitch(),
+            const SizedBox(height: 14),
+          ],
           const AdminSection('Reports', sub: 'Money in, money out — and profit'),
+          // The two things you come here to DO, before the numbers you come
+          // here to read — recording money shouldn't need a scroll.
+          if (widget.canEdit && _report.ok && !_report.locked) ...[
+            Row(children: [
+              Expanded(
+                child: AdminButton('Add money in',
+                    icon: Icons.south_west_rounded,
+                    full: true,
+                    height: 44,
+                    variant: AdminBtn.success,
+                    onPressed: () => _openEntry(LedgerKind.income, null)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: AdminButton('Record expense',
+                    icon: Icons.north_east_rounded,
+                    full: true,
+                    height: 44,
+                    variant: AdminBtn.ghost,
+                    onPressed: () => _openEntry(LedgerKind.expense, null)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Text(
+              'For anything that happened outside the app — a cash sale, '
+              'materials you bought, court hire you paid for.',
+              style: AdminText.small().copyWith(height: 1.35),
+            ),
+            const SizedBox(height: 16),
+          ],
           _periodBar(),
           const SizedBox(height: 14),
           if (_report.locked)
@@ -181,11 +247,46 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                   'Everything else is what you recorded below.',
             ),
             const SizedBox(height: 18),
-            _expensesCard(),
+            _ledgerCard(LedgerKind.income, _income),
+            const SizedBox(height: 18),
+            _ledgerCard(LedgerKind.expense, _expenses),
             const SizedBox(height: 18),
             _weeklyCard(),
           ],
         ],
+      ),
+    );
+  }
+
+  /// Money ⇄ Moderation. Only built when the staffer can reach both.
+  Widget _halfSwitch() => Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+            color: AdminColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: AdminColors.line)),
+        child: Row(children: [
+          _halfBtn('Money', false),
+          _halfBtn('Moderation', true),
+        ]),
+      );
+
+  Widget _halfBtn(String label, bool moderation) {
+    final on = _showModeration == moderation;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _showModeration = moderation),
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: BoxDecoration(
+              color: on ? AdminColors.surface : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: on ? AdminColors.cardShadow : null),
+          child: Text(label,
+              style: AdminText.sans(12.5, FontWeight.w700,
+                  on ? AdminColors.ink : AdminColors.inkSoft)),
+        ),
       ),
     );
   }
@@ -381,20 +482,22 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     ]);
   }
 
-  // ── recorded expenses ─────────────────────────────────────────
+  // ── the two hand-kept ledgers ─────────────────────────────────
+  // Expenses and money-in differ only in their labels, categories and column
+  // names — all of which live on LedgerKind — so one card renders both.
 
-  Widget _expensesCard() {
+  Widget _ledgerCard(LedgerKind kind, List<Map<String, dynamic>> rows) {
     return AdminCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Recorded expenses', style: AdminText.cardTitle()),
+              Text(kind.sectionTitle, style: AdminText.cardTitle()),
               const SizedBox(height: 2),
               Text(
-                  'Money spent outside the app · '
-                  '${_expenses.length} in ${_periodLabel.toLowerCase()}',
+                  '${kind.isIncome ? 'Money taken' : 'Money spent'} outside the '
+                  'app · ${rows.length} in ${_periodLabel.toLowerCase()}',
                   style: AdminText.small()),
             ]),
           ),
@@ -403,35 +506,42 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                 icon: Icons.add_rounded,
                 height: 34,
                 variant: AdminBtn.ghost,
-                onPressed: () => _openExpense(null)),
+                onPressed: () => _openEntry(kind, null)),
         ]),
         const Divider(height: 22, color: AdminColors.lineSoft),
-        if (_expenses.isEmpty)
+        if (rows.isEmpty)
           Text(
             widget.canEdit
-                ? 'Nothing recorded yet. Add anything you paid for outside the '
-                    'app — materials and supplies, court hire, prizes, ads, '
-                    'wages — and it counts against profit straight away.'
+                ? (kind.isIncome
+                    ? 'Nothing recorded yet. Add anything you were paid outside '
+                        'the app — a racket sold in person, a coaching session, '
+                        'court hire, sponsorship — and it counts towards profit '
+                        'straight away.'
+                    : 'Nothing recorded yet. Add anything you paid for outside '
+                        'the app — materials and supplies, court hire, prizes, '
+                        'ads, wages — and it counts against profit straight '
+                        'away.')
                 : 'Nothing recorded in this period.',
             style: AdminText.small().copyWith(height: 1.35),
           )
         else
-          for (var i = 0; i < _expenses.length; i++) ...[
+          for (var i = 0; i < rows.length; i++) ...[
             if (i > 0) const Divider(height: 18, color: AdminColors.lineSoft),
-            _expenseRow(_expenses[i]),
+            _ledgerRow(kind, rows[i]),
           ],
       ]),
     );
   }
 
-  Widget _expenseRow(Map<String, dynamic> e) {
-    final cat = expenseCategory(e['category'] as String?);
-    final vendor = (e['vendor'] as String?)?.trim() ?? '';
+  Widget _ledgerRow(LedgerKind kind, Map<String, dynamic> e) {
+    final cat = kind.category(e['category'] as String?);
+    final party = (e[kind.partyColumn] as String?)?.trim() ?? '';
     final note = (e['note'] as String?)?.trim() ?? '';
-    final detail = [if (vendor.isNotEmpty) vendor, if (note.isNotEmpty) note]
+    final detail = [if (party.isNotEmpty) party, if (note.isNotEmpty) note]
         .join(' · ');
+    final date = prettyYmd(e[kind.dateColumn] as String?);
     return InkWell(
-      onTap: widget.canEdit ? () => _openExpense(e) : null,
+      onTap: widget.canEdit ? () => _openEntry(kind, e) : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(children: [
@@ -451,9 +561,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               Text(cat.label, style: AdminText.strong()),
               const SizedBox(height: 2),
               Text(
-                detail.isEmpty
-                    ? prettyYmd(e['spent_on'] as String?)
-                    : '${prettyYmd(e['spent_on'] as String?)} · $detail',
+                detail.isEmpty ? date : '$date · $detail',
                 style: AdminText.small(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -461,8 +569,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
             ]),
           ),
           const SizedBox(width: 8),
-          Text(egp((e['amount'] as num?) ?? 0),
-              style: AdminText.mono(13, FontWeight.w800, AdminColors.ink)),
+          Text('${kind.isIncome ? '+' : '−'}${egp((e['amount'] as num?) ?? 0)}',
+              style: AdminText.mono(13, FontWeight.w800, kind.tone)),
           if (widget.canEdit)
             const Padding(
               padding: EdgeInsets.only(left: 4),
@@ -666,14 +774,15 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     return b.toString();
   }
 
-  // ── add / edit an expense ─────────────────────────────────────
+  // ── add / edit a ledger entry ─────────────────────────────────
 
-  Future<void> _openExpense(Map<String, dynamic>? existing) async {
+  Future<void> _openEntry(
+      LedgerKind kind, Map<String, dynamic>? existing) async {
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _ExpenseSheet(existing: existing),
+      builder: (_) => _LedgerSheet(kind: kind, existing: existing),
     );
     if (saved == true) _load();
   }
@@ -705,25 +814,27 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 }
 
 // ============================================================================
-// The add / edit expense sheet. Writes straight to `expenses`; RLS keeps the
-// insert to super admins, so an error here is shown verbatim rather than
-// guessed at.
+// The add / edit sheet for both hand-kept ledgers. Writes straight to
+// `expenses` or `income`; RLS keeps the insert to super admins, so an error
+// here is shown verbatim rather than guessed at.
 // ============================================================================
-class _ExpenseSheet extends StatefulWidget {
+class _LedgerSheet extends StatefulWidget {
+  final LedgerKind kind;
   final Map<String, dynamic>? existing;
-  const _ExpenseSheet({this.existing});
+  const _LedgerSheet({required this.kind, this.existing});
   @override
-  State<_ExpenseSheet> createState() => _ExpenseSheetState();
+  State<_LedgerSheet> createState() => _LedgerSheetState();
 }
 
-class _ExpenseSheetState extends State<_ExpenseSheet> {
+class _LedgerSheetState extends State<_LedgerSheet> {
   late final TextEditingController _amount;
-  late final TextEditingController _vendor;
+  late final TextEditingController _party;
   late final TextEditingController _note;
   late String _category;
   late DateTime _date;
   bool _busy = false;
 
+  LedgerKind get _kind => widget.kind;
   bool get _editing => widget.existing != null;
 
   @override
@@ -732,17 +843,18 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
     final e = widget.existing;
     _amount = TextEditingController(
         text: e == null ? '' : ((e['amount'] as num?) ?? 0).round().toString());
-    _vendor = TextEditingController(text: (e?['vendor'] as String?) ?? '');
+    _party =
+        TextEditingController(text: (e?[_kind.partyColumn] as String?) ?? '');
     _note = TextEditingController(text: (e?['note'] as String?) ?? '');
-    _category = (e?['category'] as String?) ?? 'materials';
-    final ymd = e?['spent_on'] as String?;
+    _category = (e?['category'] as String?) ?? _kind.defaultCategory;
+    final ymd = e?[_kind.dateColumn] as String?;
     _date = ymd == null ? DateTime.now() : DateTime.parse(ymd);
   }
 
   @override
   void dispose() {
     _amount.dispose();
-    _vendor.dispose();
+    _party.dispose();
     _note.dispose();
     super.dispose();
   }
@@ -765,14 +877,15 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
       return;
     }
     setState(() => _busy = true);
-    final err = await AdminService.saveExpense({
+    final err = await AdminService.saveLedger(_kind, {
       if (_editing) 'id': widget.existing!['id'],
-      'spent_on': '${_date.year.toString().padLeft(4, '0')}-'
+      _kind.dateColumn: '${_date.year.toString().padLeft(4, '0')}-'
           '${_date.month.toString().padLeft(2, '0')}-'
           '${_date.day.toString().padLeft(2, '0')}',
       'category': _category,
       'amount': amount,
-      'vendor': _vendor.text.trim().isEmpty ? null : _vendor.text.trim(),
+      _kind.partyColumn:
+          _party.text.trim().isEmpty ? null : _party.text.trim(),
       'note': _note.text.trim().isEmpty ? null : _note.text.trim(),
     });
     if (!mounted) return;
@@ -790,11 +903,13 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AdminColors.surface,
-        title: Text('Delete this expense?', style: AdminText.h2()),
+        title: Text(
+            _kind.isIncome ? 'Delete this entry?' : 'Delete this expense?',
+            style: AdminText.h2()),
         content: Text(
-          'It comes off the profit figures for '
-          '${prettyYmd(widget.existing!['spent_on'] as String?)} and can\'t be '
-          'undone.',
+          'It changes the profit figures for '
+          '${prettyYmd(widget.existing![_kind.dateColumn] as String?)} and '
+          'can\'t be undone.',
           style: AdminText.body(),
         ),
         actions: [
@@ -809,7 +924,8 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
     );
     if (sure != true || !mounted) return;
     setState(() => _busy = true);
-    final err = await AdminService.deleteExpense(widget.existing!['id'] as String);
+    final err =
+        await AdminService.deleteLedger(_kind, widget.existing!['id'] as String);
     if (!mounted) return;
     setState(() => _busy = false);
     if (err != null) {
@@ -821,7 +937,7 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final cat = expenseCategory(_category);
+    final cat = _kind.category(_category);
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
@@ -845,11 +961,10 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_editing ? 'Edit expense' : 'Record an expense',
+                      Text(_editing ? _kind.editTitle : _kind.newTitle,
                           style: AdminText.h2()),
                       const SizedBox(height: 2),
-                      Text('Something you paid for outside the app',
-                          style: AdminText.small()),
+                      Text(_kind.sheetSub, style: AdminText.small()),
                     ]),
               ),
               IconButton(
@@ -872,12 +987,12 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
                   decoration: _dec('0'),
                 ),
                 const SizedBox(height: 16),
-                _label('What for'),
+                _label(_kind.isIncome ? 'Where it came from' : 'What for'),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final c in kExpenseCategories)
+                    for (final c in _kind.categories)
                       GestureDetector(
                         onTap: () => setState(() => _category = c.id),
                         child: Container(
@@ -935,18 +1050,19 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                _label('Paid to (optional)'),
+                _label('${_kind.partyLabel} (optional)'),
                 TextField(
-                    controller: _vendor,
+                    controller: _party,
                     style: AdminText.body(),
-                    decoration: _dec('Club, supplier, courier…')),
+                    decoration: _dec(_kind.partyHint)),
                 const SizedBox(height: 16),
                 _label('Note (optional)'),
                 TextField(
                     controller: _note,
                     style: AdminText.body(),
                     maxLines: 3,
-                    decoration: _dec('What this covered')),
+                    decoration: _dec(
+                        _kind.isIncome ? 'What this was for' : 'What this covered')),
                 const SizedBox(height: 18),
                 Container(
                   padding: const EdgeInsets.all(13),
@@ -962,11 +1078,17 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
                         const SizedBox(width: 9),
                         Expanded(
                           child: Text(
-                            'Materials you buy and use up belong here. Stock '
-                            'you buy to RESELL does not — set that product\'s '
-                            'cost in Store & Orders and it counts against '
-                            'profit when the item sells. Recording it in both '
-                            'places would charge you for it twice.',
+                            _kind.isIncome
+                                ? 'Only money the app never saw. Store orders, '
+                                    'paid tournament entries and repairs are '
+                                    'already counted from their own records — '
+                                    'adding them here would count them twice.'
+                                : 'Materials you buy and use up belong here. '
+                                    'Stock you buy to RESELL does not — set '
+                                    'that product\'s cost in Store & Orders and '
+                                    'it counts against profit when the item '
+                                    'sells. Recording it in both places would '
+                                    'charge you for it twice.',
                             style: AdminText.small(AdminColors.info)
                                 .copyWith(height: 1.35),
                           ),
@@ -975,7 +1097,10 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
                 ),
                 if (_editing) ...[
                   const SizedBox(height: 16),
-                  AdminButton('Delete this expense',
+                  AdminButton(
+                      _kind.isIncome
+                          ? 'Delete this entry'
+                          : 'Delete this expense',
                       icon: Icons.delete_outline_rounded,
                       full: true,
                       variant: AdminBtn.danger,
@@ -989,8 +1114,14 @@ class _ExpenseSheetState extends State<_ExpenseSheet> {
             decoration: const BoxDecoration(
                 color: AdminColors.surfaceAlt,
                 border: Border(top: BorderSide(color: AdminColors.lineSoft))),
-            child: AdminButton(_busy ? 'Saving…' : 'Save expense',
-                full: true, height: 48, onPressed: _busy ? null : _save),
+            child: AdminButton(
+                _busy
+                    ? 'Saving…'
+                    : (_kind.isIncome ? 'Save money in' : 'Save expense'),
+                full: true,
+                height: 48,
+                color: _kind.isIncome ? AdminColors.success : null,
+                onPressed: _busy ? null : _save),
           ),
         ]),
       ),

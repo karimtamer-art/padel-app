@@ -145,8 +145,15 @@ List<String> effectiveAccess(RoleId role, List<String>? access) {
 }
 
 /// Ordered grantable nav sections for [access], preserving [kSections] order.
+///
+/// One special case: the moderation queue (player reports) moved out of
+/// Requests and into the Reports tab, but its server guard is still
+/// `_can_edit('requests')`. So holding Requests also opens Reports — otherwise
+/// Support, whose entire job is moderation, would lose the queue. They see only
+/// the Moderation half; the finances stay behind `_can_see_finance()`.
 List<Section> navForAccess(List<String> access) {
   final set = access.toSet();
+  if (set.contains('requests')) set.add('reports');
   return kSections.where((s) => set.contains(s.id)).toList();
 }
 

@@ -46,6 +46,7 @@ class _AdminConsoleState extends State<AdminConsole> {
   // RBAC — the signed-in staffer's role + which sections they can open.
   // Defaults to full super-admin access until the profile row loads.
   RoleId _role = RoleId.superAdmin;
+  List<String> _access = _allSectionIds;
   List<Section> _navSections =
       navForStaff(RoleId.superAdmin, _allSectionIds);
   static final List<String> _allSectionIds =
@@ -115,6 +116,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     if (!mounted) return;
     setState(() {
       _role = role;
+      _access = access;
       _navSections = nav;
       if (!nav.any((s) => s.id == _active)) {
         _active = homeIdForStaff(role, access);
@@ -231,10 +233,13 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'org-home':    return OrganizerOverviewScreen(
           onOpenTournaments: () => _navTo('tournaments'));
       case 'community':   return const AdminCommunityScreen();
-      // Only super admins record expenses; the DB enforces the same (RLS on
-      // `expenses` is _is_admin()), this just hides the buttons.
+      // Only super admins record money in/out; the DB enforces the same (RLS on
+      // `expenses`/`income` is _is_admin()), this just hides the buttons. The
+      // moderation queue moved here from Requests, so it follows the Requests
+      // grant — not the Reports one.
       case 'reports':     return AdminReportsScreen(
-          canEdit: _role == RoleId.superAdmin);
+          canEdit: _role == RoleId.superAdmin,
+          canModerate: _access.contains('requests'));
       case 'players':     return const AdminPlayersScreen();
       case 'matches':     return AdminMatchesScreen(isOrganizer: _role == RoleId.organizer);
       case 'tournaments': return AdminTournamentsScreen(organizerId: orgId);

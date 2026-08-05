@@ -14,9 +14,10 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   int _tab = 0;
   List<Map<String, dynamic>> _repairs = [];
   List<Map<String, dynamic>> _trades = [];
-  List<Map<String, dynamic>> _reports = [];
   bool _loading = true;
   String? _error;
+  // The moderation queue used to be a third segment here. It now lives under
+  // Reports (AdminModerationView) — this console is service requests only.
 
   // DB status values: pending / quoted / in_repair / ready / collected
   static const _repairFlow = [
@@ -43,7 +44,6 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
     final results = await Future.wait([
       AdminService.fetchRepairs().then<Object>((v) => v).catchError((e) => e),
       AdminService.fetchTrades().then<Object>((v) => v).catchError((e) => e),
-      AdminService.fetchReports().then<Object>((v) => v).catchError((e) => e),
     ]);
     if (!mounted) return;
     final repairs = results[0];
@@ -51,11 +51,6 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
     setState(() {
       if (repairs is List<Map<String, dynamic>>) _repairs = repairs;
       if (trades is List<Map<String, dynamic>>) _trades = trades;
-      // Reports are the newest queue - a database without the delta must not
-      // take the whole console down with it.
-      if (results[2] is List<Map<String, dynamic>>) {
-        _reports = results[2] as List<Map<String, dynamic>>;
-      }
       _error = repairs is List<Map<String, dynamic>> &&
               trades is List<Map<String, dynamic>>
           ? null
@@ -121,13 +116,11 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
         _repairs.where((r) => r['status'] == 'pending').length;
     final newTrades =
         _trades.where((t) => t['status'] == 'pending').length;
-    final openReports =
-        _reports.where((r) => r['status'] == 'open').length;
 
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-        child: _seg(newRepairs, newTrades, openReports),
+        child: _seg(newRepairs, newTrades),
       ),
       if (_error != null && !_loading)
         Padding(
@@ -160,14 +153,12 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
                     strokeWidth: 2, color: AdminColors.primary))
             : _tab == 0
                 ? _repairsList()
-                : _tab == 1
-                    ? _tradesList()
-                    : _reportsList(),
+                : _tradesList(),
       ),
     ]);
   }
 
-  Widget _seg(int newRepairs, int newTrades, int openReports) {
+  Widget _seg(int newRepairs, int newTrades) {
     return Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
@@ -177,7 +168,6 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
       child: Row(children: [
         _segBtn('Repairs', newRepairs, 0),
         _segBtn('Trade-ins', newTrades, 1),
-        _segBtn('Reports', openReports, 2),
       ]),
     );
   }
@@ -489,266 +479,6 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
                     color: AdminColors.primary, width: 1.6)),
           ),
         ),
-      ]),
-    );
-  }
-
-  // ── Reports (moderation queue) ────────────────────────────────
-
-  static const _reasonLabels = {
-    'harassment': 'Harassment or bullying',
-    'hate': 'Hate speech',
-    'sexual': 'Sexual or explicit content',
-    'violence': 'Violence or threats',
-    'spam': 'Spam or a scam',
-    'impersonation': 'Impersonation',
-    'other': 'Something else',
-  };
-
-  static const _targetLabels = {
-    'dm_message': 'Direct message',
-    'ticket_message': 'Match ticket message',
-    'community_message': 'Community chat',
-    'announcement_comment': 'Comment',
-    'user': 'Player',
-  };
-
-  static String _priorLine(int n) =>
-      '$n other report${n == 1 ? '' : 's'} against this player';
-
-  Widget _reportsList() {
-    final open = _reports.where((r) => r['status'] == 'open').toList();
-    return RefreshIndicator(
-      color: AdminColors.primary,
-      onRefresh: _load,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 40),
-        children: [
-          KpiGrid([
-            StatCard(
-                icon: Icons.flag_outlined,
-                tone: AdminColors.danger,
-                label: 'Open reports',
-                value: '${open.length}'),
-            StatCard(
-                icon: Icons.gavel_rounded,
-                tone: AdminColors.green,
-                label: 'Actioned',
-                value:
-                    '${_reports.where((r) => r['status'] == 'actioned').length}'),
-            StatCard(
-                icon: Icons.do_not_disturb_on_outlined,
-                tone: AdminColors.inkFaint,
-                label: 'Dismissed',
-                value:
-                    '${_reports.where((r) => r['status'] == 'dismissed').length}'),
-          ]),
-          const SizedBox(height: 10),
-          // Apple expects reports to be dealt with promptly; say so where the
-          // work actually happens.
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-                color: AdminColors.surfaceAlt,
-                borderRadius: BorderRadius.circular(11)),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Icon(Icons.schedule_rounded,
-                  size: 15, color: AdminColors.inkFaint),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                    'Review reports within 24 hours. Acting on one can delete '
-                    'the message; banning a player is done from Players.',
-                    style: AdminText.small(AdminColors.inkFaint)),
-              ),
-            ]),
-          ),
-          const SizedBox(height: 14),
-          if (_reports.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(28),
-              alignment: Alignment.center,
-              child: Text('Nothing reported yet',
-                  style: AdminText.small(AdminColors.inkFaint)),
-            )
-          else
-            for (final r in _reports)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: AdminCard(
-                  onTap: () => _openReport(r),
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Expanded(
-                            child: Text(
-                                _reasonLabels[r['reason']] ??
-                                    (r['reason'] as String? ?? '—'),
-                                style: AdminText.strong(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                          StatusBadge(r['status'] as String? ?? 'open',
-                              dot: true),
-                        ]),
-                        const SizedBox(height: 3),
-                        Text(
-                            '${_targetLabels[r['target_type']] ?? r['target_type']}'
-                            ' · ${(r['target_user_name'] as String?) ?? 'Player'}'
-                            ' · ${_fmtDate(r['created_at'] as String?)}',
-                            style: AdminText.small()),
-                        if ((r['content_excerpt'] as String?)?.isNotEmpty ??
-                            false) ...[
-                          const SizedBox(height: 7),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(9),
-                            decoration: BoxDecoration(
-                                color: AdminColors.surfaceAlt,
-                                borderRadius: BorderRadius.circular(9)),
-                            child: Text('"${r['content_excerpt']}"',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: AdminText.small(AdminColors.inkSoft)),
-                          ),
-                        ],
-                        // Repeat offenders are the ones worth banning.
-                        if (((r['prior_reports'] as int?) ?? 0) > 0) ...[
-                          const SizedBox(height: 7),
-                          Row(children: [
-                            const Icon(Icons.warning_amber_rounded,
-                                size: 13, color: AdminColors.warn),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(_priorLine(r['prior_reports'] as int),
-                                  style: AdminText.small(AdminColors.warn)),
-                            ),
-                          ]),
-                        ],
-                      ]),
-                ),
-              ),
-        ],
-      ),
-    );
-  }
-
-  void _openReport(Map<String, dynamic> r) {
-    final id = r['id'] as String;
-    final status = r['status'] as String? ?? 'open';
-    final noteC = TextEditingController();
-    final canDelete = r['target_id'] != null && r['target_type'] != 'user';
-
-    Future<void> resolve(String newStatus, {bool delete = false}) async {
-      Navigator.pop(context);
-      final err = await AdminService.resolveReport(id,
-          status: newStatus, note: noteC.text, delete: delete);
-      await _load();
-      if (mounted) {
-        adminToast(
-            context,
-            err ??
-                (newStatus == 'actioned'
-                    ? (delete
-                        ? 'Content removed — report closed'
-                        : 'Report actioned')
-                    : 'Report dismissed'),
-            ok: err == null);
-      }
-    }
-
-    adminSheet(
-      context,
-      title: _reasonLabels[r['reason']] ?? 'Report',
-      sub: '${_targetLabels[r['target_type']] ?? r['target_type']}'
-          ' · ${_shortId(id)}',
-      heightFactor: 0.8,
-      footer: status != 'open'
-          ? null
-          : Column(mainAxisSize: MainAxisSize.min, children: [
-              if (canDelete) ...[
-                AdminButton('Remove content',
-                    full: true,
-                    height: 50,
-                    variant: AdminBtn.danger,
-                    icon: Icons.delete_outline_rounded,
-                    onPressed: () => resolve('actioned', delete: true)),
-                const SizedBox(height: 8),
-              ],
-              AdminButton('Mark actioned',
-                  full: true,
-                  height: 46,
-                  variant: AdminBtn.success,
-                  onPressed: () => resolve('actioned')),
-              const SizedBox(height: 8),
-              AdminButton('Dismiss',
-                  full: true,
-                  height: 44,
-                  variant: AdminBtn.ghost,
-                  onPressed: () => resolve('dismissed')),
-            ]),
-      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          _kv('Reported by', (r['reporter_name'] as String?) ?? 'Player'),
-          const SizedBox(width: 10),
-          _kv('About', (r['target_user_name'] as String?) ?? 'Player'),
-        ]),
-        const SizedBox(height: 10),
-        Row(children: [
-          _kv('Account', (r['target_user_status'] as String?) ?? '—'),
-          const SizedBox(width: 10),
-          _kv('Prior reports', '${(r['prior_reports'] as int?) ?? 0}'),
-        ]),
-        const SizedBox(height: 14),
-        Text('REPORTED CONTENT', style: AdminText.kicker()),
-        const SizedBox(height: 7),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(
-              color: AdminColors.surfaceAlt,
-              borderRadius: BorderRadius.circular(11)),
-          child: Text(
-              ((r['content_excerpt'] as String?)?.isNotEmpty ?? false)
-                  ? '"${r['content_excerpt']}"'
-                  : 'No message attached — this is a report about the player.',
-              style: AdminText.body().copyWith(height: 1.5)),
-        ),
-        if ((r['note'] as String?)?.isNotEmpty ?? false) ...[
-          const SizedBox(height: 14),
-          Text('WHAT THE REPORTER SAID', style: AdminText.kicker()),
-          const SizedBox(height: 7),
-          Text(r['note'] as String,
-              style: AdminText.body().copyWith(height: 1.5)),
-        ],
-        if (status == 'open') ...[
-          const SizedBox(height: 14),
-          Text('INTERNAL NOTE (OPTIONAL)', style: AdminText.kicker()),
-          const SizedBox(height: 7),
-          TextField(
-            controller: noteC,
-            maxLines: 2,
-            style: AdminText.body(),
-            decoration: InputDecoration(
-              hintText: 'What did you decide, and why?',
-              hintStyle: AdminText.small(AdminColors.inkFaint),
-              isDense: true,
-              filled: true,
-              fillColor: AdminColors.surfaceAlt,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-              enabledBorder: OutlineInputBorder(
-                  borderRadius: AdminUI.fieldR,
-                  borderSide: const BorderSide(color: AdminColors.line)),
-              focusedBorder: OutlineInputBorder(
-                  borderRadius: AdminUI.fieldR,
-                  borderSide:
-                      const BorderSide(color: AdminColors.primary, width: 1.6)),
-            ),
-          ),
-        ],
       ]),
     );
   }

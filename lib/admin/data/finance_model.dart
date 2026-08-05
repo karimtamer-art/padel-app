@@ -71,12 +71,71 @@ ExpenseCategory expenseCategory(String? id) => kExpenseCategories.firstWhere(
       orElse: () => kExpenseCategories.last,
     );
 
+/// Money TAKEN outside the app — the mirror of [kExpenseCategories]. Store
+/// orders, entry fees and repairs are counted from their own ledgers, so these
+/// are only the sales the database has no other way of seeing.
+/// Mirrors `income_category_chk` in the SQL — change both.
+const List<ExpenseCategory> kIncomeCategories = [
+  ExpenseCategory('cash_sale', 'Cash sale', Icons.payments_outlined,
+      AdminColors.success, 'Sold in person, outside the store'),
+  ExpenseCategory('coaching', 'Coaching', Icons.sports_tennis_rounded,
+      AdminColors.primary, 'Lessons, clinics, private sessions'),
+  ExpenseCategory('court_hire', 'Court hire', Icons.place_outlined,
+      AdminColors.green, 'A court let out directly'),
+  ExpenseCategory('sponsorship', 'Sponsorship', Icons.handshake_outlined,
+      AdminColors.gold, 'Sponsors, partnerships, brand deals'),
+  ExpenseCategory('event', 'Event takings', Icons.emoji_events_outlined,
+      AdminColors.info, 'Entry fees collected at the venue'),
+  ExpenseCategory('other', 'Other', Icons.more_horiz_rounded,
+      AdminColors.inkSoft, 'Anything that fits nowhere else'),
+];
+
+ExpenseCategory incomeCategory(String? id) => kIncomeCategories.firstWhere(
+      (c) => c.id == id,
+      orElse: () => kIncomeCategories.last,
+    );
+
+/// The two hand-kept ledgers. Everything that differs between them lives here,
+/// so the list, the sheet and the service methods are written once.
+enum LedgerKind { expense, income }
+
+extension LedgerKindX on LedgerKind {
+  bool get isIncome => this == LedgerKind.income;
+  String get table => isIncome ? 'income' : 'expenses';
+
+  /// The date column — when the money actually moved.
+  String get dateColumn => isIncome ? 'received_on' : 'spent_on';
+
+  /// Who the money came from / went to.
+  String get partyColumn => isIncome ? 'payer' : 'vendor';
+  String get partyLabel => isIncome ? 'Received from' : 'Paid to';
+  String get partyHint =>
+      isIncome ? 'Player, club, sponsor…' : 'Club, supplier, courier…';
+
+  String get addLabel => isIncome ? 'Add money in' : 'Record expense';
+  String get editTitle => isIncome ? 'Edit money in' : 'Edit expense';
+  String get newTitle => isIncome ? 'Record money in' : 'Record an expense';
+  String get sheetSub => isIncome
+      ? 'Money you took outside the app'
+      : 'Something you paid for outside the app';
+  String get sectionTitle => isIncome ? 'Recorded money in' : 'Recorded expenses';
+
+  List<ExpenseCategory> get categories =>
+      isIncome ? kIncomeCategories : kExpenseCategories;
+  ExpenseCategory category(String? id) =>
+      isIncome ? incomeCategory(id) : expenseCategory(id);
+  String get defaultCategory => isIncome ? 'cash_sale' : 'materials';
+
+  Color get tone => isIncome ? AdminColors.success : AdminColors.danger;
+}
+
 /// A parsed `admin_finance_summary` / weekly `report` payload.
 class FinanceReport {
   final num moneyIn, moneyOut, profit, margin;
-  final num store, storeCollected, entries, repairs;
+  final num store, storeCollected, entries, repairs, manualIn;
   final num cogs, tradeIn, expenses;
-  final List<MapEntry<String, num>> byCategory; // category id → amount
+  final List<MapEntry<String, num>> byCategory;   // expense category → amount
+  final List<MapEntry<String, num>> inByCategory; // income category  → amount
   final Map<String, int> counts;
 
   /// The server refused (not a super admin / analyst) or the RPC isn't there.
@@ -91,10 +150,12 @@ class FinanceReport {
     this.storeCollected = 0,
     this.entries = 0,
     this.repairs = 0,
+    this.manualIn = 0,
     this.cogs = 0,
     this.tradeIn = 0,
     this.expenses = 0,
     this.byCategory = const [],
+    this.inByCategory = const [],
     this.counts = const {},
     this.error,
   });
@@ -108,10 +169,12 @@ class FinanceReport {
         storeCollected = 0,
         entries = 0,
         repairs = 0,
+        manualIn = 0,
         cogs = 0,
         tradeIn = 0,
         expenses = 0,
         byCategory = const [],
+        inByCategory = const [],
         counts = const {};
 
   bool get locked => error == 'not_allowed';
@@ -127,12 +190,11 @@ class FinanceReport {
     final mIn = json['in'] as Map?;
     final mOut = json['out'] as Map?;
 
-    final cats = <MapEntry<String, num>>[];
-    for (final row in (mOut?['by_category'] as List?) ?? const []) {
-      final r = row as Map;
-      cats.add(MapEntry(r['category'] as String? ?? 'other',
-          (r['amount'] as num?) ?? 0));
-    }
+    List<MapEntry<String, num>> cats(Map? m) => [
+          for (final row in (m?['by_category'] as List?) ?? const [])
+            MapEntry((row as Map)['category'] as String? ?? 'other',
+                (row['amount'] as num?) ?? 0),
+        ];
 
     final counts = <String, int>{};
     ((json['counts'] as Map?) ?? const {}).forEach((k, v) {
@@ -148,10 +210,12 @@ class FinanceReport {
       storeCollected: n(mIn, 'store_collected'),
       entries: n(mIn, 'entries'),
       repairs: n(mIn, 'repairs'),
+      manualIn: n(mIn, 'manual'),
       cogs: n(mOut, 'cogs'),
       tradeIn: n(mOut, 'trade_in'),
       expenses: n(mOut, 'expenses'),
-      byCategory: cats,
+      byCategory: cats(mOut),
+      inByCategory: cats(mIn),
       counts: counts,
     );
   }
@@ -183,6 +247,17 @@ class FinanceReport {
         icon: Icons.build_outlined,
         hint: '${counts['repairs'] ?? 0} collected',
       ),
+      // Recorded by hand — broken out per category so "cash sale" and
+      // "sponsorship" don't collapse into one anonymous "manual" line.
+      for (final e in inByCategory)
+        MoneyLine(
+          key: 'in_${e.key}',
+          label: incomeCategory(e.key).label,
+          amount: e.value,
+          tone: incomeCategory(e.key).tone,
+          icon: incomeCategory(e.key).icon,
+          hint: 'outside the app',
+        ),
     ]..removeWhere((l) => l.amount == 0);
     lines.sort((a, b) => b.amount.compareTo(a.amount));
     return lines;

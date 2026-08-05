@@ -72,17 +72,27 @@ before changing anything.
 - **Tournaments tab resilience**: `TournamentService.fetchTournaments` has a
   fallback plain query for pre-migration databases. Keep that fallback.
 - **Money / Reports (P&L)**: the Reports tab is the platform's profit & loss.
-  Money IN = store orders + paid tournament entries + collected repairs. Money
-  OUT = cost of goods sold (auto, `product_costs.cost` × qty on what sold) +
-  trade-in credit (auto, accepted offers) + the hand-recorded `expenses` table.
+  Money IN = store orders + paid tournament entries + collected repairs + the
+  hand-recorded `income` table (money taken outside the app). Money OUT = cost
+  of goods sold (auto, `product_costs.cost` × qty on what sold) + trade-in
+  credit (auto, accepted offers) + the hand-recorded `expenses` table.
   All of it is computed server-side in `_finance_core` →
   `admin_finance_summary` / `admin_weekly_finance`; Dart mirrors the shapes in
-  `lib/admin/data/finance_model.dart` and computes nothing.
+  `lib/admin/data/finance_model.dart` and computes nothing. `LedgerKind` in
+  that file is what lets one card + one sheet serve both hand-kept ledgers.
   **There is no "stock" expense category on purpose** — inventory is costed per
   product and hits the P&L as COGS when the item sells; recording a stock
-  purchase too would double the cost. Finance is visible to super admins (and
-  an Analyst holding Reports) via `_can_see_finance()`; only super admins may
-  write an expense. See `supabase/changes/2026-08-06_expenses_and_pl.sql`.
+  purchase too would double the cost. Same trap on the income side: never
+  hand-record a store order or a paid entry. Finance is visible to super admins
+  (and an Analyst holding Reports) via `_can_see_finance()`; only super admins
+  may write to either ledger. See `supabase/changes/2026-08-06_expenses_and_pl.sql`
+  and `2026-08-06_manual_income.sql`.
+- **Moderation lives under Reports, not Requests** (moved 2026-08-06).
+  `AdminModerationView` is the player-report queue; Requests is repairs +
+  trade-ins only. Its server guard is still `_can_edit('requests')`, so
+  `navForAccess` deliberately opens the Reports section to anyone holding
+  Requests — otherwise Support would lose the queue. They get the Moderation
+  half only; the money stays behind `_can_see_finance()`.
 
 ## Environment / workflow
 
