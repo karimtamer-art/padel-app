@@ -8124,17 +8124,42 @@ drop trigger if exists trg_expenses_touch on public.expenses;
 create trigger trg_expenses_touch before insert or update on public.expenses
   for each row execute function public.expenses_touch();
 
--- ── Drift guard: repairs need a reliable "when did this happen" ─────────────
--- A repair counts as money in on the day the racket is COLLECTED, so the
--- weekly report reads repair_requests.updated_at. The live table came from
--- migrations/0003, where the create-table block that declares updated_at is
--- skipped — and nothing has ever kept it moving. Add the column and a touch
--- trigger so every status change stamps it.
+-- ── Drift guard: tournament_entries has no created_at on the live DB ────────
+-- migrations/0003 shipped the column as `registered_at`; the create-table block
+-- above calls it `created_at` and is skipped on a live database, so it was
+-- never added. Add it and backfill from registered_at where that exists, so
+-- historic entries keep their REAL date instead of all landing in today's week.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public'
+                    and table_name   = 'tournament_entries'
+                    and column_name  = 'created_at') then
+    alter table public.tournament_entries add column created_at timestamptz;
+    if exists (select 1 from information_schema.columns
+                where table_schema = 'public'
+                  and table_name   = 'tournament_entries'
+                  and column_name  = 'registered_at') then
+      -- Dynamic: the column name must not be resolved unless it exists.
+      execute 'update public.tournament_entries
+                  set created_at = registered_at where created_at is null';
+    end if;
+    update public.tournament_entries set created_at = now() where created_at is null;
+    alter table public.tournament_entries alter column created_at set default now();
+    alter table public.tournament_entries alter column created_at set not null;
+  end if;
+end $$;
+
+-- ── Repairs: dated by updated_at ────────────────────────────────────────────
+-- A repair counts as money in on the day the racket is COLLECTED, so the weekly
+-- report reads repair_requests.updated_at. migrations/0003 already declares the
+-- column AND keeps it moving (trg_repair_requests_touch), so there is nothing
+-- to add — the guard below only covers a database that somehow lacks it. The
+-- drop removes the duplicate trigger an earlier draft of this file created;
+-- 0003's is the one that stays.
 alter table public.repair_requests
   add column if not exists updated_at timestamptz not null default now();
 drop trigger if exists trg_repair_touch on public.repair_requests;
-create trigger trg_repair_touch before update on public.repair_requests
-  for each row execute function public.touch_updated_at();
 
 -- ── Who may see the money ───────────────────────────────────────────────────
 -- Super admin always; an Analyst holding Reports (read-only by definition) too.
@@ -8314,10 +8339,12 @@ begin
   return (
     select coalesce(json_agg(w order by w.week_start desc), '[]'::json)
       from (
+        -- generate_series returns timestamp, and `timestamp + int` is not an
+        -- operator — cast to date FIRST, then add days.
         select ws::date              as week_start,
-               (ws + 6)::date        as week_end,
+               ws::date + 6          as week_end,
                ws::date = v_this     as is_current,
-               public._finance_core(ws::date, (ws + 7)::date) as report
+               public._finance_core(ws::date, ws::date + 7) as report
           from generate_series(v_first::timestamp, v_this::timestamp,
                                interval '7 day') ws
       ) w
