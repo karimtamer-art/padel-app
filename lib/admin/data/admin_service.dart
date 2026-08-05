@@ -1552,4 +1552,101 @@ class AdminService {
       return e.toString();
     }
   }
+
+  // ── Finance: P&L, weekly reports, expenses ────────────────────
+  // The server owns every figure (see 2026-08-06_expenses_and_pl.sql) and
+  // refuses anyone who isn't a super admin or a Reports-holding analyst — these
+  // methods only pass the window through and hand back the raw json.
+
+  static String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+
+  /// Money in / money out / profit for [from]..[to] (both inclusive, local
+  /// dates). Nulls mean all time. `{'error': …}` when refused or pre-migration.
+  static Future<Map<String, dynamic>> financeSummary(
+      {DateTime? from, DateTime? to}) async {
+    try {
+      final res = await _db.rpc('admin_finance_summary', params: {
+        'p_from': from == null ? null : _ymd(from),
+        // The RPC's window is [from, to), so pass the day after the last day.
+        'p_to': to == null ? null : _ymd(to.add(const Duration(days: 1))),
+      });
+      return Map<String, dynamic>.from((res as Map?) ?? const {});
+    } catch (e) {
+      debugPrint('[AdminService] financeSummary: $e');
+      return {'error': 'no_rpc'};
+    }
+  }
+
+  /// The last [weeks] Monday-to-Sunday weeks, newest first, each with the same
+  /// breakdown as [financeSummary]. Empty list when refused or pre-migration.
+  static Future<List<Map<String, dynamic>>> weeklyFinance(
+      {int weeks = 8}) async {
+    try {
+      final res = await _db.rpc('admin_weekly_finance', params: {
+        'p_weeks': weeks,
+      });
+      if (res is! List) return const []; // {'error': …} → nothing to show
+      return List<Map<String, dynamic>>.from(
+          res.map((e) => Map<String, dynamic>.from(e as Map)));
+    } catch (e) {
+      debugPrint('[AdminService] weeklyFinance: $e');
+      return const [];
+    }
+  }
+
+  /// Recorded expenses in a window (newest first). RLS keeps this to the
+  /// finance roles, so a lesser staffer simply gets an empty list.
+  static Future<List<Map<String, dynamic>>> fetchExpenses({
+    DateTime? from,
+    DateTime? to,
+    int limit = 200,
+  }) async {
+    try {
+      var q = _db.from('expenses').select(
+          'id, spent_on, category, amount, vendor, note, tournament_id, created_at');
+      if (from != null) q = q.gte('spent_on', _ymd(from));
+      if (to != null) q = q.lte('spent_on', _ymd(to));
+      final res = await q
+          .order('spent_on', ascending: false)
+          .order('created_at', ascending: false)
+          .limit(limit);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] fetchExpenses: $e');
+      return const [];
+    }
+  }
+
+  /// Inserts or updates one expense. Pass `id` in [data] to edit. Returns null
+  /// on success, else an error string.
+  static Future<String?> saveExpense(Map<String, dynamic> data) async {
+    try {
+      final id = data['id'] as String?;
+      final row = Map<String, dynamic>.from(data)..remove('id');
+      if (id == null) {
+        await _db.from('expenses').insert(row);
+      } else {
+        await _db.from('expenses').update(row).eq('id', id);
+      }
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> deleteExpense(String id) async {
+    try {
+      await _db.from('expenses').delete().eq('id', id);
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
 }

@@ -71,6 +71,18 @@ before changing anything.
   and records winners; players only read it.
 - **Tournaments tab resilience**: `TournamentService.fetchTournaments` has a
   fallback plain query for pre-migration databases. Keep that fallback.
+- **Money / Reports (P&L)**: the Reports tab is the platform's profit & loss.
+  Money IN = store orders + paid tournament entries + collected repairs. Money
+  OUT = cost of goods sold (auto, `product_costs.cost` × qty on what sold) +
+  trade-in credit (auto, accepted offers) + the hand-recorded `expenses` table.
+  All of it is computed server-side in `_finance_core` →
+  `admin_finance_summary` / `admin_weekly_finance`; Dart mirrors the shapes in
+  `lib/admin/data/finance_model.dart` and computes nothing.
+  **There is no "stock" expense category on purpose** — inventory is costed per
+  product and hits the P&L as COGS when the item sells; recording a stock
+  purchase too would double the cost. Finance is visible to super admins (and
+  an Analyst holding Reports) via `_can_see_finance()`; only super admins may
+  write an expense. See `supabase/changes/2026-08-06_expenses_and_pl.sql`.
 
 ## Environment / workflow
 

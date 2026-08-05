@@ -231,7 +231,10 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'org-home':    return OrganizerOverviewScreen(
           onOpenTournaments: () => _navTo('tournaments'));
       case 'community':   return const AdminCommunityScreen();
-      case 'reports':     return const AdminReportsScreen();
+      // Only super admins record expenses; the DB enforces the same (RLS on
+      // `expenses` is _is_admin()), this just hides the buttons.
+      case 'reports':     return AdminReportsScreen(
+          canEdit: _role == RoleId.superAdmin);
       case 'players':     return const AdminPlayersScreen();
       case 'matches':     return AdminMatchesScreen(isOrganizer: _role == RoleId.organizer);
       case 'tournaments': return AdminTournamentsScreen(organizerId: orgId);
