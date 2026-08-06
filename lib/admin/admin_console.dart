@@ -18,6 +18,7 @@ import 'screens/admin_requests_screen.dart';
 import 'screens/admin_courts_screen.dart';
 import 'screens/admin_reports_screen.dart';
 import 'screens/admin_promotions_screen.dart';
+import 'screens/admin_sponsors_screen.dart';
 import 'screens/admin_payments_screen.dart';
 import 'screens/admin_broadcasts_screen.dart';
 import 'screens/admin_leaderboards_screen.dart';
@@ -218,6 +219,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     'courts':      ['Courts',       'Partner clubs'],
     'store':       ['Store & Orders', 'Catalogue & orders'],
     'promotions':  ['Promotions',   'Store banners & sales'],
+    'sponsors':    ['Sponsors',     'Partners shown to players'],
     'payments':    ['Payments',     'Orders & transactions'],
     'requests':    ['Requests',     'Repairs & trade-ins'],
     'broadcasts':  ['Broadcasts',   'Push notifications'],
@@ -247,6 +249,7 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'courts':      return AdminCourtsScreen(organizerId: orgId);
       case 'store':       return const AdminInventoryScreen();
       case 'promotions':  return const AdminPromotionsScreen();
+      case 'sponsors':    return const AdminSponsorsScreen();
       case 'payments':    return const AdminPaymentsScreen();
       case 'requests':    return const AdminRequestsScreen();
       case 'broadcasts':  return AdminBroadcastsScreen(organizerId: orgId);

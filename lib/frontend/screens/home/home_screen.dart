@@ -20,6 +20,7 @@ import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
 import 'package:padel_clay/backend/services/ticket_service.dart';
 import 'package:padel_clay/backend/services/season_service.dart';
+import 'package:padel_clay/backend/services/sponsor_service.dart';
 import 'package:padel_clay/frontend/feature_flags.dart';
 import 'matchmaking_hero.dart';
 import '../leaderboard/season_leaderboard_screen.dart';
@@ -29,6 +30,7 @@ import '../tournaments/tournament_detail_screen.dart';
 import '../profile/notifications_screen.dart';
 import '../profile/recent_form_screen.dart';
 import '../community/community_hub_screen.dart';
+import '../sponsors/sponsors_screen.dart';
 import '../chat/messages_inbox_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -72,6 +74,8 @@ class _HomeScreenState extends State<HomeScreen> {
   SeasonOverview? _season;
   // Last 6 completed matches → the Recent Form strip and its recap.
   List<FormMatch> _form = const [];
+  // Active partners → the "Our Partners" logo strip. Empty hides the section.
+  List<Sponsor> _sponsors = const [];
   List<MemberLite> _communityMembers = [];
   int _communityEventsWeek = 0;
   int _unread = 0;
@@ -154,6 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _fetchResultHero(),
       _fetchSeason(),
       _fetchForm(),
+      _fetchSponsors(),
     ]);
     if (mounted) setState(() => _loading = false);
   }
@@ -161,6 +166,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _fetchSeason() async {
     final s = await SeasonService.overview();
     if (mounted) _season = s;
+  }
+
+  Future<void> _fetchSponsors() async {
+    final s = await SponsorService.fetchActive(limit: 8);
+    if (mounted) _sponsors = s;
   }
 
   Future<void> _fetchForm() async {
@@ -631,6 +641,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 SectionHeader('From the Store',
                     action: 'Shop', onAction: widget.onSeeStore),
                 _storeSection(),
+                // Hidden entirely when nobody is on board yet (also the case on
+                // a database without the sponsors delta — the service returns
+                // empty rather than throwing).
+                if (_sponsors.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.section),
+                  SectionHeader('Our Partners',
+                      action: 'View All', onAction: () => _openSponsors(context)),
+                  _sponsorStrip(context),
+                ],
                 const SizedBox(height: AppSpacing.section),
                   ]),
                 ),
@@ -1213,6 +1232,63 @@ class _HomeScreenState extends State<HomeScreen> {
       onAdd: (widget.onAddToCart == null || outOfStock)
           ? null
           : () => widget.onAddToCart!(_toProduct(row)),
+    );
+  }
+
+  // ── Our Partners ─────────────────────────────────────────────────────────
+
+  Future<void> _openSponsors(BuildContext c) => Navigator.of(c)
+      .push(MaterialPageRoute(builder: (_) => const SponsorsScreen()));
+
+  /// Horizontal logo strip — a teaser for the full partners page. Every tile
+  /// opens that page rather than the sponsor's site: the detail sheet there is
+  /// where the link belongs.
+  Widget _sponsorStrip(BuildContext context) => SizedBox(
+        height: 84,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: AppSpacing.screenH,
+          itemCount: _sponsors.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (_, i) => _SponsorChip(
+            _sponsors[i],
+            onTap: () => _openSponsors(context),
+          ),
+        ),
+      );
+}
+
+/// One logo tile in the Home partners strip. Falls back to initials when the
+/// sponsor has no logo, or the image fails to load.
+class _SponsorChip extends StatelessWidget {
+  final Sponsor sponsor;
+  final VoidCallback onTap;
+  const _SponsorChip(this.sponsor, {required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final url = sponsor.logoUrl;
+    final fallback = Text(sponsor.initials,
+        style: AppText.bodyStrong(AppColors.primary)
+            .copyWith(fontSize: 20, fontWeight: FontWeight.w800));
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 108,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: AppRadius.cardR,
+          border: Border.all(color: AppColors.line),
+          boxShadow: kCardShadow,
+        ),
+        child: url == null
+            ? fallback
+            : Image.network(url,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => fallback),
+      ),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../backend/models/format_model.dart';
+import '../../main.dart' show kSupabaseUrl;
 import 'finance_model.dart' show LedgerKind, LedgerKindX;
 
 /// Centralised Supabase access for the admin console.
@@ -935,6 +936,92 @@ class AdminService {
     return _db.storage.from(_bannerBucket).getPublicUrl(path);
   }
 
+  // ── Sponsors / partners ───────────────────────────────────────
+  //
+  // Plain table writes, guarded by RLS (`_can_edit('sponsors')`) rather than an
+  // RPC: there is nothing atomic to keep together here, unlike a banner and its
+  // sale set. Money never touches this table — sponsorship payments belong in
+  // the income ledger.
+
+  static const _sponsorBucket = 'sponsor-logos';
+
+  /// Every sponsor, active and hidden, in display order. Returns empty on a
+  /// database without the 2026-08-06_sponsors delta so the section shows its
+  /// empty state instead of an error.
+  static Future<List<Map<String, dynamic>>> fetchSponsors() async {
+    try {
+      final res = await _db
+          .from('sponsors')
+          .select('*')
+          .order('sort_order', ascending: true)
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] fetchSponsors: $e');
+      return [];
+    }
+  }
+
+  /// Insert or update one sponsor. Returns an error string, or null on success.
+  static Future<String?> saveSponsor({
+    String? id,
+    required String name,
+    String? tagline,
+    String? blurb,
+    String? logoUrl,
+    String? websiteUrl,
+    String tier = 'partner',
+    bool isActive = true,
+    int sortOrder = 0,
+  }) async {
+    String? blank(String? s) =>
+        (s == null || s.trim().isEmpty) ? null : s.trim();
+    final row = {
+      'name': name.trim(),
+      'tagline': blank(tagline),
+      'blurb': blank(blurb),
+      'logo_url': blank(logoUrl),
+      'website_url': blank(websiteUrl),
+      'tier': tier,
+      'is_active': isActive,
+      'sort_order': sortOrder,
+    };
+    try {
+      if (id == null) {
+        await _db.from('sponsors').insert(row);
+      } else {
+        await _db.from('sponsors').update(row).eq('id', id);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[AdminService] saveSponsor: $e');
+      return "Couldn't save that partner.";
+    }
+  }
+
+  static Future<void> setSponsorActive(String id, bool active) async {
+    await _db.from('sponsors').update({'is_active': active}).eq('id', id);
+  }
+
+  static Future<void> deleteSponsor(String id) async {
+    await _db.from('sponsors').delete().eq('id', id);
+  }
+
+  /// Uploads a logo to the public sponsor-logos bucket; returns the URL.
+  static Future<String> uploadSponsorLogo(Uint8List bytes, String ext) async {
+    final safeExt = ext.toLowerCase() == 'jpeg' ? 'jpg' : ext.toLowerCase();
+    final path =
+        'sponsors/${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(99999)}.$safeExt';
+    await _db.storage.from(_sponsorBucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+              contentType: 'image/${safeExt == 'jpg' ? 'jpeg' : safeExt}',
+              upsert: true),
+        );
+    return _db.storage.from(_sponsorBucket).getPublicUrl(path);
+  }
+
   // ── Orders ────────────────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> fetchOrders(
@@ -1599,6 +1686,80 @@ class AdminService {
     } catch (e) {
       debugPrint('[AdminService] weeklyFinance: $e');
       return const [];
+    }
+  }
+
+  // ── Weekly report links ───────────────────────────────────────
+  //
+  // A week's P&L as a URL anyone can open without logging in — what makes it
+  // emailable. One permanent link per week: asking twice returns the same
+  // token, so a forwarded mail keeps working. Super admin only, enforced in
+  // Postgres (`admin_report_link` → `_is_admin()`), not here.
+
+  /// The public URL for [token]'s report page.
+  static String reportUrl(String token) =>
+      '$kSupabaseUrl/functions/v1/weekly-report?t=$token';
+
+  /// The share link for the week containing [weekStart]. Null when the server
+  /// refuses, or the 2026-08-06_weekly_report_links delta hasn't been run.
+  static Future<String?> reportLink(DateTime weekStart) async {
+    try {
+      final res = await _db.rpc('admin_report_link', params: {
+        'p_week_start': _ymd(weekStart),
+      });
+      final map = (res as Map?)?.cast<String, dynamic>();
+      final token = map?['token'] as String?;
+      return token == null ? null : reportUrl(token);
+    } catch (e) {
+      debugPrint('[AdminService] reportLink: $e');
+      return null;
+    }
+  }
+
+  /// Emails that week's link to the address in the function's REPORT_TO secret
+  /// (padelrivals@gmail.com by default). Returns an error string, or null on
+  /// success. The Edge Function re-checks the caller is a super admin.
+  static Future<String?> emailWeeklyReport(DateTime weekStart) async {
+    try {
+      final res = await _db.functions.invoke('weekly-report-send', body: {
+        'week_start': _ymd(weekStart),
+      });
+      final data = (res.data as Map?)?.cast<String, dynamic>();
+      return data?['ok'] == true ? null : _sendError(data?['error']);
+    } on FunctionException catch (e) {
+      // Every non-2xx arrives here, not as a response — the function's JSON
+      // body is on `details`.
+      debugPrint('[AdminService] emailWeeklyReport: ${e.status} ${e.details}');
+      if (e.status == 404) {
+        return 'The weekly-report-send function isn\'t deployed yet.';
+      }
+      return _sendError((e.details as Map?)?['error']);
+    } catch (e) {
+      debugPrint('[AdminService] emailWeeklyReport: $e');
+      return "Couldn't reach the mail service. Check your connection.";
+    }
+  }
+
+  /// The send function's error codes, as something worth reading.
+  static String _sendError(Object? code) => switch (code) {
+        'not_configured' =>
+          "Email isn't set up yet — the RESEND_API_KEY secret is missing.",
+        'not_allowed' => 'Only a super admin can email the report.',
+        'send_failed' => 'The email service refused it. Check the from-address '
+            "is on a domain you've verified.",
+        'link_failed' => "Couldn't create the report link.",
+        _ => "Couldn't send the report.",
+      };
+
+  /// Kills a link. The week can be shared again — that mints a fresh token.
+  static Future<String?> revokeReportLink(String token) async {
+    try {
+      final res =
+          await _db.rpc('admin_revoke_report_link', params: {'p_token': token});
+      return res as String?;
+    } catch (e) {
+      debugPrint('[AdminService] revokeReportLink: $e');
+      return "Couldn't revoke that link.";
     }
   }
 

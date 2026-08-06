@@ -10,7 +10,8 @@
 //
 // Section ids here MUST match the ids the console switches on in
 // admin_console.dart (`dashboard, reports, players, matches, tournaments,
-// courts, store, promotions, payments, requests, broadcasts`) plus `team`.
+// courts, store, promotions, sponsors, payments, requests, broadcasts`) plus
+// `team`.
 // ============================================================================
 import 'package:flutter/material.dart';
 import '../theme/admin_colors.dart';
@@ -52,6 +53,7 @@ const List<Section> kSections = [
   Section('courts', 'Courts', Icons.place_outlined, 'Operations', 'Partner clubs'),
   Section('store', 'Store & Orders', Icons.shopping_bag_outlined, 'Commerce', 'Catalogue & orders'),
   Section('promotions', 'Promotions', Icons.local_offer_outlined, 'Commerce', 'Banners & sales'),
+  Section('sponsors', 'Sponsors', Icons.handshake_outlined, 'Commerce', 'Partners shown to players'),
   Section('payments', 'Payments', Icons.credit_card_rounded, 'Commerce', 'Orders & transactions'),
   Section('requests', 'Requests', Icons.build_outlined, 'Service', 'Repairs & trade-ins'),
   Section('broadcasts', 'Broadcasts', Icons.notifications_outlined, 'Engage', 'Push & in-app'),
@@ -85,7 +87,7 @@ class RoleDef {
 
 const List<String> _allIds = [
   'dashboard', 'reports', 'players', 'matches', 'tournaments', 'formats', 'courts',
-  'store', 'promotions', 'payments', 'requests', 'broadcasts', 'team',
+  'store', 'promotions', 'sponsors', 'payments', 'requests', 'broadcasts', 'team',
 ];
 
 const Map<RoleId, RoleDef> kRoles = {

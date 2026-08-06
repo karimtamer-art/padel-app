@@ -87,6 +87,34 @@ before changing anything.
   (and an Analyst holding Reports) via `_can_see_finance()`; only super admins
   may write to either ledger. See `supabase/changes/2026-08-06_expenses_and_pl.sql`
   and `2026-08-06_manual_income.sql`.
+- **Weekly report as an emailable link** (added 2026-08-06). A week's P&L can
+  be opened without logging in, which is the only way it works from a mail
+  client. `report_links` holds one **permanent, reusable** token per week
+  (partial unique index on `week_start where not revoked` — asking twice returns
+  the same URL). Two Edge Functions, both deployed `--no-verify-jwt`:
+  `weekly-report` renders the read-only HTML page (calls `report_render`, which
+  is granted to **service_role only** — a leaked token is useless against
+  PostgREST), and `weekly-report-send` mails the link via Resend. The sender
+  authorises on either an `x-cron-secret` header (pg_cron) or the caller's own
+  JWT checked against `_is_admin()`. Minting is super-admin-only
+  (`admin_report_link`); `_can_see_finance()` alone is not enough. Secrets
+  (`RESEND_API_KEY`, `REPORT_FROM`, `REPORT_TO`, `CRON_SECRET`) are set with
+  `supabase secrets set` and are never committed. `REPORT_FROM` must be a
+  Resend-verified domain or Gmail spams it. The page recomputes nothing — it
+  reads the same `_finance_core` as the console, so the numbers can't disagree;
+  its category labels mirror `finance_model.dart`. See
+  `supabase/changes/2026-08-06_weekly_report_links.sql`, whose commented
+  pg_cron block is the optional Monday auto-send.
+- **Sponsors / partners** (added 2026-08-06): the `sponsors` table is the
+  player-facing "Our Partners" page (`lib/frontend/screens/sponsors/`, read via
+  `SponsorService`), reached from the Home "Our Partners" strip. Managed from
+  the console's own **Sponsors** section (`sponsors` is a real RBAC section id —
+  it lives in `kSections` + `_allIds` AND in SQL `_role_default`; super admin by
+  default, grantable). **It carries no money on purpose**: what a sponsor
+  actually paid goes in the `income` ledger under category `sponsorship`.
+  Never derive one from the other. Tier ids (`title/gold/silver/partner`) are
+  mirrored in `SponsorTier` and `sponsors_tier_chk` — change both. See
+  `supabase/changes/2026-08-06_sponsors.sql`.
 - **Moderation lives under Reports, not Requests** (moved 2026-08-06).
   `AdminModerationView` is the player-report queue; Requests is repairs +
   trade-ins only. Its server guard is still `_can_edit('requests')`, so

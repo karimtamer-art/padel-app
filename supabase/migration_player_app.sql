@@ -807,7 +807,7 @@ returns text[] language sql immutable set search_path = public as $$
   select case p_role
     when 'super_admin' then array['dashboard','reports','players','matches',
                                   'tournaments','formats','courts','store',
-                                  'promotions','payments','requests',
+                                  'promotions','sponsors','payments','requests',
                                   'broadcasts','team']
     when 'organizer'   then array['tournaments','formats','courts','broadcasts']
     when 'support'     then array['players','matches','requests']
@@ -1225,6 +1225,72 @@ begin
   delete from public.banners where id = p_id;
 end;
 $$;
+
+-- ============================================================
+-- Sponsors / partners — the brands and clubs backing the
+-- platform, shown to players on the "Our Partners" page and
+-- managed from the console's Sponsors section.
+--
+-- Flat table, no logic, no money: sponsorship money that changes
+-- hands is recorded in the `income` ledger (category
+-- 'sponsorship'). Keeping the two apart is deliberate — the
+-- shop window is not a receipt.
+-- ============================================================
+create table if not exists public.sponsors (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  tagline     text,                 -- one line under the name, on the card
+  blurb       text,                 -- longer copy, shown in the detail sheet
+  logo_url    text,
+  website_url text,
+  tier        text not null default 'partner',
+  is_active   boolean not null default true,
+  sort_order  int not null default 0,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+-- self-heal, same reason as banners above: a drift `sponsors` table would make
+-- the create a no-op and none of these columns would exist.
+alter table public.sponsors add column if not exists name        text;
+alter table public.sponsors add column if not exists tagline     text;
+alter table public.sponsors add column if not exists blurb       text;
+alter table public.sponsors add column if not exists logo_url    text;
+alter table public.sponsors add column if not exists website_url text;
+alter table public.sponsors add column if not exists tier        text not null default 'partner';
+alter table public.sponsors add column if not exists is_active   boolean not null default true;
+alter table public.sponsors add column if not exists sort_order  int not null default 0;
+alter table public.sponsors add column if not exists created_at  timestamptz not null default now();
+alter table public.sponsors add column if not exists updated_at  timestamptz not null default now();
+
+-- Mirrors SponsorTier in lib/backend/services/sponsor_service.dart — change both.
+alter table public.sponsors drop constraint if exists sponsors_tier_chk;
+alter table public.sponsors add constraint sponsors_tier_chk check (
+  tier in ('title', 'gold', 'silver', 'partner'));
+
+create index if not exists sponsors_active_idx on public.sponsors (is_active, sort_order);
+
+alter table public.sponsors enable row level security;
+drop policy if exists "sponsors: read active" on public.sponsors;
+create policy "sponsors: read active" on public.sponsors for select
+  using (is_active = true or public._has_access('sponsors'));
+drop policy if exists "sponsors: admin write" on public.sponsors;
+create policy "sponsors: admin write" on public.sponsors for all
+  using (public._can_edit('sponsors')) with check (public._can_edit('sponsors'));
+drop trigger if exists trg_sponsors_touch on public.sponsors;
+create trigger trg_sponsors_touch before update on public.sponsors
+  for each row execute function public.touch_updated_at();
+grant select on public.sponsors to anon, authenticated;
+grant select, insert, update, delete on public.sponsors to authenticated;
+
+-- public bucket for sponsor logos (public read; console writes)
+insert into storage.buckets (id, name, public)
+  values ('sponsor-logos', 'sponsor-logos', true)
+  on conflict (id) do update set public = true;
+drop policy if exists "sponsor-logos admin write" on storage.objects;
+create policy "sponsor-logos admin write" on storage.objects
+  for all to authenticated
+  using (bucket_id = 'sponsor-logos' and public._can_edit('sponsors'))
+  with check (bucket_id = 'sponsor-logos' and public._can_edit('sponsors'));
 
 -- ============================================================
 -- RPC: generate_draw — (re)builds winners-bracket round 1 from
@@ -8565,5 +8631,159 @@ begin
 end $$;
 -- Raw numbers, no guard of its own — only the guarded wrappers may reach it.
 revoke all on function public._finance_core(date, date) from public;
+
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- WEEKLY REPORT LINKS  (2026-08-06)
+-- Canonical copy of supabase/changes/2026-08-06_weekly_report_links.sql.
+-- A week's P&L as a permanent, login-free URL — what makes it emailable.
+-- The optional pg_cron auto-send block lives only in that delta: it needs your
+-- project ref and a secret filled in, so it is not part of the schema.
+-- ============================================================================
+create table if not exists public.report_links (
+  token        text primary key,
+  week_start   date not null,
+  week_end     date not null,
+  created_by   uuid references public.profiles(id),
+  created_at   timestamptz not null default now(),
+  last_seen_at timestamptz,
+  view_count   int not null default 0,
+  revoked      boolean not null default false
+);
+
+-- Drift guards, in case an earlier draft created the table.
+alter table public.report_links add column if not exists week_start   date;
+alter table public.report_links add column if not exists week_end     date;
+alter table public.report_links add column if not exists created_by   uuid references public.profiles(id);
+alter table public.report_links add column if not exists created_at   timestamptz not null default now();
+alter table public.report_links add column if not exists last_seen_at timestamptz;
+alter table public.report_links add column if not exists view_count   int not null default 0;
+alter table public.report_links add column if not exists revoked      boolean not null default false;
+
+-- One live link per week. A revoked link keeps its row (so the token stays
+-- burned) but stops being the one a new request hands back — hence the partial
+-- unique index rather than a plain unique constraint.
+create unique index if not exists report_links_week_live_idx
+  on public.report_links (week_start) where not revoked;
+
+comment on table public.report_links is
+  'Permanent share tokens for the weekly P&L. One live token per week; the '
+  'holder can read that week without logging in.';
+
+alter table public.report_links enable row level security;
+
+-- Only people who may see the money may see the links to it. Writes go through
+-- the RPCs below (super admin), never straight from a client.
+drop policy if exists "report_links: finance read" on public.report_links;
+create policy "report_links: finance read" on public.report_links
+  for select using (public._can_see_finance());
+
+grant select on public.report_links to authenticated;
+
+-- ── Mint (or return) the link for a week ───────────────────────
+-- The work itself, unguarded. Never granted to anyone — the two wrappers below
+-- are the only ways in, and they carry the permission checks.
+create or replace function public._report_link_ensure(p_week_start date)
+returns json
+language plpgsql security definer set search_path = public as $$
+declare
+  v_token text;
+  v_start date;
+begin
+  -- Snap to the Monday of whatever week the caller names, so the same week can
+  -- never end up with two links because of an off-by-a-day.
+  v_start := date_trunc('week', p_week_start::timestamp)::date;
+
+  select token into v_token
+    from public.report_links
+   where week_start = v_start and not revoked;
+
+  if v_token is null then
+    -- Two uuids = 256 bits of CSPRNG output, no pgcrypto dependency.
+    v_token := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+    insert into public.report_links (token, week_start, week_end, created_by)
+      values (v_token, v_start, v_start + 6, auth.uid())
+      -- Two admins tapping at once: keep the row that won, return its token.
+      on conflict do nothing;
+    select token into v_token
+      from public.report_links
+     where week_start = v_start and not revoked;
+  end if;
+
+  return json_build_object(
+    'token',      v_token,
+    'week_start', v_start,
+    'week_end',   v_start + 6);
+end $$;
+revoke all on function public._report_link_ensure(date) from public, anon, authenticated;
+
+-- What the console calls. Super admin only: handing out a login-free link to
+-- the P&L is a bigger decision than reading it, so an Analyst who can see the
+-- numbers still can't create a link to them.
+create or replace function public.admin_report_link(p_week_start date)
+returns json
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public._is_admin() then
+    return json_build_object('error', 'not_allowed');
+  end if;
+  return public._report_link_ensure(p_week_start);
+end $$;
+grant execute on function public.admin_report_link(date) to authenticated;
+
+-- What the `weekly-report-send` Edge Function calls. It runs unattended from
+-- pg_cron, so there is no auth.uid() to check — service_role IS the trust.
+create or replace function public.report_link_ensure(p_week_start date)
+returns json
+language plpgsql security definer set search_path = public as $$
+begin
+  return public._report_link_ensure(p_week_start);
+end $$;
+revoke all on function public.report_link_ensure(date) from public, anon, authenticated;
+grant execute on function public.report_link_ensure(date) to service_role;
+
+-- ── Kill a link ────────────────────────────────────────────────
+create or replace function public.admin_revoke_report_link(p_token text)
+returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public._is_admin() then return 'Not authorised.'; end if;
+  update public.report_links set revoked = true where token = p_token;
+  return null;
+end $$;
+grant execute on function public.admin_revoke_report_link(text) to authenticated;
+
+-- ── What the Edge Function renders ─────────────────────────────
+-- Everything the page shows, in one call. No guard of its own beyond the token
+-- because it is reachable only by service_role — the Edge Function holds that
+-- key, the public internet does not.
+create or replace function public.report_render(p_token text)
+returns json
+language plpgsql security definer set search_path = public as $$
+declare
+  v_row public.report_links%rowtype;
+  v_this date := date_trunc('week', (now() at time zone 'Africa/Cairo'))::date;
+begin
+  select * into v_row from public.report_links
+   where token = p_token and not revoked;
+  if not found then
+    return json_build_object('error', 'not_found');
+  end if;
+
+  update public.report_links
+     set view_count = view_count + 1, last_seen_at = now()
+   where token = p_token;
+
+  return json_build_object(
+    'week_start', v_row.week_start,
+    'week_end',   v_row.week_end,
+    -- A link to the running week renders "so far" rather than pretending the
+    -- week is closed.
+    'is_current', v_row.week_start = v_this,
+    'report',     public._finance_core(v_row.week_start, v_row.week_start + 7));
+end $$;
+revoke all on function public.report_render(text) from public, anon, authenticated;
+grant execute on function public.report_render(text) to service_role;
 
 notify pgrst, 'reload schema';

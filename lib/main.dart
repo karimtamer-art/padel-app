@@ -8,6 +8,12 @@ import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/push_service.dart';
 import 'package:padel_clay/frontend/navigation/push_router.dart';
 
+/// This project's Supabase URL. Lives here because `Supabase.initialize` needs
+/// it, but it's a const so anything else that must build a project URL by hand
+/// — the weekly-report share link, say — uses the same string rather than
+/// repeating the project ref.
+const String kSupabaseUrl = 'https://lxihwifpcufhieppfeza.supabase.co';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -20,7 +26,7 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations(
       [DeviceOrientation.portraitUp]);
   await Supabase.initialize(
-    url: 'https://lxihwifpcufhieppfeza.supabase.co',
+    url: kSupabaseUrl,
     anonKey:
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4aWh3aWZwY3VmaGllcHBmZXphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMzAzOTEsImV4cCI6MjA5NTkwNjM5MX0.7afCxV225wcNDa5njZz4KAIRTo3eOeMj0099NPF94oQ',
   );

@@ -604,7 +604,10 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('Weekly report', style: AdminText.cardTitle()),
               const SizedBox(height: 2),
-              Text('Monday to Sunday · tap a week for the full breakdown',
+              Text(
+                  widget.canEdit
+                      ? 'Monday to Sunday · tap a week to read, share or email it'
+                      : 'Monday to Sunday · tap a week for the full breakdown',
                   style: AdminText.small()),
             ]),
           ),
@@ -721,15 +724,70 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           style: AdminText.small().copyWith(height: 1.35),
         ),
       ]),
-      footer: AdminButton('Copy summary',
-          icon: Icons.copy_rounded,
-          full: true,
-          variant: AdminBtn.ghost, onPressed: () {
-        Clipboard.setData(ClipboardData(text: _weekText(w)));
-        Navigator.pop(context);
-        adminToast(context, 'Weekly summary copied');
-      }),
+      footer: Column(mainAxisSize: MainAxisSize.min, children: [
+        // Sharing the week — super admins only, same rule as recording money.
+        // An Analyst can read these numbers but can't hand out a login-free
+        // link to them; the server enforces it either way.
+        if (widget.canEdit) ...[
+          AdminButton('Email the report',
+              icon: Icons.mail_outline_rounded,
+              full: true,
+              height: 48,
+              onPressed: () => _emailWeek(w)),
+          const SizedBox(height: 8),
+        ],
+        Row(children: [
+          if (widget.canEdit) ...[
+            Expanded(
+              child: AdminButton('Copy link',
+                  icon: Icons.link_rounded,
+                  height: 44,
+                  variant: AdminBtn.ghost,
+                  onPressed: () => _copyWeekLink(w)),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: AdminButton('Copy summary',
+                icon: Icons.copy_rounded,
+                height: 44,
+                variant: AdminBtn.ghost, onPressed: () {
+              Clipboard.setData(ClipboardData(text: _weekText(w)));
+              Navigator.pop(context);
+              adminToast(context, 'Weekly summary copied');
+            }),
+          ),
+        ]),
+      ]),
     );
+  }
+
+  // ── sharing a week ────────────────────────────────────────────
+  //
+  // The link opens a read-only page of that week's full P&L without a login —
+  // that's what makes it something you can put in an email. It's permanent and
+  // reusable: the same week always resolves to the same URL.
+
+  Future<void> _copyWeekLink(FinanceWeek w) async {
+    Navigator.pop(context);
+    adminToast(context, 'Building the link…');
+    final url = await AdminService.reportLink(w.start);
+    if (!mounted) return;
+    if (url == null) {
+      adminToast(context, "Couldn't create the link for that week.", ok: false);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: url));
+    if (mounted) adminToast(context, 'Report link copied');
+  }
+
+  Future<void> _emailWeek(FinanceWeek w) async {
+    Navigator.pop(context);
+    adminToast(context, 'Sending…');
+    final err = await AdminService.emailWeeklyReport(w.start);
+    if (!mounted) return;
+    adminToast(context, err ?? 'Report sent to padelrivals@gmail.com',
+        ok: err == null);
   }
 
   Widget _sheetLines(String title, List<MoneyLine> lines, num total, Color tone) {
