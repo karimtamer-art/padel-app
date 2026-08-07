@@ -105,6 +105,20 @@ before changing anything.
   its category labels mirror `finance_model.dart`. See
   `supabase/changes/2026-08-06_weekly_report_links.sql`, whose commented
   pg_cron block is the optional Monday auto-send.
+  **Who receives it is data, not a secret** (2026-08-07): the
+  `report_recipients` table, managed from the weekly card's "Who gets it" row.
+  `REPORT_TO` is now only the fallback for an empty list or an unrun migration.
+  Everyone gets their own copy via Resend's **batch** endpoint, so no recipient
+  sees another's address. The add-a-teammate picker offers only staff who pass
+  `_can_see_finance_of()`; anyone else must be typed in. Adding someone is
+  super-admin-only because the link needs no login — **being on the list IS
+  access to the numbers**. `_access_ids()` was refactored to delegate to the new
+  `_access_ids_of(uuid)` (same logic, so every RLS policy calling it is
+  unaffected). See `supabase/changes/2026-08-07_report_recipients.sql`.
+  **Neither Edge Function is deployed yet** — both return `NOT_FOUND` on live,
+  so the whole email/link feature is dark until someone runs
+  `supabase functions deploy weekly-report --no-verify-jwt` (and the same for
+  `weekly-report-send`) and sets the secrets.
 - **Sponsors / partners** (added 2026-08-06): the `sponsors` table is the
   player-facing "Our Partners" page (`lib/frontend/screens/sponsors/`, read via
   `SponsorService`), reached from the Home "Our Partners" strip. Managed from

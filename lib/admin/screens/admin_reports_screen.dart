@@ -50,6 +50,11 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
   List<FinanceWeek> _weeks = const [];
   List<Map<String, dynamic>> _expenses = const [];
   List<Map<String, dynamic>> _income = const [];
+  // Who the weekly mail goes to, and the finance-cleared staff who could be
+  // added. Read by anyone who can see the money; only a super admin may change
+  // it, which the server enforces either way.
+  List<Map<String, dynamic>> _recipients = const [];
+  List<Map<String, dynamic>> _candidates = const [];
 
   /// A staffer with Requests but no finance access lands straight on the queue
   /// — the Money half would only ever show them a locked card.
@@ -116,10 +121,13 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
       AdminService.fetchLedger(LedgerKind.expense, from: from, to: to),
       AdminService.fetchLedger(LedgerKind.income, from: from, to: to),
     ]);
+    final list = await AdminService.fetchReportRecipients();
 
     if (!mounted) return;
     final prev = FinanceReport.fromJson(results[1] as Map<String, dynamic>);
     setState(() {
+      _recipients = list.recipients;
+      _candidates = list.candidates;
       _report = FinanceReport.fromJson(results[0] as Map<String, dynamic>);
       _prev = prev.ok ? prev : null;
       _weeks = (results[2] as List<Map<String, dynamic>>)
@@ -620,8 +628,253 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
             if (i > 0) const Divider(height: 18, color: AdminColors.lineSoft),
             _weekRow(_weeks[i], i + 1 < _weeks.length ? _weeks[i + 1] : null),
           ],
+        const Divider(height: 22, color: AdminColors.lineSoft),
+        _recipientsRow(),
       ]),
     );
+  }
+
+  // ── who the weekly mail goes to ───────────────────────────────
+  //
+  // A mailing list, not a permission — but the report link opens without a
+  // login, so being on it IS access to the numbers. Hence super admin only,
+  // the same rule as minting the link.
+
+  int get _activeRecipients =>
+      _recipients.where((r) => r['active'] == true).length;
+
+  /// "Ahmed, Sara and 2 others" — the list at a glance, so nobody has to open
+  /// the sheet to notice the ex-employee still on it.
+  String get _recipientSummary {
+    final on = _recipients.where((r) => r['active'] == true).toList();
+    if (on.isEmpty) return 'Nobody yet — the report has nowhere to go';
+    String who(Map<String, dynamic> r) {
+      final n = (r['name'] as String?)?.trim();
+      if (n != null && n.isNotEmpty) return n.split(' ').first;
+      return (r['email'] as String? ?? '').split('@').first;
+    }
+
+    if (on.length == 1) return who(on[0]);
+    if (on.length == 2) return '${who(on[0])} and ${who(on[1])}';
+    return '${who(on[0])}, ${who(on[1])} and ${on.length - 2} '
+        'other${on.length - 2 == 1 ? '' : 's'}';
+  }
+
+  Widget _recipientsRow() {
+    final none = _activeRecipients == 0;
+    return InkWell(
+      onTap: _openRecipients,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          Icon(none ? Icons.person_off_outlined : Icons.group_outlined,
+              size: 17,
+              color: none ? AdminColors.warn : AdminColors.inkFaint),
+          const SizedBox(width: 11),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Who gets it', style: AdminText.strong()),
+              const SizedBox(height: 2),
+              Text(_recipientSummary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AdminText.small(
+                      none ? AdminColors.warn : AdminColors.inkFaint)),
+            ]),
+          ),
+          if (!none)
+            Text('$_activeRecipients',
+                style: AdminText.mono(13, FontWeight.w800, AdminColors.inkSoft)),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right_rounded,
+              size: 18, color: AdminColors.inkFaint),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _openRecipients() async {
+    await adminSheet(
+      context,
+      title: 'Who gets the report',
+      sub: widget.canEdit
+          ? 'Everyone here gets their own copy each Monday'
+          : 'Read-only — only a super admin can change this list',
+      heightFactor: 0.86,
+      body: StatefulBuilder(builder: (ctx, setSheet) {
+        // The sheet mutates the same lists the card reads, so a change lands on
+        // both without a reload.
+        Future<void> refresh() async {
+          final list = await AdminService.fetchReportRecipients();
+          if (!mounted) return;
+          setState(() {
+            _recipients = list.recipients;
+            _candidates = list.candidates;
+          });
+          setSheet(() {});
+        }
+
+        Future<void> run(Future<String?> action) async {
+          final err = await action;
+          await refresh();
+          if (ctx.mounted && err != null) adminToast(ctx, err, ok: false);
+        }
+
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _notice(
+            Icons.lock_open_rounded,
+            AdminColors.warn,
+            'The link needs no login',
+            'Anyone on this list can open that week\'s full profit & loss '
+                'without signing in, and can forward it. Treat being on the '
+                'list as seeing the numbers.',
+          ),
+          const SizedBox(height: 16),
+          Text('ON THE LIST', style: AdminText.kicker()),
+          const SizedBox(height: 8),
+          if (_recipients.isEmpty)
+            Text('Nobody yet.', style: AdminText.small())
+          else
+            for (final r in _recipients) ...[
+              _recipientTile(r, run),
+              const SizedBox(height: 8),
+            ],
+          if (widget.canEdit) ...[
+            if (_candidates.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text('ADD A TEAMMATE', style: AdminText.kicker()),
+              const SizedBox(height: 4),
+              Text(
+                  'Staff who can already see the money. Anyone else has to be '
+                  'added by email.',
+                  style: AdminText.small()),
+              const SizedBox(height: 8),
+              for (final c in _candidates) ...[
+                _candidateTile(c, run),
+                const SizedBox(height: 8),
+              ],
+            ],
+            const SizedBox(height: 10),
+            Text('ADD AN EMAIL', style: AdminText.kicker()),
+            const SizedBox(height: 4),
+            Text('For an accountant or anyone without an app account.',
+                style: AdminText.small()),
+            const SizedBox(height: 8),
+            _AddRecipientField(onAdd: (email) =>
+                run(AdminService.addReportRecipient(email))),
+          ],
+        ]);
+      }),
+    );
+  }
+
+  Widget _recipientTile(
+      Map<String, dynamic> r, Future<void> Function(Future<String?>) run) {
+    final email = r['email'] as String? ?? '';
+    final name = (r['name'] as String?)?.trim();
+    final active = r['active'] == true;
+    final role = r['admin_role'] as String?;
+    final label = (name?.isNotEmpty ?? false) ? name! : email;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(11)),
+      child: Row(children: [
+        AdminAvatar(_initials(label),
+            size: 34,
+            color: active ? AdminColors.primary : AdminColors.inkFaint,
+            imageUrl: r['avatar_url'] as String?),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AdminText.strong(active
+                        ? AdminColors.ink
+                        : AdminColors.inkFaint)),
+              ),
+              if (role != null) ...[
+                const SizedBox(width: 6),
+                StatusBadge(role == 'super_admin' ? 'admin' : role),
+              ],
+            ]),
+            const SizedBox(height: 2),
+            Text(active ? email : '$email · paused',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AdminText.small()),
+          ]),
+        ),
+        if (widget.canEdit) ...[
+          // Pause keeps the row (and their name) for someone on leave;
+          // remove is for someone who has actually gone.
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: active ? 'Pause' : 'Resume',
+            icon: Icon(
+                active
+                    ? Icons.pause_circle_outline_rounded
+                    : Icons.play_circle_outline_rounded,
+                size: 20,
+                color: active ? AdminColors.inkFaint : AdminColors.success),
+            onPressed: () =>
+                run(AdminService.setReportRecipient(email, !active)),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Remove',
+            icon: const Icon(Icons.close_rounded,
+                size: 18, color: AdminColors.danger),
+            onPressed: () => run(AdminService.removeReportRecipient(email)),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  Widget _candidateTile(
+      Map<String, dynamic> c, Future<void> Function(Future<String?>) run) {
+    final email = c['email'] as String? ?? '';
+    final name = (c['name'] as String?)?.trim();
+    final label = (name?.isNotEmpty ?? false) ? name! : email;
+
+    return Row(children: [
+      AdminAvatar(_initials(label),
+          size: 30,
+          color: AdminColors.inkFaint,
+          imageUrl: c['avatar_url'] as String?),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AdminText.strong()),
+          Text(email,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AdminText.small()),
+        ]),
+      ),
+      AdminButton('Add',
+          height: 34,
+          variant: AdminBtn.soft,
+          onPressed: () => run(AdminService.addReportRecipient(email,
+              name: name, profileId: c['id'] as String?))),
+    ]);
+  }
+
+  static String _initials(String s) {
+    final parts = s.trim().split(RegExp(r'[\s@._-]+')).where((p) => p.isNotEmpty);
+    if (parts.isEmpty) return '?';
+    return parts.take(2).map((p) => p[0].toUpperCase()).join();
   }
 
   Widget _weekRow(FinanceWeek w, FinanceWeek? before) {
@@ -783,11 +1036,23 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
   Future<void> _emailWeek(FinanceWeek w) async {
     Navigator.pop(context);
-    adminToast(context, 'Sending…');
-    final err = await AdminService.emailWeeklyReport(w.start);
+    // Say who it's about to go to before it goes — the list is the one thing
+    // about this that's easy to get wrong.
+    if (_activeRecipients == 0) {
+      adminToast(context, 'Nobody is on the list yet — add someone first.',
+          ok: false);
+      await _openRecipients();
+      return;
+    }
+    adminToast(context, 'Sending to $_recipientSummary…');
+    final res = await AdminService.emailWeeklyReport(w.start);
     if (!mounted) return;
-    adminToast(context, err ?? 'Report sent to padelrivals@gmail.com',
-        ok: err == null);
+    adminToast(
+        context,
+        res.error ??
+            'Report sent to ${res.sent} '
+                '${res.sent == 1 ? 'person' : 'people'}',
+        ok: res.error == null);
   }
 
   Widget _sheetLines(String title, List<MoneyLine> lines, num total, Color tone) {
@@ -1208,4 +1473,71 @@ class _LedgerSheetState extends State<_LedgerSheet> {
             borderRadius: AdminUI.fieldR,
             borderSide: const BorderSide(color: AdminColors.primary)),
       );
+}
+
+/// The "add an email" row on the recipients sheet. Its own widget so the text
+/// field keeps its state while the list above it reloads after every add.
+class _AddRecipientField extends StatefulWidget {
+  final Future<void> Function(String email) onAdd;
+  const _AddRecipientField({required this.onAdd});
+
+  @override
+  State<_AddRecipientField> createState() => _AddRecipientFieldState();
+}
+
+class _AddRecipientFieldState extends State<_AddRecipientField> {
+  final _c = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _c.text.trim();
+    if (email.isEmpty || _busy) return;
+    setState(() => _busy = true);
+    await widget.onAdd(email);
+    if (!mounted) return;
+    // The server is the judge of what's a valid address; it toasts on refusal.
+    _c.clear();
+    setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Expanded(
+        child: TextField(
+          controller: _c,
+          keyboardType: TextInputType.emailAddress,
+          autocorrect: false,
+          textCapitalization: TextCapitalization.none,
+          onSubmitted: (_) => _submit(),
+          style: AdminText.body(),
+          decoration: InputDecoration(
+            hintText: 'name@example.com',
+            hintStyle: AdminText.small(AdminColors.inkFaint),
+            isDense: true,
+            filled: true,
+            fillColor: AdminColors.surfaceAlt,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: AdminUI.fieldR,
+                borderSide: const BorderSide(color: AdminColors.line)),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: AdminUI.fieldR,
+                borderSide:
+                    const BorderSide(color: AdminColors.primary, width: 1.6)),
+          ),
+        ),
+      ),
+      const SizedBox(width: 8),
+      AdminButton(_busy ? 'Adding…' : 'Add',
+          height: 44, onPressed: _busy ? null : _submit),
+    ]);
+  }
 }

@@ -13,10 +13,15 @@
 //     "Email report" button calls it. Verified by asking Postgres `_is_admin()`
 //     with the caller's own JWT, so the app can't lie about who it is.
 //
+// WHO IT GOES TO. The `report_recipients` table, managed from the console —
+// see 2026-08-07_report_recipients.sql. Everyone gets their own copy (Resend's
+// batch endpoint) so no recipient sees another's address. REPORT_TO is now only
+// a fallback, used when the list is empty or that migration hasn't been run.
+//
 // Secrets (never commit these):
 //   supabase secrets set RESEND_API_KEY=re_...
 //   supabase secrets set REPORT_FROM='Padel Rivals <reports@YOURDOMAIN>'
-//   supabase secrets set REPORT_TO=padelrivals@gmail.com
+//   supabase secrets set REPORT_TO=padelrivals@gmail.com   # fallback only
 //   supabase secrets set CRON_SECRET=<any long random string>
 //
 // REPORT_FROM must be a domain you have verified in Resend, or Gmail will bin
@@ -66,6 +71,35 @@ function weekLabel(startIso: string, endIso: string): string {
   return am === bm
     ? `${am} ${a.getUTCDate()} – ${b.getUTCDate()}`
     : `${am} ${a.getUTCDate()} – ${bm} ${b.getUTCDate()}`;
+}
+
+/**
+ * Who the report goes to. The `report_recipients` table is the source of
+ * truth; REPORT_TO is the fallback for an empty list or an unrun migration, so
+ * a half-set-up project still mails somebody rather than silently nobody.
+ */
+async function recipients(): Promise<string[]> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/report_recipients_active`, {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    const rows = await res.json();
+    const list = Array.isArray(rows)
+      ? rows.map((r: any) => String(r?.email ?? "").trim()).filter(Boolean)
+      : [];
+    if (list.length) return [...new Set(list.map((e) => e.toLowerCase()))];
+  } catch (e) {
+    // A missing function is the expected shape of "migration not run yet".
+    console.error("[weekly-report-send] recipients:", e);
+  }
+  return TO.split(",").map((e) => e.trim()).filter(Boolean);
 }
 
 /** Is the bearer token in [auth] a super admin? Asks Postgres, not ourselves. */
@@ -165,23 +199,33 @@ serve(async (req) => {
     </p>
   </div></body></html>`;
 
+  const to = await recipients();
+  if (!to.length) {
+    return json(
+      { error: "no_recipients", detail: "Nobody is on the weekly report list." },
+      400,
+    );
+  }
+
+  const subject = `Padel Rivals — weekly report, ${label}`;
+  const text =
+    `Padel Rivals — weekly report\nWeek of ${label} (Monday to Sunday, Cairo time)\n\n` +
+    `Open the full profit & loss:\n${url}\n\n` +
+    `The link keeps working. Anyone holding it can read the week without logging in.`;
+
+  // One message PER recipient, not one message with everyone in `to` — nobody
+  // needs to see who else gets the P&L. Resend's batch endpoint takes up to 100
+  // in a single call, so this stays one request regardless of team size.
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const res = await fetch("https://api.resend.com/emails/batch", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${RESEND_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        from: FROM,
-        to: [TO],
-        subject: `Padel Rivals — weekly report, ${label}`,
-        html,
-        text:
-          `Padel Rivals — weekly report\nWeek of ${label} (Monday to Sunday, Cairo time)\n\n` +
-          `Open the full profit & loss:\n${url}\n\n` +
-          `The link keeps working. Anyone holding it can read the week without logging in.`,
-      }),
+      body: JSON.stringify(
+        to.slice(0, 100).map((addr) => ({ from: FROM, to: [addr], subject, html, text })),
+      ),
     });
     if (!res.ok) {
       const detail = await res.text();
@@ -193,5 +237,5 @@ serve(async (req) => {
     return json({ error: "send_failed" }, 502);
   }
 
-  return json({ ok: true, to: TO, week_start: link.week_start, url });
+  return json({ ok: true, to, sent: to.length, week_start: link.week_start, url });
 });

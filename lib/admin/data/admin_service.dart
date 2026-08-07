@@ -1716,27 +1716,39 @@ class AdminService {
     }
   }
 
-  /// Emails that week's link to the address in the function's REPORT_TO secret
-  /// (padelrivals@gmail.com by default). Returns an error string, or null on
-  /// success. The Edge Function re-checks the caller is a super admin.
-  static Future<String?> emailWeeklyReport(DateTime weekStart) async {
+  /// Emails that week's link to everyone on the report list (falling back to
+  /// the function's REPORT_TO secret if the list is empty). Returns
+  /// `(error: …)` on failure, or `(sent: n)` on success — the count is what the
+  /// toast reports back. The Edge Function re-checks the caller is a super
+  /// admin.
+  static Future<({String? error, int sent})> emailWeeklyReport(
+      DateTime weekStart) async {
     try {
       final res = await _db.functions.invoke('weekly-report-send', body: {
         'week_start': _ymd(weekStart),
       });
       final data = (res.data as Map?)?.cast<String, dynamic>();
-      return data?['ok'] == true ? null : _sendError(data?['error']);
+      if (data?['ok'] == true) {
+        return (error: null, sent: (data?['sent'] as num?)?.toInt() ?? 1);
+      }
+      return (error: _sendError(data?['error']), sent: 0);
     } on FunctionException catch (e) {
       // Every non-2xx arrives here, not as a response — the function's JSON
       // body is on `details`.
       debugPrint('[AdminService] emailWeeklyReport: ${e.status} ${e.details}');
       if (e.status == 404) {
-        return 'The weekly-report-send function isn\'t deployed yet.';
+        return (
+          error: 'The weekly-report-send function isn\'t deployed yet.',
+          sent: 0
+        );
       }
-      return _sendError((e.details as Map?)?['error']);
+      return (error: _sendError((e.details as Map?)?['error']), sent: 0);
     } catch (e) {
       debugPrint('[AdminService] emailWeeklyReport: $e');
-      return "Couldn't reach the mail service. Check your connection.";
+      return (
+        error: "Couldn't reach the mail service. Check your connection.",
+        sent: 0
+      );
     }
   }
 
@@ -1745,11 +1757,83 @@ class AdminService {
         'not_configured' =>
           "Email isn't set up yet — the RESEND_API_KEY secret is missing.",
         'not_allowed' => 'Only a super admin can email the report.',
+        'no_recipients' =>
+          'Nobody is on the list yet — add someone under "Who gets it".',
         'send_failed' => 'The email service refused it. Check the from-address '
             "is on a domain you've verified.",
         'link_failed' => "Couldn't create the report link.",
         _ => "Couldn't send the report.",
       };
+
+  // ── Who the weekly report goes to ─────────────────────────────
+  //
+  // The `report_recipients` table, not a CLI secret, so the list can be kept up
+  // to date by whoever runs the team. Being on it IS access to the numbers —
+  // the report link opens without a login — so every write is super-admin-only,
+  // enforced in Postgres.
+
+  /// `(recipients, candidates)` — who gets the report, and the finance-cleared
+  /// staff who could be added with one tap. Both empty when the server refuses
+  /// or the 2026-08-07_report_recipients delta hasn't been run.
+  static Future<
+          ({
+            List<Map<String, dynamic>> recipients,
+            List<Map<String, dynamic>> candidates
+          })>
+      fetchReportRecipients() async {
+    try {
+      final res = await _db.rpc('admin_report_recipients');
+      final map = (res as Map?)?.cast<String, dynamic>();
+      List<Map<String, dynamic>> pick(String k) =>
+          ((map?[k] as List?) ?? const [])
+              .map((e) => (e as Map).cast<String, dynamic>())
+              .toList();
+      return (recipients: pick('recipients'), candidates: pick('candidates'));
+    } catch (e) {
+      debugPrint('[AdminService] fetchReportRecipients: $e');
+      return (
+        recipients: <Map<String, dynamic>>[],
+        candidates: <Map<String, dynamic>>[]
+      );
+    }
+  }
+
+  /// Adds [email] to the list, or switches an existing row back on. [profileId]
+  /// ties the row to a staff account when it came from the picker.
+  static Future<String?> addReportRecipient(String email,
+      {String? name, String? profileId}) async {
+    try {
+      return await _db.rpc('admin_add_report_recipient', params: {
+        'p_email': email,
+        'p_name': name,
+        'p_profile_id': profileId,
+      }) as String?;
+    } catch (e) {
+      debugPrint('[AdminService] addReportRecipient: $e');
+      return "Couldn't add them to the list.";
+    }
+  }
+
+  /// Pauses or resumes one address without losing it from the list.
+  static Future<String?> setReportRecipient(String email, bool active) async {
+    try {
+      return await _db.rpc('admin_set_report_recipient',
+          params: {'p_email': email, 'p_active': active}) as String?;
+    } catch (e) {
+      debugPrint('[AdminService] setReportRecipient: $e');
+      return "Couldn't update the list.";
+    }
+  }
+
+  static Future<String?> removeReportRecipient(String email) async {
+    try {
+      return await _db.rpc('admin_remove_report_recipient',
+          params: {'p_email': email}) as String?;
+    } catch (e) {
+      debugPrint('[AdminService] removeReportRecipient: $e');
+      return "Couldn't remove them from the list.";
+    }
+  }
 
   /// Kills a link. The week can be shared again — that mints a fresh token.
   static Future<String?> revokeReportLink(String token) async {

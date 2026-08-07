@@ -7,7 +7,10 @@ import 'settings_common.dart';
 
 /// Support contact details. Referenced anywhere the app tells a player how to
 /// reach us, so there is one place to change them.
-const String kSupportEmail = 'Padelrivals@gmail.com';
+/// Forwards to Padelrivals@gmail.com via Cloudflare Email Routing, and is
+/// replied to from there through Resend — so it stays one inbox in practice.
+/// This is also the address given to App Store Connect and Google Play.
+const String kSupportEmail = 'help@padel-rivals.com';
 /// As shown to players (local Egyptian format).
 const String kSupportPhone = '01501800943';
 /// What the dialer is handed — international form, so it works from abroad too.
