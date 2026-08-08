@@ -20,11 +20,14 @@ const String kSupportPhoneDial = '+201501800943';
 /// to padel-rivals.com). They are generated from the Word documents in
 /// `legal/` — edit those, re-run the generator, don't hand-edit the HTML.
 /// These are also the URLs to give Google Play and App Store Connect.
-const String kPrivacyUrl = 'https://padel-rivals.com/privacy.html';
-const String kTermsUrl = 'https://padel-rivals.com/terms.html';
+/// Extensionless on purpose: Cloudflare Pages treats these as canonical and
+/// 308-redirects the `.html` form to them. The pages' own internal links keep
+/// the `.html` suffix so the folder still previews from disk.
+const String kPrivacyUrl = 'https://padel-rivals.com/privacy';
+const String kTermsUrl = 'https://padel-rivals.com/terms';
 
 /// Where Google Play's mandatory data-deletion link points.
-const String kDeleteAccountUrl = 'https://padel-rivals.com/delete-account.html';
+const String kDeleteAccountUrl = 'https://padel-rivals.com/delete-account';
 
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({super.key});
