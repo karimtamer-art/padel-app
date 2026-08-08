@@ -115,10 +115,12 @@ before changing anything.
   access to the numbers**. `_access_ids()` was refactored to delegate to the new
   `_access_ids_of(uuid)` (same logic, so every RLS policy calling it is
   unaffected). See `supabase/changes/2026-08-07_report_recipients.sql`.
-  **Neither Edge Function is deployed yet** — both return `NOT_FOUND` on live,
-  so the whole email/link feature is dark until someone runs
-  `supabase functions deploy weekly-report --no-verify-jwt` (and the same for
-  `weekly-report-send`) and sets the secrets.
+  **Both Edge Functions are deployed** (2026-08-08, with JWT verification off —
+  a deployed `weekly-report` answers `400 No report requested` to a bare GET,
+  never `401`; a `401` means the JWT toggle got switched back on). Secrets
+  `RESEND_API_KEY` and `REPORT_FROM` are set. What is still missing is the SQL:
+  the functions call `report_link_ensure`, `report_render` and
+  `report_recipients_active`, so nothing sends until deltas 12 and 13 run.
 - **Sponsors / partners** (added 2026-08-06): the `sponsors` table is the
   player-facing "Our Partners" page (`lib/frontend/screens/sponsors/`, read via
   `SponsorService`), reached from the Home "Our Partners" strip. Managed from
@@ -129,6 +131,50 @@ before changing anything.
   Never derive one from the other. Tier ids (`title/gold/silver/partner`) are
   mirrored in `SponsorTier` and `sponsors_tier_chk` — change both. See
   `supabase/changes/2026-08-06_sponsors.sql`.
+- **The domain, the email stack, and the legal site** (set up 2026-08-08).
+  `padel-rivals.com` is registered at GoDaddy but its **DNS lives at
+  Cloudflare** — nameservers were moved, so GoDaddy's DNS panel is now a
+  dead end and every record change happens in Cloudflare.
+  - **Receiving**: Cloudflare **Email Routing** forwards `help@`, `reports@`
+    and `no-reply@` to `Padelrivals@gmail.com`. Aliases are free and
+    unlimited — add more rather than inventing shared mailboxes. A *destination*
+    is the real inbox mail lands in; a *routing rule* is the `@padel-rivals.com`
+    address that forwards there. Putting an `@padel-rivals.com` address in the
+    destination list is circular and silently bounces everything.
+  - **Sending**: **Resend**, free tier (3,000/month, 100/day), root domain
+    verified in `eu-west-1`. Its SPF and bounce MX sit on the `send.`
+    subdomain, which is why they don't collide with Email Routing's records on
+    the apex. **Never add a second SPF or DMARC record** — GoDaddy left a
+    `_dmarc` behind and it was edited, not duplicated.
+  - **Auth email**: Supabase runs on **custom SMTP** (`smtp.resend.com:587`,
+    user `resend`) from `no-reply@padel-rivals.com`. This matters more than it
+    looks: the built-in Supabase mailer is capped at ~2 emails/hour and is
+    testing-only, so signups and password resets would have started failing
+    silently at launch. The rate limit under Authentication → Rate Limits has
+    to be raised by hand — enabling custom SMTP does not lift it.
+  - **Cloudflare Email Address Obfuscation is OFF for this zone, on purpose.**
+    It rewrites every `mailto:` into a JS-decoded blob, which renders the
+    contact address as "[email protected]" to anything that doesn't run
+    JavaScript — including Google Play's automated policy checks against the
+    data-deletion page. Do not turn it back on.
+  - **The legal site** is `docs/`, deployed to Cloudflare **Pages** (project
+    connected to this repo, no build command, output directory `docs`). Every
+    push republishes. Create it from the **Pages** flow, not Workers — the
+    Workers flow has no "build output directory" field and will try to *execute*
+    `docs` as a shell command.
+  - **`docs/privacy.html` and `docs/terms.html` are GENERATED — do not edit
+    them.** `legal/build_pages.py` builds them from the `.docx` files in
+    `legal/`. Edit the Word document, re-run the script. The generator also
+    carries a `PATCHES` list that corrects two paragraphs which the `.docx`
+    files still get wrong (they claim a phone number is never public, which
+    stopped being true when match tickets shipped). It raises and refuses to
+    write if a patched paragraph moves, so the correction cannot silently
+    regress — but **the `.docx` files themselves still need updating**.
+  - URLs for the stores, extensionless because Pages canonicalises to them:
+    `/privacy`, `/terms`, `/delete-account`, and `https://padel-rivals.com` as
+    the support URL. Mirrored in `kPrivacyUrl` / `kTermsUrl` /
+    `kDeleteAccountUrl` (`help_support_screen.dart`), alongside
+    `kSupportEmail = help@padel-rivals.com`.
 - **Moderation lives under Reports, not Requests** (moved 2026-08-06).
   `AdminModerationView` is the player-report queue; Requests is repairs +
   trade-ins only. Its server guard is still `_can_edit('requests')`, so
