@@ -16,10 +16,15 @@ const String kSupportPhone = '01501800943';
 /// What the dialer is handed — international form, so it works from abroad too.
 const String kSupportPhoneDial = '+201501800943';
 
-/// The legal page. One document covers BOTH the terms and the privacy policy
-/// ("Padel Rivals — Terms of Agreement"), so both tiles open the same URL.
-/// This is also the URL to give Google Play and App Store Connect.
-const String kLegalUrl = 'https://sites.google.com/view/padel-rivals/home';
+/// The legal pages, hosted on our own domain (`docs/` in this repo, deployed
+/// to padel-rivals.com). They are generated from the Word documents in
+/// `legal/` — edit those, re-run the generator, don't hand-edit the HTML.
+/// These are also the URLs to give Google Play and App Store Connect.
+const String kPrivacyUrl = 'https://padel-rivals.com/privacy.html';
+const String kTermsUrl = 'https://padel-rivals.com/terms.html';
+
+/// Where Google Play's mandatory data-deletion link points.
+const String kDeleteAccountUrl = 'https://padel-rivals.com/delete-account.html';
 
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({super.key});
@@ -121,10 +126,11 @@ class HelpSupportScreen extends StatelessWidget {
         const SectionLabel('About'),
         TileGroup(children: [
           NavTile(icon: Icons.description_outlined, title: 'Terms of Service',
-              subtitle: 'Terms & privacy — one document',
-              onTap: () => _launch(context, Uri.parse(kLegalUrl))),
+              subtitle: 'Accounts, ratings, orders and tournaments',
+              onTap: () => _launch(context, Uri.parse(kTermsUrl))),
           NavTile(icon: Icons.shield_outlined, title: 'Privacy Policy',
-              onTap: () => _launch(context, Uri.parse(kLegalUrl))),
+              subtitle: 'What we collect, and what stays private',
+              onTap: () => _launch(context, Uri.parse(kPrivacyUrl))),
           NavTile(icon: Icons.star_outline_rounded, title: 'Rate Padel',
               onTap: () => _comingSoon(context, 'App Store rating')),
         ]),
