@@ -1372,6 +1372,42 @@ class AdminService {
           String id, Map<String, dynamic> data) async =>
       _updateRequest('trade_requests', id, data);
 
+  /// Records a trade-in the console took in itself — the counter walk-in that
+  /// never passed through the app. Needs the "trades: staff insert" policy
+  /// (changes/2026-08-10_admin_add_trade.sql); without it RLS refuses, since
+  /// the player-facing policy only allows inserting your OWN row.
+  ///
+  /// Pass [playerId] when the seller has an account, or [playerName] when they
+  /// walked in without one — `trade_requests_who_chk` requires exactly one of
+  /// the two to be present, so a row can never belong to nobody.
+  static Future<String?> createTrade({
+    String? playerId,
+    String? playerName,
+    required String racketDesc,
+    String? condition,
+    int? offerCredit,
+    String? note,
+    String status = 'offer_made',
+  }) async {
+    try {
+      await _db.from('trade_requests').insert({
+        if (playerId != null) 'player_id': playerId,
+        if (playerId == null && (playerName ?? '').trim().isNotEmpty)
+          'player_name': playerName!.trim(),
+        'racket_desc': racketDesc,
+        if (condition != null) 'condition': condition,
+        if (offerCredit != null) 'offer_credit': offerCredit,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        'status': status,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   // Requests + the submitting player. The embed needs an FK from the request
   // table to `profiles`; both tables originally only had the legacy FK to
   // auth.users, which PostgREST cannot embed — so fall back to a plain read

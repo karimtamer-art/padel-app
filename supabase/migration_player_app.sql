@@ -539,6 +539,17 @@ alter table public.trade_requests add column if not exists note text;
 -- Bucket + policies live further down, after _has_access() is defined.
 alter table public.trade_requests
   add column if not exists photos text[] not null default '{}';
+-- A racket can be taken in at the counter from someone with no account, so
+-- player_id is optional and a typed name stands in — same shape as
+-- tournament_entries' partner_id / partner_name. One of the two is required,
+-- otherwise the row belongs to nobody. See changes/2026-08-10_admin_add_trade.sql.
+alter table public.trade_requests alter column player_id drop not null;
+alter table public.trade_requests add column if not exists player_name text;
+alter table public.trade_requests drop constraint if exists trade_requests_who_chk;
+alter table public.trade_requests
+  add constraint trade_requests_who_chk
+  check (player_id is not null
+         or btrim(coalesce(player_name, '')) <> '');
 alter table public.trade_requests enable row level security;
 do $$ begin
   create policy "own trades read" on public.trade_requests for select using (auth.uid() = player_id);
@@ -2437,6 +2448,12 @@ create policy "trades: admin read" on public.trade_requests for select
 drop policy if exists "trades: admin update" on public.trade_requests;
 create policy "trades: admin update" on public.trade_requests for update
   using (public._can_edit('requests')) with check (public._can_edit('requests'));
+-- Counter trade-ins never passed through the app, so the console records them
+-- itself. Permissive policies OR together — the player's own "create own trade"
+-- insert path above is unaffected. See changes/2026-08-10_admin_add_trade.sql.
+drop policy if exists "trades: staff insert" on public.trade_requests;
+create policy "trades: staff insert" on public.trade_requests for insert
+  with check (public._can_edit('requests'));
 -- Table-level privilege (separate from RLS): without this the role is rejected
 -- before any policy is evaluated → "permission denied for table trade_requests".
 grant select, insert, update on public.trade_requests to authenticated;
@@ -3524,6 +3541,14 @@ set search_path = public as $$
 declare
   v_name text;
 begin
+  -- Only when the PLAYER submitted it. A staffer recording a counter trade-in
+  -- would otherwise ping every admin about their colleague's data entry, under
+  -- a title that misdescribes it. auth.uid() is null for service-role/seed
+  -- inserts, which stay quiet too.
+  if new.player_id is distinct from auth.uid() then
+    return new;
+  end if;
+
   select name into v_name from public.profiles where id = new.player_id;
   insert into public.notifications (user_id, type, title, body, data)
   select p.id,

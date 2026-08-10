@@ -62,8 +62,15 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   static String _msg(Object e) =>
       e is PostgrestException ? e.message : e.toString();
 
-  static String _playerName(Map row) =>
-      (row['profiles'] as Map?)?['name'] as String? ?? 'Player';
+  /// The seller's name: the linked account first, then the plain name typed in
+  /// for a counter walk-in who has no account (trade_requests.player_name).
+  static String _playerName(Map row) {
+    final linked = ((row['profiles'] as Map?)?['name'] as String?)?.trim();
+    if (linked != null && linked.isNotEmpty) return linked;
+    final typed = (row['player_name'] as String?)?.trim();
+    if (typed != null && typed.isNotEmpty) return typed;
+    return 'Player';
+  }
 
   static String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
@@ -525,12 +532,21 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
                 label: 'Credit committed',
                 value: _egpShort(liability)),
           ]),
+          const SizedBox(height: 12),
+          // A trade-in taken at the counter never passed through the app, so
+          // the console has to be able to enter one itself — otherwise its
+          // credit never reaches the P&L.
+          AdminButton('Record a trade-in',
+              icon: Icons.add_rounded,
+              full: true,
+              height: 46,
+              onPressed: _openAddTrade),
           const SizedBox(height: 16),
           if (_trades.isEmpty)
             Container(
               padding: const EdgeInsets.all(28),
               alignment: Alignment.center,
-              child: Text('No trade-in requests yet',
+              child: Text('No trade-ins yet',
                   style: AdminText.small(AdminColors.inkFaint)),
             )
           else
@@ -866,6 +882,19 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
     }
   }
 
+  Future<void> _openAddTrade() async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _AddTradeSheet(),
+    );
+    if (saved == true) {
+      await _load();
+      if (mounted) adminToast(context, 'Trade-in recorded');
+    }
+  }
+
   Widget _kv(String k, String v) => Expanded(
         child: Container(
           padding: const EdgeInsets.all(11),
@@ -879,5 +908,360 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
                 style: AdminText.sans(13.5, FontWeight.w800, AdminColors.ink)),
           ]),
         ),
+      );
+}
+
+// ============================================================================
+// Record a trade-in the console took in itself. The player-facing flow inserts
+// its own row; this is the counter walk-in, which otherwise has no record and
+// whose credit never reaches the P&L.
+//
+// player_id is NOT NULL and an FK to profiles, so a real account must be
+// picked — there is deliberately no free-text "walk-in stranger" path.
+// ============================================================================
+class _AddTradeSheet extends StatefulWidget {
+  const _AddTradeSheet();
+  @override
+  State<_AddTradeSheet> createState() => _AddTradeSheetState();
+}
+
+class _AddTradeSheetState extends State<_AddTradeSheet> {
+  final _search = TextEditingController();
+  final _walkIn = TextEditingController();
+  final _racket = TextEditingController();
+  final _credit = TextEditingController();
+  final _note = TextEditingController();
+
+  List<Map<String, dynamic>> _results = [];
+  Map<String, dynamic>? _player;
+  String? _condition;
+  // Accepted is what moves money, so it is never the default — the admin has
+  // to choose it. See the hint under the selector.
+  String _status = 'offer_made';
+  bool _searching = false;
+  bool _busy = false;
+
+  static const _conditions = {
+    'new': 'New',
+    'like_new': 'Like new',
+    'good': 'Good',
+    'fair': 'Fair',
+    'poor': 'Poor',
+  };
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _walkIn.dispose();
+    _racket.dispose();
+    _credit.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _runSearch(String q) async {
+    setState(() => _searching = true);
+    final rows = await AdminService.searchPlayers(q);
+    if (!mounted) return;
+    setState(() {
+      _results = rows;
+      _searching = false;
+    });
+  }
+
+  Future<void> _save() async {
+    final player = _player;
+    // One of the two, mirroring trade_requests_who_chk on the table — a row
+    // with neither belongs to nobody and could never be chased up.
+    if (player == null && _walkIn.text.trim().isEmpty) {
+      adminToast(context, 'Pick an account or type who sold it', ok: false);
+      return;
+    }
+    if (_racket.text.trim().isEmpty) {
+      adminToast(context, 'Say what the racket is', ok: false);
+      return;
+    }
+    final credit = int.tryParse(_credit.text.trim());
+    if (credit == null || credit <= 0) {
+      adminToast(context, 'Enter the credit in EGP', ok: false);
+      return;
+    }
+
+    setState(() => _busy = true);
+    final err = await AdminService.createTrade(
+      playerId: player?['id'] as String?,
+      playerName: _walkIn.text,
+      racketDesc: _racket.text.trim(),
+      condition: _condition,
+      offerCredit: credit,
+      note: _note.text,
+      status: _status,
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      adminToast(context, err, ok: false);
+      return;
+    }
+    Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        height: MediaQuery.of(context).size.height * 0.86,
+        decoration: const BoxDecoration(
+            color: AdminColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+        child: Column(children: [
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+                color: AdminColors.line,
+                borderRadius: BorderRadius.circular(2)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 12, 6),
+            child: Row(children: [
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Record a trade-in', style: AdminText.h2()),
+                      const SizedBox(height: 2),
+                      Text('A racket taken in outside the app',
+                          style: AdminText.small()),
+                    ]),
+              ),
+              IconButton(
+                  icon: const Icon(Icons.close_rounded,
+                      color: AdminColors.inkSoft),
+                  onPressed: () => Navigator.pop(context)),
+            ]),
+          ),
+          const Divider(height: 16, color: AdminColors.lineSoft),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+              children: [
+                _label('Who sold it'),
+                if (_player != null)
+                  _selectedPlayer()
+                else ...[
+                  // Two ways in, and only one is needed: link an account, or
+                  // just write the name down for someone who has never
+                  // installed the app.
+                  TextField(
+                    controller: _walkIn,
+                    style: AdminText.body(),
+                    textCapitalization: TextCapitalization.words,
+                    onChanged: (_) => setState(() {}),
+                    decoration: _dec('Their name'),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    const Expanded(child: Divider(color: AdminColors.lineSoft)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text('or link an account',
+                          style: AdminText.small(AdminColors.inkFaint)),
+                    ),
+                    const Expanded(child: Divider(color: AdminColors.lineSoft)),
+                  ]),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _search,
+                    style: AdminText.body(),
+                    onChanged: _runSearch,
+                    decoration: _dec('Search by @username'),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_searching)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 10),
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: AdminColors.primary),
+                        ),
+                      ),
+                    )
+                  else if (_search.text.trim().isNotEmpty && _results.isEmpty)
+                    Text('No player matches that username.',
+                        style: AdminText.small(AdminColors.inkFaint))
+                  else
+                    for (final p in _results)
+                      InkWell(
+                        onTap: () => setState(() {
+                          _player = p;
+                          _results = [];
+                          // A linked account wins over a typed name; drop it
+                          // so the sheet can't imply both are being saved.
+                          _walkIn.clear();
+                        }),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 7),
+                          child: Row(children: [
+                            AdminAvatar(
+                                _AdminRequestsScreenState._initials(
+                                    (p['name'] as String?) ?? '?'),
+                                size: 30),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                  '${p['name'] ?? 'Player'}  ·  @${p['username'] ?? ''}',
+                                  style: AdminText.body(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                          ]),
+                        ),
+                      ),
+                ],
+                const SizedBox(height: 16),
+                _label('Racket'),
+                TextField(
+                    controller: _racket,
+                    style: AdminText.body(),
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: _dec('e.g. Babolat Viper 2023')),
+                const SizedBox(height: 16),
+                _label('Condition'),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final e in _conditions.entries)
+                      _chip(e.value, _condition == e.key,
+                          () => setState(() => _condition = e.key)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _label('Credit given (EGP)'),
+                TextField(
+                  controller: _credit,
+                  keyboardType: TextInputType.number,
+                  style: AdminText.sans(22, FontWeight.w800, AdminColors.ink),
+                  decoration: _dec('0'),
+                ),
+                const SizedBox(height: 16),
+                _label('Status'),
+                Row(children: [
+                  _chip('Offer made', _status == 'offer_made',
+                      () => setState(() => _status = 'offer_made')),
+                  const SizedBox(width: 8),
+                  _chip('Accepted', _status == 'accepted',
+                      () => setState(() => _status = 'accepted')),
+                ]),
+                const SizedBox(height: 8),
+                Text(
+                  _status == 'accepted'
+                      ? 'Accepted counts the credit against profit straight '
+                          'away — the Reports tab picks it up as trade-in cost.'
+                      : 'An offer costs nothing yet. Mark it accepted once the '
+                          'racket and the credit have actually changed hands.',
+                  style: AdminText.small(_status == 'accepted'
+                      ? AdminColors.warn
+                      : AdminColors.inkSoft),
+                ),
+                const SizedBox(height: 16),
+                _label('Note (optional)'),
+                TextField(
+                    controller: _note,
+                    style: AdminText.body(),
+                    maxLines: 3,
+                    decoration: _dec('Anything worth remembering')),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
+            decoration: const BoxDecoration(
+                color: AdminColors.surfaceAlt,
+                border: Border(top: BorderSide(color: AdminColors.lineSoft))),
+            child: AdminButton(_busy ? 'Saving…' : 'Save trade-in',
+                full: true, height: 48, onPressed: _busy ? null : _save),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _selectedPlayer() => Container(
+        padding: const EdgeInsets.all(11),
+        decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: AdminColors.line),
+        ),
+        child: Row(children: [
+          AdminAvatar(
+              _AdminRequestsScreenState._initials(
+                  (_player!['name'] as String?) ?? '?'),
+              size: 32),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+                '${_player!['name'] ?? 'Player'}  ·  @${_player!['username'] ?? ''}',
+                style: AdminText.strong(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+          TextButton(
+            onPressed: () => setState(() {
+              _player = null;
+              _search.clear();
+              _results = [];
+            }),
+            child: Text('Change', style: AdminText.strong(AdminColors.primary)),
+          ),
+        ]),
+      );
+
+  Widget _chip(String label, bool on, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: on
+                ? AdminColors.primary.withValues(alpha: .14)
+                : AdminColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: on ? AdminColors.primary : AdminColors.line),
+          ),
+          child: Text(label,
+              style: AdminText.sans(12.5, FontWeight.w700,
+                  on ? AdminColors.primary : AdminColors.inkSoft)),
+        ),
+      );
+
+  Widget _label(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 7),
+        child: Text(t.toUpperCase(), style: AdminText.kicker()),
+      );
+
+  InputDecoration _dec(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: AdminText.body(AdminColors.inkFaint),
+        filled: true,
+        fillColor: AdminColors.surfaceAlt,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AdminColors.line)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AdminColors.line)),
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AdminColors.primary)),
       );
 }
