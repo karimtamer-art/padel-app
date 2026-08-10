@@ -1,5 +1,8 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:padel_clay/backend/services/auth_service.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
@@ -21,6 +24,18 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
   int? _blocked; // null until loaded, so the tile doesn't flash "None"
   bool _phonePublic = false; // profiles.phone_public — private by default
   int? _shares; // people I've swapped numbers with
+  // Same spam guard as the sign-in screen: the tap used to do nothing visible
+  // until the email landed, so people tapped it until Supabase rate-limited
+  // them and nothing arrived at all.
+  bool _resetBusy = false;
+  int _resetCooldown = 0;
+  Timer? _resetTimer;
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -74,18 +89,35 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(behavior: SnackBarBehavior.floating, content: Text(msg)));
 
+  void _startResetCooldown() {
+    _resetTimer?.cancel();
+    setState(() => _resetCooldown = 60);
+    _resetTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _resetCooldown--);
+      if (_resetCooldown <= 0) t.cancel();
+    });
+  }
+
   Future<void> _changePassword() async {
     final email = _user?.email;
     if (email == null || email.isEmpty) {
       _snack('No email on this account — password sign-in isn\'t set up.');
       return;
     }
-    try {
-      await Supabase.instance.client.auth.resetPasswordForEmail(email);
-      if (mounted) _snack('Password reset link sent to $email.');
-    } on AuthException catch (e) {
-      if (mounted) _snack(e.message);
+    setState(() => _resetBusy = true);
+    final err = await AuthService.sendPasswordReset(email);
+    if (!mounted) return;
+    setState(() => _resetBusy = false);
+    if (err != null) {
+      _snack(err);
+      return;
     }
+    _startResetCooldown();
+    _snack('Reset link sent to $email. Check your inbox and spam.');
   }
 
   @override
@@ -101,8 +133,29 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
           NavTile(icon: Icons.phone_outlined, title: 'Phone Number',
               subtitle: (_phone?.isNotEmpty ?? false) ? _phone! : 'Not set',
               onTap: () => _snack('Update your phone from Edit Profile.')),
-          NavTile(icon: Icons.lock_outline_rounded, title: 'Change Password',
-              subtitle: 'Sends a reset link to your email', onTap: _changePassword),
+          // A Google/Apple account has no password here to change — the tile
+          // would mail a link that sets one they'd never use. Say which button
+          // signs them in instead.
+          if (AuthService.hasPasswordLogin)
+            NavTile(
+                icon: Icons.lock_outline_rounded,
+                title: 'Change Password',
+                subtitle: _resetBusy
+                    ? 'Sending…'
+                    : (_resetCooldown > 0
+                        ? 'Link sent — you can resend in ${_resetCooldown}s'
+                        : 'Sends a reset link to your email'),
+                onTap: (_resetBusy || _resetCooldown > 0)
+                    ? null
+                    : _changePassword)
+          else
+            NavTile(
+                icon: Icons.lock_outline_rounded,
+                title: 'Password',
+                chevron: false,
+                subtitle:
+                    'You sign in with ${AuthService.socialProviderLabel ?? 'a social account'} — there\'s no password to change',
+                onTap: null),
         ]),
         const SizedBox(height: 22),
 

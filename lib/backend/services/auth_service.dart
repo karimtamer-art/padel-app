@@ -296,6 +296,70 @@ class AuthService {
     }
   }
 
+  // ── Password reset ─────────────────────────────────────────────────────────
+
+  /// Where the recovery email sends the player back to. A DIFFERENT host from
+  /// [_redirectUrl] on purpose: on Android the two are claimed by different
+  /// activities (flutter_web_auth_2's CallbackActivity handles login-callback,
+  /// MainActivity handles this one). If both hosts matched both filters Android
+  /// would show an app chooser. Must also be allow-listed in Supabase under
+  /// Authentication → URL Configuration → Redirect URLs, or the link dies with
+  /// "requested path is invalid".
+  static const passwordResetUrl = 'padelclay://reset-password/';
+
+  /// Sign-in providers behind the CURRENT user, e.g. {email, google, apple}.
+  /// `email` present means there is a real password on the account.
+  static Set<String> get currentProviders {
+    final ids = _db.auth.currentUser?.identities ?? const [];
+    return ids.map((i) => i.provider).toSet();
+  }
+
+  /// Whether the signed-in user can actually change a password. False for a
+  /// Google/Apple-only account — there is nothing to change, and offering it
+  /// just sends a confusing email.
+  static bool get hasPasswordLogin => currentProviders.contains('email');
+
+  /// Human label for how a social-only account signs in ("Google", "Apple"),
+  /// or null when it has a password.
+  static String? get socialProviderLabel {
+    if (hasPasswordLogin) return null;
+    final p = currentProviders;
+    if (p.contains('google')) return 'Google';
+    if (p.contains('apple')) return 'Apple';
+    return p.isEmpty ? null : p.first;
+  }
+
+  /// Same question for an email we're NOT signed in as — the "Forgot password?"
+  /// case. Returns null when the lookup itself failed, so the caller can fall
+  /// back to sending rather than blocking a legitimate reset on a network blip.
+  static Future<Set<String>?> loginMethodsFor(String email) async {
+    try {
+      final res = await _db
+          .rpc('email_login_methods', params: {'p_email': email.trim()});
+      if (res is List) return res.map((e) => e.toString()).toSet();
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Mails a password-reset link. Returns null on success, else a message.
+  ///
+  /// [redirectTo] is what makes the link come back INTO the app rather than
+  /// Supabase's default web page, which is what gives the player somewhere to
+  /// type a new password.
+  static Future<String?> sendPasswordReset(String email) async {
+    try {
+      await _db.auth.resetPasswordForEmail(email.trim(),
+          redirectTo: passwordResetUrl);
+      return null;
+    } on AuthException catch (e) {
+      return _friendlyAuthError(e);
+    } catch (e) {
+      return 'Could not send the reset email. Please try again.';
+    }
+  }
+
   /// Whether [email] is registered. Returns null if the check itself failed
   /// (so the caller falls back to a generic message rather than guessing).
   static Future<bool?> _emailExists(String email) async {

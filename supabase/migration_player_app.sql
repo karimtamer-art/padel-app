@@ -3690,6 +3690,23 @@ stable as $$
 $$;
 grant execute on function public.email_exists(text) to anon, authenticated;
 
+-- email_login_methods(): which providers are behind an email, so "Forgot
+-- password?" can refuse to mail a reset for a Google/Apple-only account (they
+-- have no password to reset). Same accepted enumeration trade-off as
+-- email_exists() above — if that is ever revisited, revisit both.
+create or replace function public.email_login_methods(p_email text)
+returns text[]
+language sql
+security definer
+set search_path = auth, public
+stable as $$
+  select coalesce(array_agg(distinct i.provider order by i.provider), '{}'::text[])
+    from auth.users u
+    join auth.identities i on i.user_id = u.id
+   where lower(u.email) = lower(trim(p_email));
+$$;
+grant execute on function public.email_login_methods(text) to anon, authenticated;
+
 -- ============================================================
 -- Direct messages (player ↔ player DM) — one thread per unordered pair.
 -- ============================================================

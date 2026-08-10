@@ -135,6 +135,31 @@ before changing anything.
   the `padelclay` scheme — iOS needs no such entry (ASWebAuthenticationSession
   intercepts it), which is exactly why its absence went unnoticed. The scheme
   is mirrored in `AuthService._redirectUrl` and the manifest; change both.
+- **Password reset** (2026-08-10). Three things were wrong: the button fired
+  with no visible feedback (so people tapped until Supabase rate-limited them
+  and nothing arrived), it was offered to Google/Apple accounts that have no
+  password, and there was nowhere to type a new one.
+  - **Only email accounts get it.** Signed in, `AuthService.hasPasswordLogin`
+    reads `user.identities`; signed out, the new `email_login_methods(text)`
+    RPC answers for an email we're not authenticated as. That RPC is an
+    enumeration vector **by the same deliberate choice already made for
+    `email_exists()`** — revisit both together or neither.
+  - **Both entry points have a busy label + 60s cooldown.** Supabase's own
+    limit is invisible to the user, so the client has to be the thing that
+    says "sent, wait".
+  - **The link comes back into the app**: `AuthService.passwordResetUrl` =
+    `padelclay://reset-password/`, a **different host** from the OAuth callback
+    `padelclay://login-callback/`. On Android the two are claimed by different
+    activities (MainActivity vs `flutter_web_auth_2.CallbackActivity`) and
+    CallbackActivity used to claim the whole scheme — if both filters match a
+    URL, Android shows an app chooser. Change a host, change the manifest.
+  - `AuthChangeEvent.passwordRecovery` puts `AuthGate` in `_Phase.recovering`
+    → `SetPasswordScreen(recovery: true)` (same screen as the organizer
+    first-login flow, different copy). The recovery branch must be checked
+    BEFORE `signedIn`/`userUpdated`, or saving bounces them out mid-edit.
+  - **Manual step, not in git**: `padelclay://reset-password/` has to be added
+    to Supabase → Authentication → URL Configuration → **Redirect URLs**, or
+    the link fails with "requested path is invalid".
 - **Money / Reports (P&L)**: the Reports tab is the platform's profit & loss.
   Money IN = store orders + paid tournament entries + collected repairs + the
   hand-recorded `income` table (money taken outside the app). Money OUT = cost

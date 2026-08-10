@@ -43,7 +43,16 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
-enum _Phase { booting, signedOut, checking, onboarding, mustSetPassword, ready, error }
+enum _Phase {
+  booting,
+  signedOut,
+  checking,
+  onboarding,
+  mustSetPassword,
+  recovering, // arrived from the reset email — must choose a new password
+  ready,
+  error
+}
 
 class _AuthGateState extends State<AuthGate> {
   _Phase _phase = _Phase.booting;
@@ -66,9 +75,19 @@ class _AuthGateState extends State<AuthGate> {
     }
     _sub = widget.authService.onAuthStateChange.listen((state) {
       switch (state.event) {
+        // The reset email's deep link signs the user in with a short-lived
+        // recovery session. Jump straight to the new-password form — this must
+        // come BEFORE the signedIn cases, which would otherwise drop them into
+        // the app with the reset silently unfinished.
+        case AuthChangeEvent.passwordRecovery:
+          if (mounted) setState(() => _phase = _Phase.recovering);
+          break;
         case AuthChangeEvent.signedIn:
         case AuthChangeEvent.initialSession:
         case AuthChangeEvent.userUpdated:
+          // Setting the new password fires userUpdated; staying put would bounce
+          // them out of the form mid-edit.
+          if (_phase == _Phase.recovering) break;
           if (widget.authService.currentUser != null) _resolve();
           break;
         case AuthChangeEvent.signedOut:
@@ -178,6 +197,17 @@ class _AuthGateState extends State<AuthGate> {
           key: const ValueKey('set-password'),
           displayName: _displayName,
           onDone: _resolve,
+          onSignOut: _signOut,
+        ),
+      _Phase.recovering => SetPasswordScreen(
+          key: const ValueKey('recover-password'),
+          displayName: _displayName,
+          recovery: true,
+          // The password is already saved by the time onDone runs, so resolving
+          // drops them into the app signed in — no second login.
+          onDone: _resolve,
+          // Cancelling a half-finished reset must not leave the recovery
+          // session lying around; signing out returns to the sign-in screen.
           onSignOut: _signOut,
         ),
       _Phase.ready => _isStaff

@@ -6,17 +6,26 @@ import '../../../backend/services/auth_service.dart';
 import '../../../admin/data/admin_service.dart';
 import 'auth_widgets.dart';
 
-/// Forced first-login screen for a provisioned organizer: they signed in with a
-/// temporary password and must set their own before reaching the console.
+/// Choose a new password. Two callers, same form:
+///
+///  * Forced first login for a provisioned organizer — they signed in with a
+///    temporary password and must set their own before reaching the console.
+///  * Password recovery — they tapped the link in the reset email, which opens
+///    the app with a short-lived session (`AuthChangeEvent.passwordRecovery`).
+///
+/// [recovery] only swaps the copy and skips `clearMustChangePassword()`, which
+/// is a staff-only flag; the actual work is identical, so this stays one screen.
 class SetPasswordScreen extends StatefulWidget {
   final String displayName;
   final Future<void> Function() onDone; // re-resolve the gate once set
   final Future<void> Function() onSignOut;
+  final bool recovery;
   const SetPasswordScreen({
     super.key,
     required this.displayName,
     required this.onDone,
     required this.onSignOut,
+    this.recovery = false,
   });
 
   @override
@@ -60,7 +69,9 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
       });
       return;
     }
-    await AdminService.clearMustChangePassword();
+    // Staff-only flag; a player arriving from a reset email has no business
+    // writing it (and no row that wants it cleared).
+    if (!widget.recovery) await AdminService.clearMustChangePassword();
     if (!mounted) return;
     await widget.onDone();
   }
@@ -85,12 +96,15 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                   size: 30, color: AppColors.primary),
             ),
             const SizedBox(height: 20),
-            Text('Set your password', style: AppText.bigTitle()),
+            Text(widget.recovery ? 'Choose a new password' : 'Set your password',
+                style: AppText.bigTitle()),
             const SizedBox(height: 8),
             Text(
-                name.isEmpty
-                    ? 'Choose a new password to finish setting up your organizer account.'
-                    : 'Welcome, $name. Choose a new password to finish setting up your organizer account.',
+                widget.recovery
+                    ? 'Almost done — pick a new password and you\'ll be signed straight in.'
+                    : (name.isEmpty
+                        ? 'Choose a new password to finish setting up your organizer account.'
+                        : 'Welcome, $name. Choose a new password to finish setting up your organizer account.'),
                 style: AppText.body(AppColors.inkSoft)
                     .copyWith(fontSize: 14, height: 1.5)),
             const SizedBox(height: 24),
@@ -122,13 +136,16 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
               ]),
             ],
             const SizedBox(height: 24),
-            AppButton(_busy ? 'Saving…' : 'Save & continue',
+            AppButton(
+                _busy
+                    ? 'Saving…'
+                    : (widget.recovery ? 'Save new password' : 'Save & continue'),
                 full: true,
                 height: 52,
                 icon: Icons.check_rounded,
                 onPressed: _busy ? null : _submit),
             const SizedBox(height: 11),
-            AppButton('Sign out',
+            AppButton(widget.recovery ? 'Cancel' : 'Sign out',
                 full: true,
                 height: 52,
                 variant: AppBtnVariant.ghost,

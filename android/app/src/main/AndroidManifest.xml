@@ -31,6 +31,21 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Password-reset link from the recovery email. This one has to
+                 land in MainActivity (not the flutter_web_auth_2 activity
+                 below): there is no FlutterWebAuth2.authenticate() session
+                 waiting for it — the app may not even be running — so it has
+                 to arrive as an ordinary deep link, which supabase_flutter
+                 picks up and turns into a passwordRecovery event.
+                 The host MUST differ from the OAuth callback's, or both
+                 filters match every padelclay:// URL and Android shows an app
+                 chooser. Mirrored in AuthService.passwordResetUrl. -->
+            <intent-filter android:label="password reset">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="padelclay" android:host="reset-password"/>
+            </intent-filter>
         </activity>
         <!-- Catches the padelclay:// redirect at the end of Google sign-in.
              iOS needs nothing here because ASWebAuthenticationSession watches
@@ -47,11 +62,16 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity="">
+            <!-- Scoped to the login-callback host. It used to claim the whole
+                 padelclay:// scheme, which would have swallowed the
+                 password-reset link declared on MainActivity above (or worse,
+                 produced a chooser). Keep the host in sync with
+                 AuthService._redirectUrl. -->
             <intent-filter android:label="flutter_web_auth_2">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="padelclay"/>
+                <data android:scheme="padelclay" android:host="login-callback"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

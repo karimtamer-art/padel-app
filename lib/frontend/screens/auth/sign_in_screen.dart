@@ -1,5 +1,6 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
@@ -31,11 +32,83 @@ class _SignInScreenState extends State<SignInScreen> {
   bool _loading = false;
   String? _error;
 
+  // Reset-email state. The link used to fire with no visible feedback at all,
+  // so people tapped it repeatedly and tripped Supabase's own rate limit — at
+  // which point nothing arrives and it looks broken. The label reports what
+  // happened, and the cooldown makes a second tap impossible rather than
+  // merely pointless.
+  bool _resetBusy = false;
+  int _resetCooldown = 0;
+  Timer? _resetTimer;
+
   @override
   void dispose() {
+    _resetTimer?.cancel();
     _email.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  void _startResetCooldown() {
+    _resetTimer?.cancel();
+    setState(() => _resetCooldown = 60);
+    _resetTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _resetCooldown--);
+      if (_resetCooldown <= 0) t.cancel();
+    });
+  }
+
+  Future<void> _forgotPassword() async {
+    final email = _email.text.trim();
+    final messenger = ScaffoldMessenger.of(context);
+    if (email.isEmpty || !email.contains('@')) {
+      messenger.showSnackBar(const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content:
+              Text('Enter your email above first, then tap Forgot password.')));
+      return;
+    }
+    setState(() => _resetBusy = true);
+
+    // A Google/Apple account has no password to reset. Sending anyway mails a
+    // link that sets a password they'll never use, which reads as a bug.
+    // A null answer means the lookup failed — fall through and send rather
+    // than block a real reset on a bad connection.
+    final methods = await AuthService.loginMethodsFor(email);
+    if (!mounted) return;
+    if (methods != null &&
+        methods.isNotEmpty &&
+        !methods.contains('email')) {
+      final label = methods.contains('google')
+          ? 'Google'
+          : (methods.contains('apple') ? 'Apple' : methods.first);
+      setState(() => _resetBusy = false);
+      messenger.showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          content: Text(
+              'That account signs in with $label — there\'s no password to '
+              'reset. Use the $label button below.')));
+      return;
+    }
+
+    final err = await AuthService.sendPasswordReset(email);
+    if (!mounted) return;
+    setState(() => _resetBusy = false);
+    if (err != null) {
+      messenger.showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating, content: Text(err)));
+      return;
+    }
+    _startResetCooldown();
+    messenger.showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 5),
+        content: Text('Reset link sent to $email. Check your inbox and spam.')));
   }
 
   Future<void> _submit() async {
@@ -100,29 +173,17 @@ class _SignInScreenState extends State<SignInScreen> {
             Align(
               alignment: Alignment.centerRight,
               child: GestureDetector(
-                onTap: () async {
-                  final email = _email.text.trim();
-                  final messenger = ScaffoldMessenger.of(context);
-                  if (email.isEmpty || !email.contains('@')) {
-                    messenger.showSnackBar(const SnackBar(
-                        behavior: SnackBarBehavior.floating,
-                        content: Text('Enter your email above first, then tap Forgot password.')));
-                    return;
-                  }
-                  try {
-                    await Supabase.instance.client.auth
-                        .resetPasswordForEmail(email);
-                    messenger.showSnackBar(SnackBar(
-                        behavior: SnackBarBehavior.floating,
-                        content: Text('Password reset link sent to $email.')));
-                  } on AuthException catch (e) {
-                    messenger.showSnackBar(SnackBar(
-                        behavior: SnackBarBehavior.floating,
-                        content: Text(e.message)));
-                  }
-                },
-                child: Text('Forgot password?',
-                    style: AppText.bodyStrong(AppColors.primary)
+                onTap: (_resetBusy || _resetCooldown > 0) ? null : _forgotPassword,
+                child: Text(
+                    _resetBusy
+                        ? 'Sending…'
+                        : (_resetCooldown > 0
+                            ? 'Sent — retry in ${_resetCooldown}s'
+                            : 'Forgot password?'),
+                    style: AppText.bodyStrong(
+                            (_resetBusy || _resetCooldown > 0)
+                                ? AppColors.inkFaint
+                                : AppColors.primary)
                         .copyWith(fontSize: 13)),
               ),
             ),
