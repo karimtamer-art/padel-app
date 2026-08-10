@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/screens/auth/sign_up_flow.dart';
@@ -15,7 +18,8 @@ class AuthCancelled implements Exception {
   String toString() => 'Sign-in was cancelled.';
 }
 
-/// Auth data-access: browser-based Supabase OAuth + email/password + phone OTP.
+/// Auth data-access: native Google / Apple sign-in, Supabase OAuth in a
+/// browser as the fallback, plus email/password and phone OTP.
 ///
 /// Pass an instance to [AuthGate]. The static methods cover OAuth, email/password,
 /// and phone OTP for use from individual screens.
@@ -23,7 +27,13 @@ class AuthService {
   AuthService({
     this.googleWebClientId = '',
     this.googleIosClientId,
-  });
+  }) {
+    // [signInWithGoogle] is static because AuthGate passes it as a tear-off,
+    // so the ids have to be reachable from a static context. main.dart builds
+    // this instance before any sign-in UI can be shown.
+    _webClientId = googleWebClientId;
+    _iosClientId = googleIosClientId;
+  }
 
   final String googleWebClientId;
   final String? googleIosClientId;
@@ -36,19 +46,91 @@ class AuthService {
 
   Future<void> signOut() async {
     await _sb.auth.signOut();
+    // Drop the Google session too. Without this the native picker silently
+    // reuses the last account on the next sign-in, so a shared phone can never
+    // switch users. Best-effort: never let it block signing out of the app.
+    if (_googleReady) {
+      try {
+        await GoogleSignIn.instance.signOut();
+      } catch (_) {/* already signed out / no Play Services */}
+    }
   }
 
   // ── Static interface — OAuth + email/password + phone OTP ────────────────
 
   static SupabaseClient get _db => Supabase.instance.client;
 
+  /// Must also be registered as an intent-filter on
+  /// `com.linusu.flutter_web_auth_2.CallbackActivity` in
+  /// android/app/src/main/AndroidManifest.xml — change one, change the other.
   static const _redirectUrl = 'padelclay://login-callback/';
   static const _callbackScheme = 'padelclay';
 
-  /// Opens Google sign-in in an ASWebAuthenticationSession (iOS) — an in-app
-  /// modal that monitors for the padelclay:// callback and dismisses itself
-  /// automatically, so no browser switch and no white-screen stuck state.
-  static Future<void> signInWithGoogle() => _oauthFlow(OAuthProvider.google);
+  // Set from the constructor — see the note there on why these are static.
+  static String _webClientId = '';
+  static String? _iosClientId;
+  static bool _googleReady = false;
+
+  /// Whether the native account picker can be used instead of a browser.
+  ///
+  /// The Web (server) client id is non-negotiable: on Android it is the
+  /// audience the ID token is minted for, and it is what Supabase checks the
+  /// token against. iOS additionally needs its own client id, because the
+  /// Google SDK there reads it to build the callback. Anything else — desktop,
+  /// web, or simply an unconfigured build — falls back to the browser flow.
+  static bool get _nativeGoogleAvailable {
+    if (kIsWeb || _webClientId.isEmpty) return false;
+    if (Platform.isAndroid) return true;
+    if (Platform.isIOS) return (_iosClientId ?? '').isNotEmpty;
+    return false;
+  }
+
+  /// Google sign-in, native where possible.
+  ///
+  /// Native means the system account sheet appears over the app and Supabase
+  /// takes Google's ID token directly ([signInWithIdToken]) — the same shape as
+  /// [signInWithApple], and no browser at all. The browser flow it falls back
+  /// to is the slow one: Custom Tab → Google → Supabase callback → back into
+  /// the app, several seconds and several round trips.
+  static Future<void> signInWithGoogle() async {
+    if (!_nativeGoogleAvailable) return _oauthFlow(OAuthProvider.google);
+
+    final google = GoogleSignIn.instance;
+    if (!_googleReady) {
+      // Must complete before any other call on the singleton, and must happen
+      // exactly once — calling it twice is documented as undefined behaviour.
+      await google.initialize(
+        clientId: Platform.isIOS ? _iosClientId : null,
+        serverClientId: _webClientId,
+      );
+      _googleReady = true;
+    }
+    // Platforms that drive sign-in from their own button widget instead.
+    if (!google.supportsAuthenticate()) return _oauthFlow(OAuthProvider.google);
+
+    final GoogleSignInAccount account;
+    try {
+      account = await google.authenticate();
+    } on GoogleSignInException catch (e) {
+      // Dismissing the sheet is a no-op, same as Apple and the browser flow.
+      if (e.code == GoogleSignInExceptionCode.canceled) {
+        throw const AuthCancelled();
+      }
+      rethrow;
+    }
+
+    final idToken = account.authentication.idToken;
+    if (idToken == null) {
+      // Almost always a console problem: no Android OAuth client for this
+      // package + SHA-1, or a serverClientId that isn't the Web one.
+      throw const AuthException('Google did not return an identity token.');
+    }
+
+    await _db.auth.signInWithIdToken(
+      provider: OAuthProvider.google,
+      idToken: idToken,
+    );
+  }
 
   /// Native "Sign in with Apple": get an Apple ID credential (the system sheet
   /// / Face ID), then exchange its identity token for a Supabase session via

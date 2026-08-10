@@ -14,6 +14,22 @@ import 'package:padel_clay/frontend/navigation/push_router.dart';
 /// repeating the project ref.
 const String kSupabaseUrl = 'https://lxihwifpcufhieppfeza.supabase.co';
 
+/// Google OAuth client ids for the NATIVE sign-in sheet. Public identifiers,
+/// not secrets — same reasoning as the anon key below.
+///
+/// [kGoogleWebClientIdFallback] is the **"Web application"** client from Google
+/// Cloud Console, and must be the very same one configured under Supabase →
+/// Authentication → Google, because that is the audience Supabase validates the
+/// ID token against. Android additionally needs an **"Android"** OAuth client
+/// (package `com.padelegypt.app` + your signing SHA-1) to exist in the same
+/// project — its id is never typed anywhere, it just has to be there.
+///
+/// Leave these empty and Google sign-in silently falls back to the slower
+/// browser flow, which still works. A `--dart-define` of the same name wins
+/// over the fallback, so CI can override without editing the file.
+const String kGoogleWebClientIdFallback = '';
+const String kGoogleIosClientIdFallback = '';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -40,10 +56,12 @@ class PadelApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Google client IDs — supply via --dart-define=GOOGLE_WEB_CLIENT_ID=... etc.
-    // or set GOOGLE_WEB_CLIENT_ID / GOOGLE_IOS_CLIENT_ID in your build env.
-    const webClientId = String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
-    const iosClientId = String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
+    // Google client ids — a --dart-define wins, otherwise the constants at the
+    // top of this file. Empty means the browser fallback; see their doc.
+    const webClientId = String.fromEnvironment('GOOGLE_WEB_CLIENT_ID',
+        defaultValue: kGoogleWebClientIdFallback);
+    const iosClientId = String.fromEnvironment('GOOGLE_IOS_CLIENT_ID',
+        defaultValue: kGoogleIosClientIdFallback);
 
     final auth = AuthService(
       googleWebClientId: webClientId,

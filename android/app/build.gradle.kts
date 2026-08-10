@@ -35,8 +35,11 @@ android {
         applicationId = "com.padelegypt.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // Firebase 4.x (firebase_core/messaging) requires minSdk 23.
-        minSdk = maxOf(flutter.minSdkVersion, 23)
+        // Firebase 4.x (firebase_core/messaging) requires minSdk 23, and
+        // google_sign_in_android 7.x requires 24 for androidx.credentials
+        // (the native account sheet). 24 = Android 7.0; the merger fails the
+        // build rather than warning if this drops below a library's floor.
+        minSdk = maxOf(flutter.minSdkVersion, 24)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

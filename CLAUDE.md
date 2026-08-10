@@ -71,6 +71,24 @@ before changing anything.
   and records winners; players only read it.
 - **Tournaments tab resilience**: `TournamentService.fetchTournaments` has a
   fallback plain query for pre-migration databases. Keep that fallback.
+- **Google sign-in is native first, browser second** (2026-08-10).
+  `AuthService.signInWithGoogle` uses `google_sign_in` 7.x (the v7 API:
+  `GoogleSignIn.instance.initialize()` once, then `authenticate()`) and hands
+  the ID token to `signInWithIdToken` — same shape as the Apple flow, no
+  browser. It falls back to the old `_oauthFlow` Custom Tab whenever the Web
+  client id is missing, on desktop, or on iOS with no iOS client id, so an
+  unconfigured build still signs in. Ids come from
+  `kGoogleWebClientIdFallback` / `kGoogleIosClientIdFallback` in `main.dart`
+  (a `--dart-define` of the same name wins). The **Web** client id must match
+  the one in Supabase → Auth → Google, because that is the audience Supabase
+  validates; Android also needs an **Android** OAuth client for
+  `com.padelegypt.app` + the signing SHA-1 to exist, though its id is never
+  typed anywhere. Two Android traps: `google_sign_in_android` forces
+  **minSdk 24**, and the browser fallback only returns because
+  `AndroidManifest.xml` declares `flutter_web_auth_2`'s `CallbackActivity` for
+  the `padelclay` scheme — iOS needs no such entry (ASWebAuthenticationSession
+  intercepts it), which is exactly why its absence went unnoticed. The scheme
+  is mirrored in `AuthService._redirectUrl` and the manifest; change both.
 - **Money / Reports (P&L)**: the Reports tab is the platform's profit & loss.
   Money IN = store orders + paid tournament entries + collected repairs + the
   hand-recorded `income` table (money taken outside the app). Money OUT = cost
