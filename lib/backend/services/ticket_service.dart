@@ -39,14 +39,57 @@ class TicketService {
     }
   }
 
-  /// The four players. `phone` is null on a closed ticket — that is the
-  /// server's decision, not something to work around.
+  /// The four players. `phone` is null on a closed ticket, and null for anyone
+  /// you haven't swapped numbers with — both are the server's decision, not
+  /// something to work around.
+  ///
+  /// `share_state` says which of those it is, and is what the row renders from:
+  /// `me` · `shared` (a number is present) · `pending` (you asked) · `none`.
   static Future<List<Map<String, dynamic>>> roster(String ticketId) async {
     try {
       final res = await _db.rpc('ticket_roster', params: {'p_ticket': ticketId});
       return List<Map<String, dynamic>>.from(res as List);
     } catch (e) {
       debugPrint('[TicketService] roster: $e');
+      return [];
+    }
+  }
+
+  /// Ask a co-player for their number. Accepting is a mutual swap, so this is
+  /// also an offer of your own. Returns an error message or null.
+  static Future<String?> requestNumber(String ticketId, String playerId) async {
+    try {
+      final res = await _db.rpc('request_number',
+          params: {'p_ticket': ticketId, 'p_target': playerId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Answer a request someone made of me. Accepting inserts the swap.
+  static Future<String?> respondToNumberRequest(String requestId,
+      {required bool accept}) async {
+    try {
+      final res = await _db.rpc('respond_number_request',
+          params: {'p_request': requestId, 'p_accept': accept});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Number requests waiting on me.
+  static Future<List<Map<String, dynamic>>> myNumberRequests() async {
+    try {
+      final res = await _db.rpc('my_number_requests');
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[TicketService] myNumberRequests: $e');
       return [];
     }
   }

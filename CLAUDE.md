@@ -83,9 +83,29 @@ before changing anything.
   - **The match ticket now opens on the join that first puts a player on BOTH
     sides** (was: a trigger on `matches` INSERT, i.e. immediately). The trigger
     is `trg_open_match_ticket_join` on `match_players`.
-  - `matchCols` still embeds `profiles(... phone ...)`, so match_players is the
-    single gate for phone exposure — don't add anyone to it without consent.
   - See `supabase/changes/2026-08-10_partner_invites.sql`.
+- **Phone numbers are asked for, never handed out** (2026-08-10). Being in a
+  match with someone is no longer enough to see their number. Two controls:
+  - **Inside a ticket**: `request_number(p_ticket, p_target)` →
+    `respond_number_request(p_request, accept)`. Accepting is a **SWAP** — it
+    writes one `contact_shares` row for the pair (canonical `a_id < b_id`) and
+    both sides can then see each other. A decline is **silent on purpose**;
+    telling someone they were turned down invites a second ask.
+  - **Everywhere else**: `profiles.phone_public`, **default FALSE**, decides
+    whether co-players see it without asking. Turning it off never blocks a
+    request. Toggle + revoke list live in `privacy_account_screen.dart` /
+    `shared_numbers_screen.dart`.
+  - **`_can_see_phone(viewer, target)` is THE rule** — mine, or swapped, or
+    they're public. Every surface goes through it; don't re-decide in Dart.
+  - A swap is between two **people and persists across matches** (so you don't
+    re-ask every week), and is revocable — `revoke_contact_share` deletes the
+    pair row, which cuts **both** ways.
+  - `matchCols` no longer embeds `profiles.phone`. The lobby contact sheet
+    calls `player_phone(uuid)` per tap, which also requires that you actually
+    share a match with them so it can't be used to sweep the user table.
+  - `ticket_roster` returns `share_state` (`me`/`shared`/`pending`/`none`),
+    which is what the roster row renders from.
+  - See `supabase/changes/2026-08-10_number_requests.sql`.
 - **Score flow**: only players in the match can submit; only the OTHER team
   can confirm; settlement runs inside `confirm_match_result` → `_settle_rating`.
   Sets are stored as team-A-perspective strings, per set `A-B` comma-separated

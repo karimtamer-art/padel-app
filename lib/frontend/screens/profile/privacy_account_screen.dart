@@ -6,6 +6,7 @@ import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/moderation_service.dart';
 import 'settings_common.dart';
 import 'blocked_players_screen.dart';
+import 'shared_numbers_screen.dart';
 import 'help_support_screen.dart' show kSupportEmail;
 
 class PrivacyAccountScreen extends StatefulWidget {
@@ -18,12 +19,20 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
   User? get _user => Supabase.instance.client.auth.currentUser;
   String? _phone; // from profiles.phone (the auth user's phone is empty here)
   int? _blocked; // null until loaded, so the tile doesn't flash "None"
+  bool _phonePublic = false; // profiles.phone_public — private by default
+  int? _shares; // people I've swapped numbers with
 
   @override
   void initState() {
     super.initState();
     _loadPhone();
     _loadBlocked();
+    _loadShares();
+  }
+
+  Future<void> _loadShares() async {
+    final rows = await ProfileService.myContactShares();
+    if (mounted) setState(() => _shares = rows.length);
   }
 
   Future<void> _loadBlocked() async {
@@ -37,11 +46,29 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
     try {
       final row = await Supabase.instance.client
           .from('profiles')
-          .select('phone')
+          .select('phone, phone_public')
           .eq('id', uid)
           .maybeSingle();
-      if (mounted) setState(() => _phone = (row?['phone'] as String?)?.trim());
-    } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _phone = (row?['phone'] as String?)?.trim();
+          _phonePublic = row?['phone_public'] == true;
+        });
+      }
+    } catch (_) {
+      // Pre-migration DB has no phone_public column; the whole select fails.
+      // Leaving it false is the safe reading.
+    }
+  }
+
+  Future<void> _setPhonePublic(bool on) async {
+    setState(() => _phonePublic = on); // optimistic: the switch must feel instant
+    final err = await ProfileService.setPhonePublic(on);
+    if (!mounted) return;
+    if (err != null) {
+      setState(() => _phonePublic = !on);
+      _snack(err);
+    }
   }
 
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
@@ -77,6 +104,40 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
           NavTile(icon: Icons.lock_outline_rounded, title: 'Change Password',
               subtitle: 'Sends a reset link to your email', onTap: _changePassword),
         ]),
+        const SizedBox(height: 22),
+
+        const SectionLabel('Your phone number'),
+        TileGroup(children: [
+          SwitchTile(
+            icon: Icons.visibility_outlined,
+            title: 'Show my number to players in my matches',
+            subtitle: _phonePublic
+                ? 'Anyone you\'re booked to play with can see it'
+                : 'Hidden — players have to ask you first',
+            value: _phonePublic,
+            onChanged: _setPhonePublic,
+          ),
+          NavTile(
+              icon: Icons.people_alt_outlined,
+              title: 'Shared with',
+              subtitle: _shares == null
+                  ? 'People who can see your number'
+                  : (_shares == 0
+                      ? 'Nobody yet'
+                      : '$_shares ${_shares == 1 ? 'person' : 'people'}'),
+              onTap: () async {
+                await Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const SharedNumbersScreen()));
+                _loadShares(); // they may have revoked someone
+              }),
+        ]),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+          child: Text(
+              'Turning this off never stops people asking — a request still '
+              'reaches you and you decide each time. Accepting shares both ways.',
+              style: AppText.small().copyWith(fontSize: 12, height: 1.45)),
+        ),
         const SizedBox(height: 22),
 
         const SectionLabel('Data'),

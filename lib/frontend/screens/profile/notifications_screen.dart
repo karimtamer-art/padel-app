@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
+import 'package:padel_clay/backend/services/ticket_service.dart';
 import '../chat/dm_chat_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
@@ -199,7 +200,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case 'message':
         return n.data?['sender_id'] is String;
       case 'match':
-        return n.data?['match_id'] is String;
+        // A number request has no match to open — it opens an answer sheet.
+        return n.data?['match_id'] is String ||
+            n.data?['request_id'] is String;
       case 'tournament':
         return n.data?['tournament_id'] is String;
       case 'order':
@@ -220,6 +223,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _openChat(n);
         return;
       case 'match':
+        final req = n.data?['request_id'];
+        if (req is String) {
+          _answerNumberRequest(req, n.title);
+          return;
+        }
         final id = n.data?['match_id'];
         if (id is String) {
           Navigator.of(context).push(MaterialPageRoute(
@@ -239,6 +247,41 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             MaterialPageRoute(builder: (_) => const MyOrdersScreen()));
         return;
     }
+  }
+
+  /// Someone asked for my number. Answering here rather than deep-linking into
+  /// the ticket keeps it to one tap, and the dialog is explicit that saying yes
+  /// is a swap — the requester gets mine too.
+  Future<void> _answerNumberRequest(String requestId, String title) async {
+    final accept = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text(title, style: AppText.bodyStrong()),
+        content: Text(
+            'Sharing works both ways — they get your number and you get theirs. '
+            'You can undo it later in Privacy.',
+            style: AppText.small().copyWith(height: 1.45)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: Text('No thanks', style: AppText.bodyStrong())),
+          TextButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: Text('Share it',
+                  style: AppText.bodyStrong(AppColors.primary))),
+        ],
+      ),
+    );
+    if (accept == null || !mounted) return;
+    final err = await TicketService.respondToNumberRequest(requestId,
+        accept: accept);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: err == null ? null : AppColors.danger,
+        content: Text(err ??
+            (accept ? 'Numbers shared.' : 'Declined — nothing was shared.'))));
   }
 
   Widget _row(_Notif n) {

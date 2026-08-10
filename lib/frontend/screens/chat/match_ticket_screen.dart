@@ -17,6 +17,10 @@ import 'package:padel_clay/frontend/widgets/moderation_sheet.dart';
 ///
 /// Numbers come from `ticket_roster` and are blank once the ticket closes —
 /// the thread tells players that up front so they can save what they need.
+///
+/// They are also blank for anyone you haven't swapped with: a number is asked
+/// for (`request_number`) and given (`respond_number_request`), never handed
+/// out for being in the same match. Accepting shares both ways.
 class MatchTicketScreen extends StatefulWidget {
   final String ticketId;
 
@@ -50,6 +54,8 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
   List<Map<String, dynamic>> _messages = [];
   List<Map<String, dynamic>> _roster = [];
   bool _loading = true;
+  /// player_id currently being asked, so the button can't be double-tapped.
+  String? _asking;
   int _tab = 0; // 0 = chat, 1 = players
 
   /// Posted straight away — the point is to get the first message out of the
@@ -476,11 +482,11 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
           _greetLine(Icons.groups_outlined,
               'All four of you are in here — sort the ride, the balls, who pays the court.'),
           _greetLine(Icons.call_outlined,
-              'Numbers are shared in Players — call or WhatsApp if someone goes quiet.'),
+              'Want to call someone? Ask for their number in Players. They decide, and accepting shares yours too.'),
           _greetLine(Icons.lock_outline_rounded,
               'This ticket closes once the match ends — save any number you want to keep.'),
           const SizedBox(height: 13),
-          AppButton("See everyone's number",
+          AppButton('Players and numbers',
               full: true,
               height: 44,
               icon: Icons.contact_phone_outlined,
@@ -638,6 +644,41 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
         ],
       );
 
+  /// The line under a player's name. A number when we're connected; otherwise
+  /// why not — deliberately worded so "hasn't shared" never reads as a snub.
+  String _subtitleFor(Map<String, dynamic> p, String phone) {
+    if (phone.isNotEmpty) return phone;
+    if (!widget.isOpen) return 'Hidden — ticket closed';
+    switch (p['share_state'] as String?) {
+      case 'me':
+        return 'Your number';
+      case 'pending':
+        return 'Waiting for them to share';
+      case 'shared':
+        return 'No number on file';
+      default:
+        return 'Ask to swap numbers';
+    }
+  }
+
+  Future<void> _askForNumber(Map<String, dynamic> p) async {
+    final id = p['player_id'] as String;
+    setState(() => _asking = id);
+    final err = await TicketService.requestNumber(widget.ticketId, id);
+    if (!mounted) return;
+    final roster = await TicketService.roster(widget.ticketId);
+    if (!mounted) return;
+    setState(() {
+      _asking = null;
+      _roster = roster;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: err == null ? null : AppColors.danger,
+        content: Text(err ??
+            'Asked ${_nameOf(p).split(' ').first} — they\'ll see your number too if they accept.')));
+  }
+
   Widget _playerCard(Map<String, dynamic> p) {
     final me = p['is_me'] == true;
     final name = _nameOf(p);
@@ -667,12 +708,7 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
                     ],
                   ]),
                   const SizedBox(height: 2),
-                  Text(
-                      phone.isNotEmpty
-                          ? phone
-                          : (widget.isOpen
-                              ? 'No number on file'
-                              : 'Hidden — ticket closed'),
+                  Text(_subtitleFor(p, phone),
                       style: AppText.small(phone.isNotEmpty
                               ? AppColors.inkSoft
                               : AppColors.inkFaint)
@@ -693,6 +729,17 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
               }),
               const SizedBox(width: 7),
               _roundBtn(Icons.call_rounded, filled: true, onTap: () => _call(phone)),
+            ] else if (widget.isOpen && p['share_state'] == 'none') ...[
+              const SizedBox(width: 8),
+              AppButton('Ask',
+                  height: 32,
+                  variant: AppBtnVariant.ghost,
+                  onPressed: _asking == p['player_id']
+                      ? null
+                      : () => _askForNumber(p)),
+            ] else if (widget.isOpen && p['share_state'] == 'pending') ...[
+              const SizedBox(width: 8),
+              const AppTag('ASKED', color: AppColors.gold),
             ],
             const SizedBox(width: 4),
             // Report/block the player themselves, not one message.

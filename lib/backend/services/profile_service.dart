@@ -481,4 +481,47 @@ class ProfileService {
       return const [];
     }
   }
+
+  // ── Phone privacy ──────────────────────────────────────────────────────────
+  //
+  // Whether a number is visible is decided in Postgres (`_can_see_phone`), not
+  // here — these just drive the privacy screen.
+
+  /// Toggle `profiles.phone_public`. Off (the default) means players in your
+  /// matches have to ask before they see your number; it never blocks the ask
+  /// itself. Returns an error message or null.
+  static Future<String?> setPhonePublic(bool on) async {
+    try {
+      await _db.rpc('set_phone_public', params: {'p_on': on});
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Everyone I've swapped numbers with.
+  static Future<List<Map<String, dynamic>>> myContactShares() async {
+    try {
+      final rows = await _db.rpc('my_contact_shares');
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (e) {
+      debugPrint('[ProfileService] myContactShares: $e');
+      return [];
+    }
+  }
+
+  /// Undo a swap. Cuts both ways — one row covers the pair.
+  static Future<String?> revokeContactShare(String otherId) async {
+    try {
+      final res =
+          await _db.rpc('revoke_contact_share', params: {'p_other': otherId});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
 }

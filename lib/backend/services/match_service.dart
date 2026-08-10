@@ -18,7 +18,10 @@ class MatchService {
       'result_submitted_by, '
       'courts(name, venue_name, lat, lng, address), '
       'match_players(player_id, team, elo_before, elo_after, '
-      '  profiles(id, name, elo, level, tier, phone, username))';
+      // No `phone` here on purpose. It used to ship a number to the client for
+      // every co-player and leave the decision to Dart; the contact sheet now
+      // asks `player_phone(uuid)`, which applies `_can_see_phone` in Postgres.
+      '  profiles(id, name, elo, level, tier, username))';
 
   // ── Matchmaking discovery (band-gatekept) ──────────────────────────────────
 
@@ -179,6 +182,22 @@ class MatchService {
     } catch (e) {
       debugPrint('[MatchService] myInvites: $e');
       return [];
+    }
+  }
+
+  /// A co-player's phone number, or null when you're not entitled to it.
+  ///
+  /// Postgres decides: you must share a match with them AND either have swapped
+  /// numbers or they set `phone_public`. Never cache the result — the answer
+  /// changes when either of you changes your mind.
+  static Future<String?> playerPhone(String playerId) async {
+    try {
+      final res = await _db.rpc('player_phone', params: {'p_player': playerId});
+      final s = (res as String?)?.trim();
+      return (s == null || s.isEmpty) ? null : s;
+    } catch (e) {
+      debugPrint('[MatchService] playerPhone: $e');
+      return null;
     }
   }
 

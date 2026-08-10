@@ -626,11 +626,17 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         ),
       );
 
-  /// Bottom sheet to reach a co-player: in-app message or their phone number
-  /// (copy + native call).
-  void _showContactSheet(Map<String, dynamic> p) {
+  /// Bottom sheet to reach a co-player: in-app message, plus their phone number
+  /// (copy + native call) IF they've shared it.
+  ///
+  /// The number is fetched per-tap from `player_phone`, not read off the match
+  /// payload — being in a match together is no longer enough to see it, and the
+  /// only place that decides is Postgres.
+  Future<void> _showContactSheet(Map<String, dynamic> p) async {
     final prof = p['profiles'] as Map?;
-    final phone = (prof?['phone'] as String?)?.trim() ?? '';
+    final phone =
+        await MatchService.playerPhone(p['player_id'] as String) ?? '';
+    if (!mounted) return;
     final username = (prof?['username'] as String?)?.trim() ?? '';
     final elo = (prof?['elo'] as num?)?.toInt() ?? 1000;
 
@@ -726,8 +732,11 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                       color: AppColors.field,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: AppColors.line)),
-                  child: Text("This player hasn't shared a number yet.",
-                      style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13)),
+                  child: Text(
+                      'No number here. Open the match ticket and ask for it — '
+                      'if they accept, you\'ll both have each other\'s.',
+                      style: AppText.body(AppColors.inkSoft)
+                          .copyWith(fontSize: 13, height: 1.4)),
                 )
               else
                 Container(
