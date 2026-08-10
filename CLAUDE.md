@@ -121,6 +121,17 @@ before changing anything.
   `RESEND_API_KEY` and `REPORT_FROM` are set. What is still missing is the SQL:
   the functions call `report_link_ensure`, `report_render` and
   `report_recipients_active`, so nothing sends until deltas 12 and 13 run.
+  **The page MUST be served through Cloudflare, not the Supabase URL**
+  (2026-08-10). Supabase's gateway rewrites an Edge Function's
+  `Content-Type: text/html` to `text/plain` and adds `nosniff` + a
+  `default-src 'none'; sandbox` CSP — deliberate, so `*.supabase.co` can't host
+  phishing pages — so the browser paints the page SOURCE instead of the page.
+  Nothing set inside the function can override it; the rewrite happens after
+  the response leaves the runtime. `functions/report.js` (a Cloudflare **Pages
+  Function**, hence the `functions/` dir at the REPO ROOT, not in `docs/`)
+  proxies the same body back with the right header at
+  `padel-rivals.com/report`, and `REPORT_BASE_URL` points the mailer there.
+  Tokens are unchanged, so links already sent keep working.
 - **Sponsors / partners** (added 2026-08-06): the `sponsors` table is the
   player-facing "Our Partners" page (`lib/frontend/screens/sponsors/`, read via
   `SponsorService`), reached from the Home "Our Partners" strip. Managed from
