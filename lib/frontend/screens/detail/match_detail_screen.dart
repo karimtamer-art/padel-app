@@ -412,14 +412,22 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            _teamSide(teamA, 'Team A'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              child: Text('VS', style: AppText.stat(26, AppColors.heroInk).copyWith(letterSpacing: 2)),
-            ),
-            _teamSide(teamB, 'Team B'),
-          ]),
+          // Each side takes half of whatever is left after "VS", instead of a
+          // fixed 110 — a doubles team is two names joined by "&", which never
+          // fitted and always ellipsised ("Mohamed & …").
+          child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: _teamSide(teamA, 'Team A')),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('VS',
+                      style: AppText.stat(26, AppColors.heroInk)
+                          .copyWith(letterSpacing: 2)),
+                ),
+                Expanded(child: _teamSide(teamB, 'Team B')),
+              ]),
         ),
         Transform.translate(
           offset: const Offset(0, 26),
@@ -449,29 +457,45 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
         ? 'Open'
         : team.map(_first).join(' & ');
     final firstP = team.isNotEmpty ? team.first : null;
-    final sub = firstP == null
-        ? 'waiting for players'
-        : team.map((p) {
-            final prof = p['profiles'] as Map?;
-            if (prof?['level'] == null && prof?['elo'] == null) return 'Unranked';
-            final lv = (prof?['level'] as num?)?.toDouble() ??
-                RankingScale.levelFromElo((prof?['elo'] as num?)?.toInt() ?? 1000);
-            return RankingScale.fmtLevel(lv);
-          }).join(' · ');
-    return SizedBox(
-      width: 110,
-      child: Column(children: [
-        AppAvatar(firstP == null ? '?' : _initials(firstP),
-            size: 64,
-            color: mine ? AppColors.primary : AppColors.heroFaint,
-            ring: 2.5),
-        const SizedBox(height: 8),
-        Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: AppText.bodyStrong(AppColors.heroInk)),
-        Text(firstP == null ? fallback : 'Lv $sub',
-            style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 11)),
-      ]),
-    );
+
+    // One entry per player. An unranked player has no level, so it must NOT be
+    // prefixed with "Lv" — that produced the nonsense "Lv Unranked".
+    final levels = team.map((p) {
+      final prof = p['profiles'] as Map?;
+      if (prof?['level'] == null && prof?['elo'] == null) return null;
+      final lv = (prof?['level'] as num?)?.toDouble() ??
+          RankingScale.levelFromElo((prof?['elo'] as num?)?.toInt() ?? 1000);
+      return RankingScale.fmtLevel(lv);
+    }).toList();
+
+    // All ranked → one "Lv" in front of the list ("Lv 2.0 · 2.5"). Any unranked
+    // → label each entry, so the mix reads honestly ("Lv 2.0 · Unranked").
+    final String sub;
+    if (firstP == null) {
+      sub = fallback;
+    } else if (levels.every((l) => l != null)) {
+      sub = 'Lv ${levels.join(' · ')}';
+    } else {
+      sub = levels.map((l) => l == null ? 'Unranked' : 'Lv $l').join(' · ');
+    }
+
+    return Column(children: [
+      AppAvatar(firstP == null ? '?' : _initials(firstP),
+          size: 64,
+          color: mine ? AppColors.primary : AppColors.heroFaint,
+          ring: 2.5),
+      const SizedBox(height: 8),
+      Text(label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: AppText.bodyStrong(AppColors.heroInk)),
+      Text(sub,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 11)),
+    ]);
   }
 
   Widget _seg(String label, int i) => Expanded(
@@ -513,11 +537,19 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
             Row(children: [
               Text('PLAYERS', style: AppText.kicker()),
               const Spacer(),
+              // Counts who has JOINED, not who has readied up — there is no
+              // ready flag. "3/4 ready" beside an empty slot read as though the
+              // match were about to start. Pending invites keep their own
+              // wording, since a held slot is neither joined nor free.
               AppTag(
-                  _invites.isEmpty
-                      ? '${_players.length}/4 ready'
-                      : '${_players.length}/4 · ${_invites.length} invited',
-                  color: _players.length == 4 ? AppColors.success : AppColors.accent),
+                  _invites.isNotEmpty
+                      ? '${_players.length}/4 · ${_invites.length} invited'
+                      : _players.length == 4
+                          ? 'Full · 4/4'
+                          : '${_players.length}/4 joined',
+                  color: _players.length == 4
+                      ? AppColors.success
+                      : AppColors.accent),
             ]),
             for (int i = 0; i < _players.length; i++) ...[
               if (i > 0) const Divider(color: AppColors.line),
