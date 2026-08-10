@@ -343,17 +343,58 @@ class AuthService {
     }
   }
 
+  // ── Reset cooldown ─────────────────────────────────────────────────────────
+  //
+  // Lives HERE, not in the screens' state, because widget state dies with the
+  // widget: a countdown held in the sign-in screen resets the moment you back
+  // out and come back, which is two taps away and turns the whole guard into
+  // decoration. Keyed by email so one player waiting doesn't block another on
+  // a shared device.
+  //
+  // In-memory on purpose — this exists to stop impatient tapping, not to
+  // enforce a quota. Supabase's own per-hour limit is the real ceiling; if
+  // this survived restarts it would start lying to someone who reinstalled.
+
+  static const resetCooldown = Duration(seconds: 60);
+  static final Map<String, DateTime> _resetSentAt = {};
+
+  static String _emailKey(String email) => email.trim().toLowerCase();
+
+  /// Seconds still to wait before [email] may request another link. 0 = ready.
+  static int resetCooldownRemaining(String email) {
+    final at = _resetSentAt[_emailKey(email)];
+    if (at == null) return 0;
+    final left = resetCooldown.inSeconds - DateTime.now().difference(at).inSeconds;
+    return left > 0 ? left : 0;
+  }
+
   /// Mails a password-reset link. Returns null on success, else a message.
   ///
   /// [redirectTo] is what makes the link come back INTO the app rather than
   /// Supabase's default web page, which is what gives the player somewhere to
   /// type a new password.
+  /// The cooldown is enforced here rather than only in the button, so a screen
+  /// that forgets to check can't punch through it.
   static Future<String?> sendPasswordReset(String email) async {
+    final wait = resetCooldownRemaining(email);
+    if (wait > 0) {
+      return 'We just sent one — check your inbox and spam, or try again in ${wait}s.';
+    }
     try {
       await _db.auth.resetPasswordForEmail(email.trim(),
           redirectTo: passwordResetUrl);
+      // Stamped only on success: a send that failed is worth retrying at once.
+      _resetSentAt[_emailKey(email)] = DateTime.now();
       return null;
     } on AuthException catch (e) {
+      // Supabase rate-limited us anyway (its window is longer than ours, and
+      // it counts sends we didn't make — e.g. from another device). Start the
+      // cooldown so the UI stops inviting another tap.
+      if (e.statusCode == '429' ||
+          e.message.toLowerCase().contains('rate limit') ||
+          e.message.toLowerCase().contains('security purposes')) {
+        _resetSentAt[_emailKey(email)] = DateTime.now();
+      }
       return _friendlyAuthError(e);
     } catch (e) {
       return 'Could not send the reset email. Please try again.';

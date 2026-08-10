@@ -146,7 +146,13 @@ before changing anything.
     `email_exists()`** — revisit both together or neither.
   - **Both entry points have a busy label + 60s cooldown.** Supabase's own
     limit is invisible to the user, so the client has to be the thing that
-    says "sent, wait".
+    says "sent, wait". The clock is `AuthService.resetCooldownRemaining`
+    (a static map keyed by email) and **not** widget state — a countdown held
+    in the screen resets when you back out and return, which is two taps away
+    from being no guard at all. `sendPasswordReset` enforces it itself so a
+    screen that forgets to check can't punch through, and it also starts the
+    clock when Supabase answers 429, since that ban is longer than ours and
+    counts sends from other devices.
   - **The link comes back into the app**: `AuthService.passwordResetUrl` =
     `padelclay://reset-password/`, a **different host** from the OAuth callback
     `padelclay://login-callback/`. On Android the two are claimed by different

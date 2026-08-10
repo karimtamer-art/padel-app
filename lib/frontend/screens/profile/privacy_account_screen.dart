@@ -43,6 +43,8 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
     _loadPhone();
     _loadBlocked();
     _loadShares();
+    // A cooldown from an earlier visit still applies.
+    _syncResetCooldown();
   }
 
   Future<void> _loadShares() async {
@@ -89,17 +91,22 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(behavior: SnackBarBehavior.floating, content: Text(msg)));
 
-  void _startResetCooldown() {
-    _resetTimer?.cancel();
-    setState(() => _resetCooldown = 60);
-    _resetTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      setState(() => _resetCooldown--);
-      if (_resetCooldown <= 0) t.cancel();
-    });
+  /// Re-reads the countdown from AuthService, which is where it actually lives
+  /// — leaving this screen and coming back resumes the same clock rather than
+  /// handing out a fresh one.
+  void _syncResetCooldown() {
+    final email = _user?.email;
+    if (email == null) return;
+    final left = AuthService.resetCooldownRemaining(email);
+    if (left == _resetCooldown) return;
+    setState(() => _resetCooldown = left);
+    if (left > 0) {
+      _resetTimer ??= Timer.periodic(
+          const Duration(seconds: 1), (_) => _syncResetCooldown());
+    } else {
+      _resetTimer?.cancel();
+      _resetTimer = null;
+    }
   }
 
   Future<void> _changePassword() async {
@@ -112,12 +119,10 @@ class _PrivacyAccountScreenState extends State<PrivacyAccountScreen> {
     final err = await AuthService.sendPasswordReset(email);
     if (!mounted) return;
     setState(() => _resetBusy = false);
-    if (err != null) {
-      _snack(err);
-      return;
-    }
-    _startResetCooldown();
-    _snack('Reset link sent to $email. Check your inbox and spam.');
+    // The service stamps the clock on success AND on a server-side rate-limit,
+    // so resync either way before reporting.
+    _syncResetCooldown();
+    _snack(err ?? 'Reset link sent to $email. Check your inbox and spam.');
   }
 
   @override

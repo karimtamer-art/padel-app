@@ -42,24 +42,37 @@ class _SignInScreenState extends State<SignInScreen> {
   Timer? _resetTimer;
 
   @override
+  void initState() {
+    super.initState();
+    // A cooldown started before this screen was built (or on a previous visit)
+    // still applies — pick it up rather than showing a live-looking link.
+    _email.addListener(_syncResetCooldown);
+    _syncResetCooldown();
+  }
+
+  @override
   void dispose() {
     _resetTimer?.cancel();
+    _email.removeListener(_syncResetCooldown);
     _email.dispose();
     _password.dispose();
     super.dispose();
   }
 
-  void _startResetCooldown() {
-    _resetTimer?.cancel();
-    setState(() => _resetCooldown = 60);
-    _resetTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      setState(() => _resetCooldown--);
-      if (_resetCooldown <= 0) t.cancel();
-    });
+  /// Re-reads the countdown from AuthService, which is where it actually lives.
+  /// Called on every tick and whenever the typed email changes, so leaving the
+  /// screen and coming back resumes the same clock instead of clearing it.
+  void _syncResetCooldown() {
+    final left = AuthService.resetCooldownRemaining(_email.text);
+    if (left == _resetCooldown) return;
+    setState(() => _resetCooldown = left);
+    if (left > 0) {
+      _resetTimer ??= Timer.periodic(
+          const Duration(seconds: 1), (_) => _syncResetCooldown());
+    } else {
+      _resetTimer?.cancel();
+      _resetTimer = null;
+    }
   }
 
   Future<void> _forgotPassword() async {
@@ -70,6 +83,16 @@ class _SignInScreenState extends State<SignInScreen> {
           behavior: SnackBarBehavior.floating,
           content:
               Text('Enter your email above first, then tap Forgot password.')));
+      return;
+    }
+    // Re-check against the shared clock, not just the label: this screen may
+    // have been rebuilt since the last send.
+    if (AuthService.resetCooldownRemaining(email) > 0) {
+      _syncResetCooldown();
+      messenger.showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+              'Already sent — check your inbox and spam, or try again in ${_resetCooldown}s.')));
       return;
     }
     setState(() => _resetBusy = true);
@@ -99,12 +122,14 @@ class _SignInScreenState extends State<SignInScreen> {
     final err = await AuthService.sendPasswordReset(email);
     if (!mounted) return;
     setState(() => _resetBusy = false);
+    // Either way the service may have stamped the clock (it does so on a
+    // server-side rate-limit too), so always resync before reporting.
+    _syncResetCooldown();
     if (err != null) {
       messenger.showSnackBar(SnackBar(
           behavior: SnackBarBehavior.floating, content: Text(err)));
       return;
     }
-    _startResetCooldown();
     messenger.showSnackBar(SnackBar(
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 5),
