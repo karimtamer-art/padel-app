@@ -56,10 +56,36 @@ before changing anything.
 ## Key flows (so you don't "fix" working behavior)
 
 - **Create match**: `create_match_sheet.dart` → `MatchService.createMatch`
-  (inserts `matches` + `match_players`, creator on team A) → root scaffold
+  (inserts `matches` + `match_players`, creator on team A ONLY) → root scaffold
   opens `MatchDetailScreen(matchId)` and bumps a key to refresh Home.
 - **Join/leave**: via RPCs (`join_match`, `leave_match`) — capacity, min-ELO
   and team balance are checked server-side on purpose. Don't move that to Dart.
+- **A named partner is INVITED, never inserted** (2026-08-10, security fix).
+  `create_match` / `join_match` / `mm_accept` all take a `p_partner_id`, and all
+  three used to insert that person straight into `match_players`. Ticket
+  membership derives from `match_players` and `ticket_roster()` serves phone
+  numbers to members — so typing a stranger into the partner picker was a free
+  phone-number lookup on anyone, plus it dragged them into a thread. Now
+  `_invite_partner` writes a `match_invites` row (status `pending`) and
+  notifies them; **only `respond_match_invite(p_invite, true)` inserts the
+  `match_players` row.** Until then they are not a player, not a ticket member,
+  and nothing of theirs is served anywhere.
+  - The pending invite **reserves its slot**: capacity goes through
+    `_match_taken` / `_team_taken` (players + live invites), so nobody can take
+    the seat while they decide. Reservation is **time-derived** (pending + match
+    open + not yet started), so it lapses correctly with no pg_cron; a decline
+    or a lapse frees the slot to anyone. `status='full'` still means four REAL
+    players.
+  - An invitee can't read the match under `matches: participant read`, so
+    `_invited_to_match()` + the `matches: invitee read` policy exist purely so
+    the notification's deep-link isn't an empty screen. Accept/Decline lives in
+    the `MatchDetailScreen` footer.
+  - **The match ticket now opens on the join that first puts a player on BOTH
+    sides** (was: a trigger on `matches` INSERT, i.e. immediately). The trigger
+    is `trg_open_match_ticket_join` on `match_players`.
+  - `matchCols` still embeds `profiles(... phone ...)`, so match_players is the
+    single gate for phone exposure — don't add anyone to it without consent.
+  - See `supabase/changes/2026-08-10_partner_invites.sql`.
 - **Score flow**: only players in the match can submit; only the OTHER team
   can confirm; settlement runs inside `confirm_match_result` → `_settle_rating`.
   Sets are stored as team-A-perspective strings, per set `A-B` comma-separated

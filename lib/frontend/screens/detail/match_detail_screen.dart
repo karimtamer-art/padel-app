@@ -32,6 +32,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   Map<String, dynamic>? _myRating; // my ranking_history row for this match
   bool _loading = true;
   bool _busy = false;
+  List<Map<String, dynamic>> _invites = const [];
   List<List<int>> _sets = [
     [0, 0],
     [0, 0]
@@ -48,10 +49,14 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   Future<void> _load() async {
     final m = await MatchService.fetchMatch(widget.matchId);
     final rating = await _fetchMyRatingChange();
+    // Slots held for players who were invited but haven't answered yet. They
+    // are NOT match_players, so they carry a name and nothing else.
+    final invites = await MatchService.pendingInvites(widget.matchId);
     if (!mounted) return;
     setState(() {
       _match = m;
       _myRating = rating;
+      _invites = invites;
       _loading = false;
     });
   }
@@ -103,7 +108,17 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   }
 
   bool get _ended => _when != null && _when!.isBefore(DateTime.now());
+  /// Playable means four REAL players — a slot held for an unanswered invite
+  /// doesn't make a 2v2.
   bool get _full => _players.length >= 4;
+
+  /// The invite waiting on me for this match, if any.
+  Map<String, dynamic>? get _myInvite {
+    for (final i in _invites) {
+      if (i['is_me'] == true) return i;
+    }
+    return null;
+  }
   bool get _isHost => _uid != null && _match?['created_by'] == _uid;
 
   bool get _iSubmitted {
@@ -168,15 +183,49 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
     }
   }
 
+  Future<void> _answerInvite(bool accept) async {
+    final id = _myInvite?['invite_id'] as String?;
+    if (id == null) return;
+    if (!accept) {
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text('Decline this invite?', style: AppText.bodyStrong()),
+          content: Text(
+              'The spot opens up for anyone else. You can still join later if it '
+              'is still free.',
+              style: AppText.small().copyWith(height: 1.45)),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(c, false),
+                child: Text('Keep it', style: AppText.bodyStrong())),
+            TextButton(
+                onPressed: () => Navigator.pop(c, true),
+                child: Text('Decline',
+                    style: AppText.bodyStrong(AppColors.danger))),
+          ],
+        ),
+      );
+      if (sure != true || !mounted) return;
+    }
+    await _run(() => MatchService.respondToInvite(id, accept: accept),
+        ok: accept
+            ? "You're in! See you on court."
+            : 'Declined — the spot is open again.');
+  }
+
   Future<void> _join() async {
+    // Held slots aren't free slots — offering them would let someone pick a
+    // partner for a seat the server will refuse.
     final choice = await showJoinMatchSheet(context,
-        slotsLeft: (4 - _players.length).clamp(0, 4));
+        slotsLeft: (4 - _players.length - _invites.length).clamp(0, 4));
     if (choice == null || !mounted) return;
     await _run(
         () => MatchService.joinMatch(widget.matchId, partnerId: choice.partnerId),
         ok: choice.solo
             ? "You're in! See you on court."
-            : 'You and your partner are in! See you on court.');
+            : "You're in — we've asked your partner and we're holding their spot.");
   }
 
   Future<void> _leave() async {
@@ -464,14 +513,24 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
             Row(children: [
               Text('PLAYERS', style: AppText.kicker()),
               const Spacer(),
-              AppTag('${_players.length}/4 ready',
+              AppTag(
+                  _invites.isEmpty
+                      ? '${_players.length}/4 ready'
+                      : '${_players.length}/4 · ${_invites.length} invited',
                   color: _players.length == 4 ? AppColors.success : AppColors.accent),
             ]),
             for (int i = 0; i < _players.length; i++) ...[
               if (i > 0) const Divider(color: AppColors.line),
               _playerRow(_players[i]),
             ],
-            for (int i = _players.length; i < 4; i++) ...[
+            // Invited but not yet in: held slots sit between the real players
+            // and the open ones, so the card reads top-to-bottom as
+            // confirmed → waiting → free.
+            for (int i = 0; i < _invites.length; i++) ...[
+              if (_players.isNotEmpty || i > 0) const Divider(color: AppColors.line),
+              _invitedSlot(_invites[i]),
+            ],
+            for (int i = _players.length + _invites.length; i < 4; i++) ...[
               if (i > 0) const Divider(color: AppColors.line),
               _emptySlot(),
             ],
@@ -760,6 +819,45 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   void _toast(String msg) {
     if (!mounted) return;
     AppToast.show(context, msg);
+  }
+
+  /// A slot held for someone who was invited and hasn't answered. Name and
+  /// team only — no rank, no contact button, no phone. They haven't agreed to
+  /// be here yet, so nothing of theirs is on offer.
+  Widget _invitedSlot(Map<String, dynamic> inv) {
+    final mine = inv['is_me'] == true;
+    final name = (inv['invitee_name'] as String?)?.trim();
+    final label = mine ? 'You' : (name?.isNotEmpty == true ? name! : 'A player');
+    final initials = _initialsOf(name);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(children: [
+        Opacity(
+          opacity: 0.55,
+          child: AppAvatar(initials, size: 38, color: AppColors.inkFaint, ring: 1.5),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: AppText.bodyStrong(AppColors.inkSoft)),
+            Text('Invited · Team ${(inv['team'] as String? ?? 'a').toUpperCase()}',
+                style: AppText.small().copyWith(fontSize: 11)),
+          ]),
+        ),
+        const AppTag('Waiting', color: AppColors.gold),
+      ]),
+    );
+  }
+
+  static String _initialsOf(String? name) {
+    final t = (name ?? '').trim();
+    if (t.isEmpty) return '?';
+    return t
+        .split(RegExp(r'\s+'))
+        .take(2)
+        .map((w) => w.isEmpty ? '' : w[0])
+        .join()
+        .toUpperCase();
   }
 
   Widget _emptySlot() => Padding(
@@ -1194,10 +1292,31 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   Widget _footer() {
     Widget? content;
 
-    if (!_inMatch && _status == 'open') {
-      content = AppButton(_busy ? 'Joining…' : 'Join Match',
+    if (!_inMatch && _myInvite != null && _status == 'open') {
+      // I was asked to partner up. Answering is the only thing to do here —
+      // accepting is what actually puts me in the match.
+      content = Row(children: [
+        Expanded(
+          child: AppButton(_busy ? '…' : 'Decline',
+              full: true, height: 52, variant: AppBtnVariant.ghost,
+              onPressed: _busy ? null : () => _answerInvite(false)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          flex: 2,
+          child: AppButton(_busy ? 'Joining…' : 'Accept invite',
+              full: true, height: 52, icon: Icons.check_rounded,
+              onPressed: _busy ? null : () => _answerInvite(true)),
+        ),
+      ]);
+    } else if (!_inMatch && _status == 'open') {
+      final noSeats = _players.length + _invites.length >= 4;
+      content = AppButton(
+          _busy
+              ? 'Joining…'
+              : (noSeats ? 'Every spot is taken' : 'Join Match'),
           full: true, height: 52, icon: Icons.sports_tennis_rounded,
-          onPressed: _busy ? null : _join);
+          onPressed: (_busy || noSeats) ? null : _join);
     } else if (_view == 1 && _inMatch && _full) {
       // Score/confirm only for a full 2v2.
       if ((_status == 'open' || _status == 'full' || _status == 'in_progress') && _ended) {

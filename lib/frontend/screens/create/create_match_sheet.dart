@@ -246,7 +246,9 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
               const SizedBox(height: 5),
               Center(
                 child: Text(
-                  "We're finding players near your level and city. You'll be notified when your match fills.",
+                  partnerName == null
+                      ? "We're finding players near your level and city. You'll be notified when your match fills."
+                      : "We've asked ${_firstName(partnerName)} and we're holding their spot. We're finding your opponents in the meantime.",
                   textAlign: TextAlign.center,
                   style: AppText.small().copyWith(fontSize: 13.5, height: 1.5),
                 ),
@@ -340,7 +342,8 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
           child: Column(children: [
             _sumRow('When', '${_dayLabel(_date)}, ${_todLabel(_tod)}'),
             _sumRow('Court', courtName),
-            _sumRow('Your partner', partnerName ?? 'Open spot'),
+            _sumRow('Your partner',
+                partnerName == null ? 'Open spot' : '$partnerName · awaiting reply'),
           ]),
         ),
       ]),
@@ -683,10 +686,37 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         _label('Your partner'),
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: Text('Padel is doubles — pick a friend for your side, or leave it open and the matchmaker fills all spots.',
+          child: Text('Padel is doubles — ask a friend to take your side, or leave it open and the matchmaker fills all spots.',
               style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
         ),
         _partnerPick(),
+        // The invite is a request, not an enrolment: they are not in the match,
+        // and none of their details are shared, until they say yes.
+        if (_partner != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+              color: AppColors.gold.withValues(alpha: 0.09),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.schedule_rounded, size: 18, color: AppColors.gold),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text.rich(TextSpan(children: [
+                  TextSpan(
+                      text: '${_firstName(_partner!['name'] as String?)} has to accept. ',
+                      style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
+                  TextSpan(
+                      text: "We'll hold the spot for them until they do — nobody else can take it.",
+                      style: AppText.small().copyWith(fontSize: 12.5, height: 1.45)),
+                ])),
+              ),
+            ]),
+          ),
+        ],
         const SizedBox(height: 22),
         // The matchmaker (rating band + city + time window) decides who this
         // match is offered to — no public/private lobby or manual level floor.
@@ -720,10 +750,20 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
             _sumRow('Type', _type == 0 ? 'Competitive · Doubles' : 'Casual · Doubles'),
             _sumRow('When', '${_dayLabel(_date)}, ${_todLabel(_tod)}'),
             _sumRow('Court', _courtName()),
-            _sumRow('Your partner', _partner?['name'] as String? ?? 'Open spot'),
+            _sumRow(
+                'Your partner',
+                _partner == null
+                    ? 'Open spot'
+                    : '${_partner!['name']} · awaiting reply'),
           ]),
         ),
       ]);
+
+  static String _firstName(String? full) {
+    final t = (full ?? '').trim();
+    if (t.isEmpty) return 'They';
+    return t.split(RegExp(r'\s+')).first;
+  }
 
   String _courtName() {
     if (_courtId == null) return 'To be agreed';

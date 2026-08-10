@@ -147,6 +147,56 @@ class MatchService {
     }
   }
 
+  // ── Partner invites ────────────────────────────────────────────────────────
+  //
+  // Naming a partner raises an invite; it does NOT put them in the match. Until
+  // they accept they are not a match_player, so they have no ticket membership
+  // and no phone number of theirs is served anywhere. Their slot is held for
+  // them server-side (see `_match_taken`), so nobody else can take it while
+  // they decide.
+
+  /// The reserved slots on a match — who was invited and to which team. Name
+  /// and avatar only; there is deliberately no phone number here.
+  static Future<List<Map<String, dynamic>>> pendingInvites(String matchId) async {
+    try {
+      final rows =
+          await _db.rpc('match_pending_invites', params: {'p_match': matchId});
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (e) {
+      // A pre-migration DB has no such RPC — a match with no reserved slots is
+      // the right answer there, not a broken lobby.
+      debugPrint('[MatchService] pendingInvites: $e');
+      return [];
+    }
+  }
+
+  /// Invites waiting on ME. Dead ones (match started, filled or cancelled) are
+  /// filtered server-side.
+  static Future<List<Map<String, dynamic>>> myInvites() async {
+    try {
+      final rows = await _db.rpc('my_match_invites');
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (e) {
+      debugPrint('[MatchService] myInvites: $e');
+      return [];
+    }
+  }
+
+  /// Accept or decline a partner invite. Returns an error message or null.
+  /// Accepting is what actually inserts the match_players row.
+  static Future<String?> respondToInvite(String inviteId,
+      {required bool accept}) async {
+    try {
+      final res = await _db.rpc('respond_match_invite',
+          params: {'p_invite': inviteId, 'p_accept': accept});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Active courts for the create flow. Only public courts are offered to
   /// players — organizer courts (is_public = false) stay inside the community.
   /// Falls back to the unfiltered query on pre-migration DBs without is_public.

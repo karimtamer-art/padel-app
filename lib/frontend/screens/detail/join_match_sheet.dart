@@ -119,10 +119,10 @@ class _JoinMatchSheetState extends State<_JoinMatchSheet> {
           _optionCard(
             selected: _withPartner,
             icon: Icons.group_add_rounded,
-            title: 'Bring a partner',
+            title: 'Ask a partner',
             sub: _pairBlocked
                 ? 'Only one seat left — join solo instead.'
-                : 'You and your partner take one side.',
+                : "You take one side together — they'll be asked to accept.",
             onTap: _pairBlocked ? null : _pickPartnerMode,
           ),
           if (_withPartner && !_pairBlocked) ...[
@@ -132,7 +132,7 @@ class _JoinMatchSheetState extends State<_JoinMatchSheet> {
           const SizedBox(height: 18),
           AppButton(
             _withPartner
-                ? (_partner == null ? 'Pick a partner' : 'Join with partner')
+                ? (_partner == null ? 'Pick a partner' : 'Join and send invite')
                 : 'Join solo',
             full: true, height: 52,
             icon: Icons.sports_tennis_rounded,
