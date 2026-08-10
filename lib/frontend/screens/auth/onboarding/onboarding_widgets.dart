@@ -126,19 +126,33 @@ class ChoiceCard extends StatelessWidget {
 }
 
 /// Padel-court diagram highlighting the chosen half — used for Court Side.
+///
+/// Two independent halves rather than one "is it the left?" flag, because a
+/// player can prefer either side: "both" lights up the whole court.
 class CourtSideGlyph extends StatelessWidget {
-  final bool leftActive;
+  final bool leftFill;
+  final bool rightFill;
   final bool selected;
-  const CourtSideGlyph({super.key, required this.leftActive, required this.selected});
+
+  /// Narrower when three choices share a row.
+  final double width;
+
+  const CourtSideGlyph({
+    super.key,
+    required this.leftFill,
+    required this.rightFill,
+    required this.selected,
+    this.width = 70,
+  });
 
   @override
   Widget build(BuildContext context) {
     final c = selected ? AppColors.primary : AppColors.inkFaint;
     final fill = selected ? AppColors.primary.withValues(alpha: 0.18) : AppColors.primary.withValues(alpha: 0.06);
-    final left = leftActive ? fill : Colors.transparent;
-    final right = leftActive ? Colors.transparent : fill;
+    final left = leftFill ? fill : Colors.transparent;
+    final right = rightFill ? fill : Colors.transparent;
     return Container(
-      width: 70,
+      width: width,
       height: 46,
       decoration: BoxDecoration(border: Border.all(color: c, width: 2), borderRadius: BorderRadius.circular(6)),
       child: Stack(children: [

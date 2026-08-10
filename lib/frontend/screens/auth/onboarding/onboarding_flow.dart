@@ -408,13 +408,18 @@ class _HandSideStep extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (int i = 0; i < CourtSidePref.values.length; i++) ...[
-            if (i > 0) const SizedBox(width: 12),
+            if (i > 0) const SizedBox(width: 10),
             Expanded(
               child: ChoiceCard(
                 label: CourtSidePref.values[i].label,
                 glyph: CourtSideGlyph(
-                  leftActive: CourtSidePref.values[i] == CourtSidePref.left,
+                  // "Both" lights up the whole court.
+                  leftFill: CourtSidePref.values[i] != CourtSidePref.right,
+                  rightFill: CourtSidePref.values[i] != CourtSidePref.left,
                   selected: side == CourtSidePref.values[i],
+                  // Three across instead of two — a 70pt court would overflow
+                  // the row on a narrow phone.
+                  width: 52,
                 ),
                 selected: side == CourtSidePref.values[i],
                 onTap: () => onSideChanged(CourtSidePref.values[i]),

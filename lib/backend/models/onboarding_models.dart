@@ -40,9 +40,15 @@ enum Hand {
   }
 }
 
+/// Which half of the court a player likes. `both` is a real answer in padel —
+/// plenty of players are happy either side — and it used to be silently
+/// rewritten to `right` because profiles_side_chk only permitted left/right.
+/// Widening that CHECK is in changes/2026-08-10_court_side_both.sql; the ids
+/// here and that constraint must stay in step.
 enum CourtSidePref {
   left('left', 'Left Side'),
-  right('right', 'Right Side');
+  right('right', 'Right Side'),
+  both('both', 'Both Sides');
 
   const CourtSidePref(this.id, this.label);
   final String id;
@@ -52,8 +58,6 @@ enum CourtSidePref {
     for (final s in values) {
       if (s.id == v) return s;
     }
-    // Legacy: old schema used 'both' as default — treat as having set a preference
-    if (v == 'both') return CourtSidePref.right;
     return null;
   }
 }
