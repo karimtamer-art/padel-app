@@ -62,6 +62,14 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   static String _msg(Object e) =>
       e is PostgrestException ? e.message : e.toString();
 
+  /// The racket handed back in the swap, or null if none was recorded. Reads
+  /// the stored label rather than the FK, so it survives the product being
+  /// renamed or deleted.
+  static String? _givenBack(Map row) {
+    final v = (row['given_name'] as String?)?.trim();
+    return (v == null || v.isEmpty) ? null : v;
+  }
+
   /// The seller's name: the linked account first, then the plain name typed in
   /// for a counter walk-in who has no account (trade_requests.player_name).
   static String _playerName(Map row) {
@@ -694,6 +702,14 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
           _kv('Your offer',
               t['offer_credit'] != null ? _egp(t['offer_credit']) : '—'),
         ]),
+        // Only when the swap was recorded — a player-submitted trade-in that
+        // nobody has completed yet has nothing to show here.
+        if (_givenBack(t) != null) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            _kv('Given back', _givenBack(t)!),
+          ]),
+        ],
         const SizedBox(height: 14),
         Container(
           padding: const EdgeInsets.all(14),
@@ -932,8 +948,15 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
   final _credit = TextEditingController();
   final _note = TextEditingController();
 
+  final _given = TextEditingController();
+
   List<Map<String, dynamic>> _results = [];
   Map<String, dynamic>? _player;
+  // The catalogue, loaded once so the "what we gave" picker can filter it
+  // locally — it is a shop's worth of products, not a searchable table.
+  List<Map<String, dynamic>> _products = [];
+  Map<String, dynamic>? _givenProduct;
+  String _givenQuery = '';
   String? _condition;
   // Accepted is what moves money, so it is never the default — the admin has
   // to choose it. See the hint under the selector.
@@ -950,9 +973,26 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
   };
 
   @override
+  void initState() {
+    super.initState();
+    _loadProducts();
+  }
+
+  Future<void> _loadProducts() async {
+    try {
+      final rows = await AdminService.fetchProducts();
+      if (!mounted) return;
+      setState(() => _products = rows);
+    } catch (_) {
+      // A missing catalogue just means the free-text field is the only route.
+    }
+  }
+
+  @override
   void dispose() {
     _search.dispose();
     _walkIn.dispose();
+    _given.dispose();
     _racket.dispose();
     _credit.dispose();
     _note.dispose();
@@ -996,6 +1036,11 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
       offerCredit: credit,
       note: _note.text,
       status: _status,
+      givenProductId: _givenProduct?['id'] as String?,
+      // Whichever route was used, the label is stored as written today.
+      givenName: _givenProduct != null
+          ? _productLabel(_givenProduct!)
+          : _given.text,
     );
     if (!mounted) return;
     setState(() => _busy = false);
@@ -1132,6 +1177,70 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
                     textCapitalization: TextCapitalization.sentences,
                     decoration: _dec('e.g. Babolat Viper 2023')),
                 const SizedBox(height: 16),
+                _label('Racket given back (optional)'),
+                if (_givenProduct != null)
+                  _selectedGiven()
+                else ...[
+                  TextField(
+                    controller: _given,
+                    style: AdminText.body(),
+                    textCapitalization: TextCapitalization.sentences,
+                    onChanged: (_) => setState(() {}),
+                    decoration: _dec('What they walked out with'),
+                  ),
+                  if (_products.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      const Expanded(
+                          child: Divider(color: AdminColors.lineSoft)),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Text('or pick from the store',
+                            style: AdminText.small(AdminColors.inkFaint)),
+                      ),
+                      const Expanded(
+                          child: Divider(color: AdminColors.lineSoft)),
+                    ]),
+                    const SizedBox(height: 10),
+                    TextField(
+                      style: AdminText.body(),
+                      onChanged: (v) => setState(() => _givenQuery = v),
+                      decoration: _dec('Search the catalogue'),
+                    ),
+                    const SizedBox(height: 8),
+                    for (final p in _matchingProducts())
+                      InkWell(
+                        onTap: () => setState(() {
+                          _givenProduct = p;
+                          _givenQuery = '';
+                          // A catalogue pick wins over free text.
+                          _given.clear();
+                        }),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 7),
+                          child: Row(children: [
+                            const Icon(Icons.sports_tennis_rounded,
+                                size: 17, color: AdminColors.inkSoft),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(_productLabel(p),
+                                  style: AdminText.body(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                          ]),
+                        ),
+                      ),
+                  ],
+                ],
+                const SizedBox(height: 8),
+                Text(
+                  'Recorded for the history only — it does not move stock or '
+                  'count as a cost. Ring the racket up as an order if it '
+                  'should hit the profit figures.',
+                  style: AdminText.small(AdminColors.inkFaint),
+                ),
+                const SizedBox(height: 16),
                 _label('Condition'),
                 Wrap(
                   spacing: 8,
@@ -1192,6 +1301,52 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
       ),
     );
   }
+
+  /// Catalogue rows matching what has been typed, capped so the sheet cannot
+  /// turn into an endless list. An empty query shows the newest few.
+  List<Map<String, dynamic>> _matchingProducts() {
+    final q = _givenQuery.trim().toLowerCase();
+    final hits = q.isEmpty
+        ? _products
+        : _products.where((p) {
+            final hay = '${p['name'] ?? ''} ${p['brand'] ?? ''}'.toLowerCase();
+            return hay.contains(q);
+          });
+    return hits.take(6).toList();
+  }
+
+  static String _productLabel(Map<String, dynamic> p) {
+    final brand = (p['brand'] as String?)?.trim() ?? '';
+    final name = (p['name'] as String?)?.trim() ?? 'Product';
+    return brand.isEmpty ? name : '$brand $name';
+  }
+
+  Widget _selectedGiven() => Container(
+        padding: const EdgeInsets.all(11),
+        decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: AdminColors.line),
+        ),
+        child: Row(children: [
+          const Icon(Icons.sports_tennis_rounded,
+              size: 18, color: AdminColors.inkSoft),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(_productLabel(_givenProduct!),
+                style: AdminText.strong(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+          TextButton(
+            onPressed: () => setState(() {
+              _givenProduct = null;
+              _givenQuery = '';
+            }),
+            child: Text('Change', style: AdminText.strong(AdminColors.primary)),
+          ),
+        ]),
+      );
 
   Widget _selectedPlayer() => Container(
         padding: const EdgeInsets.all(11),

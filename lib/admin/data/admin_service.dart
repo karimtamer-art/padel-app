@@ -1388,12 +1388,20 @@ class AdminService {
     int? offerCredit,
     String? note,
     String status = 'offer_made',
+    String? givenProductId,
+    String? givenName,
   }) async {
     try {
       await _db.from('trade_requests').insert({
         if (playerId != null) 'player_id': playerId,
         if (playerId == null && (playerName ?? '').trim().isNotEmpty)
           'player_name': playerName!.trim(),
+        // What went back out with them. Recorded only — no COGS, no stock move.
+        // given_name is written even when a catalogue product is linked: it is
+        // the label as it read at the time, so the history still makes sense if
+        // that product is later renamed or deleted (the FK nulls itself).
+        if (givenProductId != null) 'given_product_id': givenProductId,
+        if ((givenName ?? '').trim().isNotEmpty) 'given_name': givenName!.trim(),
         'racket_desc': racketDesc,
         if (condition != null) 'condition': condition,
         if (offerCredit != null) 'offer_credit': offerCredit,

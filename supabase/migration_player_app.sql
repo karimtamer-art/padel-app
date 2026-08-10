@@ -550,6 +550,12 @@ alter table public.trade_requests
   add constraint trade_requests_who_chk
   check (player_id is not null
          or btrim(coalesce(player_name, '')) <> '');
+-- What went out with the player. Records a fact only: no COGS, no stock move —
+-- see changes/2026-08-10_trade_given_racket.sql for why that would double-count.
+alter table public.trade_requests
+  add column if not exists given_product_id uuid
+    references public.products(id) on delete set null,
+  add column if not exists given_name text;
 alter table public.trade_requests enable row level security;
 do $$ begin
   create policy "own trades read" on public.trade_requests for select using (auth.uid() = player_id);
