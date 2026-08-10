@@ -45,10 +45,13 @@ enum Hand {
 /// rewritten to `right` because profiles_side_chk only permitted left/right.
 /// Widening that CHECK is in changes/2026-08-10_court_side_both.sql; the ids
 /// here and that constraint must stay in step.
+// Declaration order IS the on-screen order — the onboarding row iterates
+// CourtSidePref.values. Both sits in the middle because it is the answer
+// between the two extremes, not an afterthought tacked on the end.
 enum CourtSidePref {
   left('left', 'Left Side'),
-  right('right', 'Right Side'),
-  both('both', 'Both Sides');
+  both('both', 'Both Sides'),
+  right('right', 'Right Side');
 
   const CourtSidePref(this.id, this.label);
   final String id;

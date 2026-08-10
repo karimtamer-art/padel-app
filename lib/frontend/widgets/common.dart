@@ -96,22 +96,48 @@ class AppAvatar extends StatelessWidget {
   final double size;
   final Color color;
   final double ring;
+
+  /// The player's photo (`profiles.avatar_url`). Null/empty shows [initials].
+  /// Until this existed the widget could ONLY draw initials, so an uploaded
+  /// profile picture never appeared anywhere that used it.
+  final String? imageUrl;
+
   const AppAvatar(this.initials,
-      {super.key, this.size = 44, this.color = AppColors.primary, this.ring = 2});
+      {super.key,
+      this.size = 44,
+      this.color = AppColors.primary,
+      this.ring = 2,
+      this.imageUrl});
+
   @override
   Widget build(BuildContext context) {
+    final url = imageUrl?.trim() ?? '';
+    final label = Text(initials,
+        style: AppText.bodyStrong(color).copyWith(
+            fontSize: size * 0.34, fontWeight: FontWeight.w800));
     return Container(
       width: size,
       height: size,
       alignment: Alignment.center,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color.withValues(alpha: 0.14),
         border: Border.all(color: color, width: ring),
       ),
-      child: Text(initials,
-          style: AppText.bodyStrong(color).copyWith(
-              fontSize: size * 0.34, fontWeight: FontWeight.w800)),
+      child: url.isEmpty
+          ? label
+          : Image.network(
+              url,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              // A broken or expired URL must never leave a blank circle —
+              // fall back to the initials that were there before.
+              errorBuilder: (_, __, ___) => Center(child: label),
+              loadingBuilder: (_, child, progress) =>
+                  progress == null ? child : Center(child: label),
+            ),
     );
   }
 }

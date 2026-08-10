@@ -341,6 +341,29 @@ class ProfileService {
     }
   }
 
+  /// The bits of the profile header that [fetchPlayerProfile] does not carry —
+  /// PlayerProfile is a stats model with no photo and no bio, so both were
+  /// written by Edit Profile and then never shown anywhere.
+  static Future<({String? avatarUrl, String? bio})> fetchHeaderBits(
+      String userId) async {
+    String? clean(Object? v) {
+      final s = (v as String?)?.trim();
+      return (s == null || s.isEmpty) ? null : s;
+    }
+
+    try {
+      final row = await _db
+          .from('profiles')
+          .select('avatar_url, bio')
+          .eq('id', userId)
+          .maybeSingle();
+      return (avatarUrl: clean(row?['avatar_url']), bio: clean(row?['bio']));
+    } catch (e) {
+      debugPrint('[ProfileService] fetchHeaderBits: $e');
+      return (avatarUrl: null, bio: null);
+    }
+  }
+
   /// Uploads a new avatar to the public `avatars` bucket (overwriting the
   /// user's slot) and saves the URL to profiles.avatar_url. Returns the new URL
   /// (with a cache-busting suffix so the changed image actually refreshes), or
@@ -377,8 +400,11 @@ class ProfileService {
           'id': user.id,
           'name': name,
           'avatar_url': meta['avatar_url'] as String?,
-          'preferred_hand': 'right',
-          'preferred_court_side': 'both',
+          // No preferred_hand / preferred_court_side defaults. Onboarding ASKS
+          // both questions and treats a stored value as already answered, so
+          // pre-filling them made the playing-style step skip itself — which is
+          // why "Both" sometimes never appeared. Leave them null and let the
+          // player choose.
           'placement_played': 0,
         },
         onConflict: 'id',

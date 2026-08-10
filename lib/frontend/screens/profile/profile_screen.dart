@@ -50,6 +50,8 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late PlayerProfile _profile;
+  String? _avatarUrl;
+  String? _bio;
 
   @override
   void initState() {
@@ -70,7 +72,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final uid = Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) return;
     final fresh = await ProfileService.fetchPlayerProfile(uid);
-    if (mounted) setState(() => _profile = fresh);
+    // Fetched alongside the stats so a photo or bio changed in Edit Profile
+    // shows on the way back, rather than waiting for the next sign-in.
+    final bits = await ProfileService.fetchHeaderBits(uid);
+    if (mounted) {
+      setState(() {
+        _profile = fresh;
+        _avatarUrl = bits.avatarUrl;
+        _bio = bits.bio;
+      });
+    }
   }
 
   static void _push(BuildContext context, Widget page) {
@@ -139,10 +150,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
               colors: [AppColors.surfaceAlt, AppColors.bg]),
         ),
         child: Column(children: [
-          AppAvatar(widget.initials.isNotEmpty ? widget.initials : 'P', size: 88, ring: 2.5),
+          AppAvatar(widget.initials.isNotEmpty ? widget.initials : 'P',
+              size: 88, ring: 2.5, imageUrl: _avatarUrl),
           const SizedBox(height: 10),
           Text(widget.displayName.isNotEmpty ? widget.displayName : 'Player',
               style: AppText.stat(22)),
+          // Written in Edit Profile and, until now, never shown back anywhere.
+          if ((_bio ?? '').isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: Text(_bio!,
+                  textAlign: TextAlign.center,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.body(AppColors.inkSoft)),
+            ),
+          ],
           const SizedBox(height: 8),
           if (widget.memberSince.isNotEmpty)
             Container(
