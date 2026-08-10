@@ -1157,8 +1157,13 @@ class _LedgerSheetState extends State<_LedgerSheet> {
   late DateTime _date;
   bool _busy = false;
 
+  /// "Other" says nothing on its own, so picking it turns the note into a
+  /// required "what was it" field and jumps the keyboard straight into it.
+  final FocusNode _otherFocus = FocusNode();
+
   LedgerKind get _kind => widget.kind;
   bool get _editing => widget.existing != null;
+  bool get _isOther => _category == 'other';
 
   @override
   void initState() {
@@ -1179,6 +1184,7 @@ class _LedgerSheetState extends State<_LedgerSheet> {
     _amount.dispose();
     _party.dispose();
     _note.dispose();
+    _otherFocus.dispose();
     super.dispose();
   }
 
@@ -1197,6 +1203,16 @@ class _LedgerSheetState extends State<_LedgerSheet> {
     final amount = double.tryParse(_amount.text.trim());
     if (amount == null || amount <= 0) {
       adminToast(context, 'Enter an amount in EGP', ok: false);
+      return;
+    }
+    // An unexplained "Other" is a hole in the P&L — nobody can tell later what
+    // the money was. Insist on a few words before it can be saved.
+    if (_isOther && _note.text.trim().isEmpty) {
+      adminToast(
+          context,
+          _kind.isIncome ? 'Say what this money was for' : 'Say what you paid for',
+          ok: false);
+      _otherFocus.requestFocus();
       return;
     }
     setState(() => _busy = true);
@@ -1317,7 +1333,15 @@ class _LedgerSheetState extends State<_LedgerSheet> {
                   children: [
                     for (final c in _kind.categories)
                       GestureDetector(
-                        onTap: () => setState(() => _category = c.id),
+                        onTap: () {
+                          setState(() => _category = c.id);
+                          if (c.id == 'other') {
+                            // The field is only built by this setState, so ask
+                            // for focus once it exists.
+                            WidgetsBinding.instance.addPostFrameCallback(
+                                (_) => _otherFocus.requestFocus());
+                          }
+                        },
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 11, vertical: 8),
@@ -1351,7 +1375,31 @@ class _LedgerSheetState extends State<_LedgerSheet> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text(cat.hint, style: AdminText.small()),
+                if (!_isOther)
+                  Text(cat.hint, style: AdminText.small())
+                else ...[
+                  _label('What was it?'),
+                  TextField(
+                    controller: _note,
+                    focusNode: _otherFocus,
+                    style: AdminText.body(),
+                    textCapitalization: TextCapitalization.sentences,
+                    onChanged: (_) => setState(() {}),
+                    decoration: _dec(_kind.isIncome
+                        ? 'e.g. refund from a supplier'
+                        : 'e.g. bank transfer fee, parking'),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    _note.text.trim().isEmpty
+                        ? 'Required — "Other" on its own tells you nothing when '
+                            'you read the report later.'
+                        : 'This shows next to the amount in the report.',
+                    style: AdminText.small(_note.text.trim().isEmpty
+                        ? AdminColors.warn
+                        : AdminColors.inkSoft),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 _label('Date'),
                 GestureDetector(
@@ -1378,14 +1426,20 @@ class _LedgerSheetState extends State<_LedgerSheet> {
                     controller: _party,
                     style: AdminText.body(),
                     decoration: _dec(_kind.partyHint)),
-                const SizedBox(height: 16),
-                _label('Note (optional)'),
-                TextField(
-                    controller: _note,
-                    style: AdminText.body(),
-                    maxLines: 3,
-                    decoration: _dec(
-                        _kind.isIncome ? 'What this was for' : 'What this covered')),
+                // Under "Other" this same controller is already on screen as the
+                // required "What was it?" field — showing it twice would let one
+                // copy overwrite the other.
+                if (!_isOther) ...[
+                  const SizedBox(height: 16),
+                  _label('Note (optional)'),
+                  TextField(
+                      controller: _note,
+                      style: AdminText.body(),
+                      maxLines: 3,
+                      decoration: _dec(_kind.isIncome
+                          ? 'What this was for'
+                          : 'What this covered')),
+                ],
                 const SizedBox(height: 18),
                 Container(
                   padding: const EdgeInsets.all(13),
