@@ -1390,6 +1390,9 @@ class AdminService {
     String status = 'offer_made',
     String? givenProductId,
     String? givenName,
+    num? givenPrice,
+    num? paidAmount,
+    num? givenCost,
   }) async {
     try {
       await _db.from('trade_requests').insert({
@@ -1402,6 +1405,11 @@ class AdminService {
         // that product is later renamed or deleted (the FK nulls itself).
         if (givenProductId != null) 'given_product_id': givenProductId,
         if ((givenName ?? '').trim().isNotEmpty) 'given_name': givenName!.trim(),
+        // Null and zero mean different things here — "not recorded" vs "free" —
+        // so only send what was actually filled in.
+        if (givenPrice != null) 'given_price': givenPrice,
+        if (paidAmount != null) 'paid_amount': paidAmount,
+        if (givenCost != null) 'given_cost': givenCost,
         'racket_desc': racketDesc,
         if (condition != null) 'condition': condition,
         if (offerCredit != null) 'offer_credit': offerCredit,

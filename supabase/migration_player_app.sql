@@ -556,6 +556,20 @@ alter table public.trade_requests
   add column if not exists given_product_id uuid
     references public.products(id) on delete set null,
   add column if not exists given_name text;
+-- The money in the swap: ticket price, what they actually paid in cash, and
+-- what it cost us. Deal profit = paid_amount - given_cost, shown in the console
+-- only — _finance_core does NOT read these, or the same racket rung up as an
+-- order would be counted twice. See changes/2026-08-10_trade_deal_money.sql.
+alter table public.trade_requests
+  add column if not exists given_price numeric(10,2),
+  add column if not exists paid_amount numeric(10,2),
+  add column if not exists given_cost  numeric(10,2);
+alter table public.trade_requests drop constraint if exists trade_requests_money_chk;
+alter table public.trade_requests
+  add constraint trade_requests_money_chk
+  check ((given_price is null or given_price >= 0)
+     and (paid_amount is null or paid_amount >= 0)
+     and (given_cost  is null or given_cost  >= 0));
 alter table public.trade_requests enable row level security;
 do $$ begin
   create policy "own trades read" on public.trade_requests for select using (auth.uid() = player_id);

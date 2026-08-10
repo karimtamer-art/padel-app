@@ -62,6 +62,15 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   static String _msg(Object e) =>
       e is PostgrestException ? e.message : e.toString();
 
+  /// Profit on a recorded swap: cash taken less what the racket cost us. Null
+  /// unless both were filled in — half a sum is worse than none.
+  static num? _recordedProfit(Map row) {
+    final paid = row['paid_amount'] as num?;
+    final cost = row['given_cost'] as num?;
+    if (paid == null || cost == null) return null;
+    return paid - cost;
+  }
+
   /// The racket handed back in the swap, or null if none was recorded. Reads
   /// the stored label rather than the FK, so it survives the product being
   /// renamed or deleted.
@@ -708,6 +717,18 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
           const SizedBox(height: 10),
           Row(children: [
             _kv('Given back', _givenBack(t)!),
+            const SizedBox(width: 10),
+            _kv('They paid',
+                t['paid_amount'] != null ? _egp(t['paid_amount']) : '—'),
+          ]),
+        ],
+        if (_recordedProfit(t) != null) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            _kv('It cost us',
+                t['given_cost'] != null ? _egp(t['given_cost']) : '—'),
+            const SizedBox(width: 10),
+            _kv('Profit on the deal', _egp(_recordedProfit(t)!)),
           ]),
         ],
         const SizedBox(height: 14),
@@ -949,6 +970,9 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
   final _note = TextEditingController();
 
   final _given = TextEditingController();
+  final _givenPrice = TextEditingController();
+  final _paid = TextEditingController();
+  final _cost = TextEditingController();
 
   List<Map<String, dynamic>> _results = [];
   Map<String, dynamic>? _player;
@@ -993,6 +1017,9 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
     _search.dispose();
     _walkIn.dispose();
     _given.dispose();
+    _givenPrice.dispose();
+    _paid.dispose();
+    _cost.dispose();
     _racket.dispose();
     _credit.dispose();
     _note.dispose();
@@ -1041,6 +1068,9 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
       givenName: _givenProduct != null
           ? _productLabel(_givenProduct!)
           : _given.text,
+      givenPrice: num.tryParse(_givenPrice.text.trim()),
+      paidAmount: num.tryParse(_paid.text.trim()),
+      givenCost: num.tryParse(_cost.text.trim()),
     );
     if (!mounted) return;
     setState(() => _busy = false);
@@ -1215,6 +1245,7 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
                           _givenQuery = '';
                           // A catalogue pick wins over free text.
                           _given.clear();
+                          _fillFromProduct(p);
                         }),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 7),
@@ -1233,11 +1264,33 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
                       ),
                   ],
                 ],
+                const SizedBox(height: 16),
+                _label('The money'),
+                Row(children: [
+                  Expanded(
+                      child: _money(_givenPrice, 'Racket price',
+                          onChanged: () => _syncPaid())),
+                  const SizedBox(width: 10),
+                  Expanded(child: _money(_paid, 'They paid')),
+                ]),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Expanded(child: _money(_cost, 'It cost us')),
+                  const SizedBox(width: 10),
+                  Expanded(child: _profitBox()),
+                ]),
                 const SizedBox(height: 8),
                 Text(
-                  'Recorded for the history only — it does not move stock or '
-                  'count as a cost. Ring the racket up as an order if it '
-                  'should hit the profit figures.',
+                  'Picking from the store fills the price and cost in for you. '
+                  '"They paid" starts at the price minus the credit above — '
+                  'change it if they paid something else.',
+                  style: AdminText.small(AdminColors.inkFaint),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'These stay on the trade-in. The Reports P&L does not read '
+                  'them, so ring the racket up as an order if it should move '
+                  'the platform profit figures.',
                   style: AdminText.small(AdminColors.inkFaint),
                 ),
                 const SizedBox(height: 16),
@@ -1302,6 +1355,52 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
     );
   }
 
+  /// Prefills the money from the catalogue: the sale price if the product is on
+  /// sale, otherwise its price, and the admin-only cost from product_costs.
+  /// Only fills blanks — a figure already typed by hand is never overwritten.
+  void _fillFromProduct(Map<String, dynamic> p) {
+    final onSale = p['on_sale'] == true && p['sale_price'] != null;
+    final price = (onSale ? p['sale_price'] : p['price']) as num?;
+    // fetchProducts embeds product_costs(cost); PostgREST hands back either a
+    // single object or a one-row list depending on the relationship.
+    final costRaw = p['product_costs'];
+    final cost = costRaw is List
+        ? (costRaw.isEmpty ? null : (costRaw.first as Map)['cost'] as num?)
+        : (costRaw as Map?)?['cost'] as num?;
+
+    if (price != null && _givenPrice.text.trim().isEmpty) {
+      _givenPrice.text = _plain(price);
+    }
+    if (cost != null && _cost.text.trim().isEmpty) {
+      _cost.text = _plain(cost);
+    }
+    _syncPaid();
+  }
+
+  /// What they hand over is the ticket price less the credit we gave them.
+  /// A default, not a rule — it stays editable for a part payment or a
+  /// haggled number.
+  void _syncPaid() {
+    if (_paid.text.trim().isNotEmpty) return;
+    final price = num.tryParse(_givenPrice.text.trim());
+    if (price == null) return;
+    final credit = num.tryParse(_credit.text.trim()) ?? 0;
+    final due = price - credit;
+    _paid.text = _plain(due < 0 ? 0 : due);
+  }
+
+  static String _plain(num v) =>
+      v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+  /// Profit on this swap: cash taken less what the racket cost us. Null until
+  /// both halves are known — a half-filled sum is worse than none.
+  num? get _dealProfit {
+    final paid = num.tryParse(_paid.text.trim());
+    final cost = num.tryParse(_cost.text.trim());
+    if (paid == null || cost == null) return null;
+    return paid - cost;
+  }
+
   /// Catalogue rows matching what has been typed, capped so the sheet cannot
   /// turn into an endless list. An empty query shows the newest few.
   List<Map<String, dynamic>> _matchingProducts() {
@@ -1319,6 +1418,55 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
     final brand = (p['brand'] as String?)?.trim() ?? '';
     final name = (p['name'] as String?)?.trim() ?? 'Product';
     return brand.isEmpty ? name : '$brand $name';
+  }
+
+  /// A small labelled EGP field. [onChanged] runs after the rebuild so
+  /// dependent figures (the profit line, the suggested "they paid") follow.
+  Widget _money(TextEditingController c, String label,
+          {VoidCallback? onChanged}) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label.toUpperCase(), style: AdminText.kicker()),
+        const SizedBox(height: 6),
+        TextField(
+          controller: c,
+          keyboardType: TextInputType.number,
+          style: AdminText.sans(17, FontWeight.w800, AdminColors.ink),
+          onChanged: (_) => setState(() => onChanged?.call()),
+          decoration: _dec('0').copyWith(
+            prefixText: 'EGP ',
+            prefixStyle: AdminText.small(AdminColors.inkFaint),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          ),
+        ),
+      ]);
+
+  Widget _profitBox() {
+    final p = _dealProfit;
+    final tone = p == null
+        ? AdminColors.inkFaint
+        : (p < 0 ? AdminColors.danger : AdminColors.success);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('PROFIT ON THIS DEAL', style: AdminText.kicker()),
+      const SizedBox(height: 6),
+      Container(
+        height: 48,
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: p == null
+              ? AdminColors.surfaceAlt
+              : tone.withValues(alpha: .10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: p == null ? AdminColors.line : tone.withValues(alpha: .5)),
+        ),
+        child: Text(
+          p == null ? '—' : 'EGP ${_plain(p)}',
+          style: AdminText.sans(17, FontWeight.w800, tone),
+        ),
+      ),
+    ]);
   }
 
   Widget _selectedGiven() => Container(
