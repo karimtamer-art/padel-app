@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
@@ -201,18 +202,48 @@ class AuthService {
       provider: provider,
       redirectTo: _redirectUrl,
     );
-    // ASWebAuthenticationSession opens as an in-app modal and intercepts the
-    // padelrivals:// redirect automatically — no white screen, no app switch.
-    final String callbackUrl;
+
+    // Two things are listening for that redirect on Android: this plugin's
+    // CallbackActivity, and supabase_flutter's own deep-link handler. When the
+    // latter gets there first it establishes the session and CONSUMES the URL,
+    // so FlutterWebAuth2's future never completes — leaving the caller's
+    // spinner turning forever on top of an app that is already signed in. That
+    // is the "loading loop, but I was logged in when I went back" report.
+    //
+    // So race them: whoever finishes first wins. A session appearing is just as
+    // good an outcome as getting the URL, and it is the same outcome.
+    final sub = <StreamSubscription<AuthState>>[];
+    final settled = Completer<String?>();
+    sub.add(_db.auth.onAuthStateChange.listen((s) {
+      // initialSession fires immediately with a null session when signed out,
+      // which is why this checks the session rather than the event.
+      if (s.session != null && !settled.isCompleted) settled.complete(null);
+    }));
+
+    final String? callbackUrl;
     try {
-      callbackUrl = await FlutterWebAuth2.authenticate(
+      // ASWebAuthenticationSession opens as an in-app modal and intercepts the
+      // padelrivals:// redirect automatically — no white screen, no app switch.
+      FlutterWebAuth2.authenticate(
         url: res.url,
         callbackUrlScheme: _callbackScheme,
-      );
+      ).then((url) {
+        if (!settled.isCompleted) settled.complete(url);
+      }).catchError((Object e) {
+        if (!settled.isCompleted) settled.completeError(e);
+      });
+      callbackUrl = await settled.future;
     } on PlatformException catch (e) {
       if (e.code == 'CANCELED') throw const AuthCancelled();
       rethrow;
+    } finally {
+      for (final s in sub) {
+        unawaited(s.cancel());
+      }
     }
+
+    // Null means the session landed on its own — nothing left to exchange.
+    if (callbackUrl == null) return;
     // Exchange the PKCE code for a session.
     await _db.auth.getSessionFromUrl(Uri.parse(callbackUrl));
   }
