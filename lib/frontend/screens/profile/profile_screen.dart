@@ -150,8 +150,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
               colors: [AppColors.surfaceAlt, AppColors.bg]),
         ),
         child: Column(children: [
-          AppAvatar(widget.initials.isNotEmpty ? widget.initials : 'P',
-              size: 88, ring: 2.5, imageUrl: _avatarUrl),
+          // Prefers the live notifier over this screen's fetched copy, so a new
+          // photo appears the moment it finishes uploading rather than on the
+          // next refresh. Falls back to _avatarUrl before the notifier is set.
+          ValueListenableBuilder<String?>(
+            valueListenable: ProfileService.currentAvatar,
+            builder: (_, url, __) => AppAvatar(
+                widget.initials.isNotEmpty ? widget.initials : 'P',
+                size: 88,
+                ring: 2.5,
+                imageUrl: url ?? _avatarUrl),
+          ),
           const SizedBox(height: 10),
           Text(widget.displayName.isNotEmpty ? widget.displayName : 'Player',
               style: AppText.stat(22)),
@@ -179,8 +188,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   style: AppText.small().copyWith(fontSize: 11)),
             ),
           const SizedBox(height: 14),
-          AppButton('Edit Profile',
-              onPressed: () => _push(context, const EditProfileScreen())),
+          // Awaited, unlike the static _push the other rows use: this is the
+          // one destination that changes what THIS screen renders, and it used
+          // to return to a stale header until you pulled to refresh.
+          AppButton('Edit Profile', onPressed: () async {
+            await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const EditProfileScreen()));
+            await _refresh();
+          }),
         ]),
       );
 
