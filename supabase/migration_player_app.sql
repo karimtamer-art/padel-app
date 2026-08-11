@@ -6167,6 +6167,10 @@ update public.profiles
 -- dm_inbox(): every conversation the caller is in that has a message, with the
 -- other player, last message, and an unread count off the type='message'
 -- notifications. Drives the standalone Messages inbox.
+-- NOTE: superseded further down (2026-08-11 dm avatars), which ADDS an
+-- other_avatar column. The drop is what keeps this file re-runnable:
+-- create or replace cannot change a return type (42P13).
+drop function if exists public.dm_inbox();
 create or replace function public.dm_inbox()
 returns table (
   conversation_id uuid,
@@ -7987,6 +7991,10 @@ create policy "ticket msg: member read" on public.ticket_messages
 --
 -- NOTE: superseded further down (2026-08-11 delete chat), which also filters
 -- out conversations you have cleared. Same columns, so no drop is needed here.
+-- NOTE: superseded further down (2026-08-11 dm avatars), which ADDS an
+-- other_avatar column. The drop is what keeps this file re-runnable:
+-- create or replace cannot change a return type (42P13).
+drop function if exists public.dm_inbox();
 create or replace function public.dm_inbox()
 returns table (
   conversation_id uuid,
@@ -10874,5 +10882,55 @@ begin
   return null;
 end $$;
 grant execute on function public.mm_accept(uuid, uuid) to authenticated;
+
+-- ===========================================================================
+-- Messages list shows the other person's photo (2026-08-11).
+-- Supersedes dm_inbox above; ADDS other_avatar, hence the mandatory drop.
+-- Standalone delta: supabase/changes/2026-08-11_dm_avatars.sql
+-- ===========================================================================
+
+drop function if exists public.dm_inbox();
+create or replace function public.dm_inbox()
+returns table (
+  conversation_id uuid,
+  other_id        uuid,
+  other_name      text,
+  other_username  text,
+  other_avatar    text,
+  last_text       text,
+  last_at         timestamptz,
+  unread          int
+) language sql stable security definer set search_path = public as $$
+  select c.id,
+         other.id,
+         other.name,
+         other.username,
+         other.avatar_url,
+         lm.text,
+         lm.sent_at,
+         coalesce((
+           select count(*)::int from public.notifications n
+            where n.user_id = auth.uid()
+              and n.type = 'message'
+              and n.read = false
+              and n.data->>'conversation_id' = c.id::text), 0)
+    from public.conversations c
+    join public.profiles other
+      on other.id = case when c.player_a = auth.uid() then c.player_b else c.player_a end
+    left join public.conversation_clears cl
+      on cl.conversation_id = c.id and cl.user_id = auth.uid()
+    join lateral (
+      select dm.text, dm.sent_at
+        from public.direct_messages dm
+       where dm.conversation_id = c.id
+         and (cl.cleared_at is null or dm.sent_at > cl.cleared_at)
+       order by dm.sent_at desc
+       limit 1
+    ) lm on true
+   where auth.uid() in (c.player_a, c.player_b)
+     and not public._blocked_with(other.id)
+   order by lm.sent_at desc;
+$$;
+grant execute on function public.dm_inbox() to authenticated;
 
 notify pgrst, 'reload schema';

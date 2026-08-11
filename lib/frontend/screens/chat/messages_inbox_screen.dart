@@ -69,6 +69,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
         name: (name == null || name.isEmpty) ? 'Player' : name,
         initials: _initials(name),
         username: r['other_username'] as String?,
+        avatarUrl: r['other_avatar'] as String?,
       ),
     ));
     // Reading a chat marks it read — refresh so the dot clears.
@@ -355,7 +356,8 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
       child: AppCard(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(children: [
-          AppAvatar(_initials(name), size: 46, color: AppColors.primary),
+          AppAvatar(_initials(name), size: 46, color: AppColors.primary,
+              imageUrl: r['other_avatar'] as String?),
           const SizedBox(width: 13),
           Expanded(
             child: Column(

@@ -154,6 +154,12 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   String _name(Map<String, dynamic> p) =>
       ((p['profiles'] as Map?)?['name'] as String?) ?? 'Player';
   String _first(Map<String, dynamic> p) => _name(p).split(' ').first;
+  /// A player's photo off the embedded profile, or null. `matchCols` selects
+  /// `avatar_url` on the profiles embed — it's a public bucket URL, so unlike
+  /// the phone number it's fine to ship to the client.
+  String? _avatarOf(Map<String, dynamic> p) =>
+      (p['profiles'] as Map?)?['avatar_url'] as String?;
+
   String _initials(Map<String, dynamic> p) {
     final parts = _name(p).trim().split(RegExp(r'\s+'));
     if (parts.isEmpty || parts.first.isEmpty) return 'P';
@@ -487,7 +493,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
       AppAvatar(firstP == null ? '?' : _initials(firstP),
           size: 64,
           color: mine ? AppColors.primary : AppColors.heroFaint,
-          ring: 2.5),
+          ring: 2.5,
+          imageUrl: firstP == null ? null : _avatarOf(firstP)),
       const SizedBox(height: 8),
       Text(label,
           maxLines: 1,
@@ -632,7 +639,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
       padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(children: [
         AppAvatar(_initials(p), size: 38,
-            color: isMe ? AppColors.primary : AppColors.gold, ring: 1.5),
+            color: isMe ? AppColors.primary : AppColors.gold, ring: 1.5,
+            imageUrl: _avatarOf(p)),
         const SizedBox(width: 11),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -709,7 +717,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                         borderRadius: BorderRadius.circular(2))),
               ),
               Row(children: [
-                AppAvatar(_initials(p), size: 48, color: AppColors.gold, ring: 2),
+                AppAvatar(_initials(p), size: 48, color: AppColors.gold, ring: 2,
+                    imageUrl: _avatarOf(p)),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -735,6 +744,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                       initials: _initials(p),
                       username: username.isEmpty ? null : username,
                       matchId: widget.matchId,
+                      avatarUrl: _avatarOf(p),
                     ),
                   ));
                 },

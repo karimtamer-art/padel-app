@@ -17,6 +17,9 @@ class DMChatScreen extends StatefulWidget {
   final String initials;
   final String? username;
   final String? matchId;
+  /// Their photo. Optional — callers that don't have one still get initials,
+  /// which is what every caller did before.
+  final String? avatarUrl;
   const DMChatScreen({
     super.key,
     required this.otherId,
@@ -24,6 +27,7 @@ class DMChatScreen extends StatefulWidget {
     required this.initials,
     this.username,
     this.matchId,
+    this.avatarUrl,
   });
 
   @override
@@ -154,7 +158,8 @@ class _DMChatScreenState extends State<DMChatScreen> {
           child: Row(children: [
             _glassBtn(Icons.arrow_back_ios_new_rounded, () => Navigator.pop(context)),
             const SizedBox(width: 10),
-            AppAvatar(widget.initials, size: 38, color: AppColors.gold, ring: 2),
+            AppAvatar(widget.initials, size: 38, color: AppColors.gold, ring: 2,
+                imageUrl: widget.avatarUrl),
             const SizedBox(width: 11),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

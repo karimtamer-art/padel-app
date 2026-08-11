@@ -793,7 +793,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
       onTap: () => _openMemberProfile(m),
       behavior: HitTestBehavior.opaque,
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        AppAvatar(m.initials, size: 48, color: tint),
+        AppAvatar(m.initials, size: 48, color: tint, imageUrl: m.avatarUrl),
         const SizedBox(height: 6),
         Text(m.name.split(' ').first,
             style: AppText.small(AppColors.ink)
@@ -824,6 +824,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
               otherId: m.id,
               name: m.name,
               initials: m.initials,
+              avatarUrl: m.avatarUrl,
             ),
           ));
         },
@@ -1096,7 +1097,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                           return Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                            AppAvatar(_initials(c.name), size: 34),
+                            AppAvatar(_initials(c.name), size: 34,
+                                imageUrl: c.avatarUrl),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Column(
@@ -1727,7 +1729,8 @@ class _MemberProfileSheetState extends State<_MemberProfileSheet> {
               ),
             ),
             child: Column(children: [
-              AppAvatar(m.initials, size: 72, color: tint, ring: 2.5),
+              AppAvatar(m.initials, size: 72, color: tint, ring: 2.5,
+                  imageUrl: m.avatarUrl),
               const SizedBox(height: 9),
               Text(m.name,
                   style: AppText.stat(18, AppColors.ink), textAlign: TextAlign.center),

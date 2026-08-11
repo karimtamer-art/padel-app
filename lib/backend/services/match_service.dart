@@ -21,7 +21,8 @@ class MatchService {
       // No `phone` here on purpose. It used to ship a number to the client for
       // every co-player and leave the decision to Dart; the contact sheet now
       // asks `player_phone(uuid)`, which applies `_can_see_phone` in Postgres.
-      '  profiles(id, name, elo, level, tier, username))';
+      // avatar_url IS fine to embed — it's a public bucket URL, unlike phone.
+      '  profiles(id, name, elo, level, tier, username, avatar_url))';
 
   // ── Matchmaking discovery (band-gatekept) ──────────────────────────────────
 
@@ -252,7 +253,7 @@ class MatchService {
     try {
       var q = _db
           .from('profiles')
-          .select('id, name, username, elo, level, tier, gender')
+          .select('id, name, username, elo, level, tier, gender, avatar_url')
           .eq('is_admin', false)
           .neq('id', _uid ?? '');
       final term = query.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();

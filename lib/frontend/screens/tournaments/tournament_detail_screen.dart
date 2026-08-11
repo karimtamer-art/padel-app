@@ -894,7 +894,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         ),
         child: Row(children: [
           AppAvatar(initials, size: 36, ring: 1.5,
-              color: selected ? AppColors.primary : AppColors.gold),
+              color: selected ? AppColors.primary : AppColors.gold,
+              imageUrl: p['avatar_url'] as String?),
           const SizedBox(width: 11),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

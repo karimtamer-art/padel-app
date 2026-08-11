@@ -352,7 +352,8 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
                         size: 34,
                         color: mine
                             ? AppColors.primary
-                            : AppColors.heroInk.withValues(alpha: 0.18)),
+                            : AppColors.heroInk.withValues(alpha: 0.18),
+                        imageUrl: team[i]['avatar_url'] as String?),
                   ),
                 ),
             ]),
@@ -552,7 +553,8 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
           // In a group thread you have to know who is talking.
           if (!mine) ...[
             Row(children: [
-              AppAvatar(_initials(name), size: 22, color: AppColors.gold),
+              AppAvatar(_initials(name), size: 22, color: AppColors.gold,
+                  imageUrl: sender['avatar_url'] as String?),
               const SizedBox(width: 6),
               Text(_firstName(name),
                   style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 10)),
@@ -689,7 +691,8 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
         child: Row(children: [
           AppAvatar(_initials(name),
-              size: 38, color: me ? AppColors.primary : AppColors.gold, ring: 2),
+              size: 38, color: me ? AppColors.primary : AppColors.gold, ring: 2,
+              imageUrl: p['avatar_url'] as String?),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

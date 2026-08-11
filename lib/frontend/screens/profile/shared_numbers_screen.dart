@@ -123,7 +123,8 @@ class _SharedNumbersScreenState extends State<SharedNumbersScreen> {
           return AppCard(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(children: [
-              AppAvatar(_initials(name), size: 42, color: AppColors.gold),
+              AppAvatar(_initials(name), size: 42, color: AppColors.gold,
+                  imageUrl: r['avatar_url'] as String?),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(

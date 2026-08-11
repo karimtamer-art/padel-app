@@ -923,7 +923,8 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
           border: Border.all(color: selected ? AppColors.primary : AppColors.line, width: 1.5),
         ),
         child: Row(children: [
-          AppAvatar(initials, size: 36, ring: 1.5),
+          AppAvatar(initials, size: 36, ring: 1.5,
+              imageUrl: p['avatar_url'] as String?),
           const SizedBox(width: 11),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
