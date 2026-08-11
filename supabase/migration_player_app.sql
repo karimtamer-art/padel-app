@@ -6380,6 +6380,12 @@ grant execute on function public.ticket_inbox() to authenticated;
 -- The four players. Phone numbers are returned ONLY to a member of the
 -- ticket, and ONLY while it is open — a closed ticket hides them again, which
 -- is what the thread promises its members.
+--
+-- SUPERSEDED further down (2026-08-10 number requests), which adds a
+-- share_state column. The drop is what makes this file re-runnable once that
+-- version is live: `create or replace` cannot change a function's return type,
+-- so without it a second run dies here with 42P13.
+drop function if exists public.ticket_roster(uuid);
 create or replace function public.ticket_roster(p_ticket uuid)
 returns table (
   player_id  uuid,

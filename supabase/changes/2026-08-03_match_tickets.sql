@@ -188,6 +188,12 @@ grant execute on function public.ticket_inbox() to authenticated;
 -- The four players. Phone numbers are returned ONLY to a member of the
 -- ticket, and ONLY while it is open — a closed ticket hides them again, which
 -- is what the thread promises its members.
+--
+-- Superseded by 2026-08-10_number_requests.sql, which adds share_state. Do NOT
+-- re-run this delta after that one — it would put the old shape back and the
+-- ticket roster would lose its Request-number state. The drop is here only so
+-- re-running it errors on nothing rather than dying with 42P13.
+drop function if exists public.ticket_roster(uuid);
 create or replace function public.ticket_roster(p_ticket uuid)
 returns table (
   player_id  uuid,
