@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -118,6 +120,7 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   @override
   void dispose() {
     if (_notifChannel != null) _db.removeChannel(_notifChannel!);
+    _heroRoster?.cancel();
     super.dispose();
   }
 
@@ -149,6 +152,29 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   @override
   Future<void> onAutoRefresh() => _loadData(silent: true);
 
+  /// Live roster for whichever match the hero is currently showing, so "2/4"
+  /// becomes "3/4" while you watch instead of on the next pull.
+  ///
+  /// Scoped to ONE match id deliberately. `match_players` RLS is
+  /// `using (true)` — every row is readable by everybody — so an unfiltered
+  /// stream would deliver every join in the whole app to every phone. This
+  /// subscribes to the single match on screen and re-subscribes when the hero
+  /// changes.
+  StreamSubscription<List<Map<String, dynamic>>>? _heroRoster;
+  String? _heroMatchId;
+
+  void _watchHeroMatch() {
+    final id = (_liveMatch() ?? _nextUpcomingMatch())?['id'] as String?;
+    if (id == _heroMatchId) return; // already watching this one
+    _heroMatchId = id;
+    _heroRoster?.cancel();
+    _heroRoster = null;
+    if (id == null) return;
+    _heroRoster = MatchService.rosterStream(id).listen((_) {
+      if (mounted) autoRefresh();
+    });
+  }
+
   Future<void> _loadData({bool silent = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
     await Future.wait([
@@ -166,6 +192,8 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
       _fetchSponsors(),
     ]);
     if (mounted) setState(() => _loading = false);
+    // After the matches land, so it watches whichever one the hero now shows.
+    if (mounted) _watchHeroMatch();
   }
 
   Future<void> _fetchSeason() async {
