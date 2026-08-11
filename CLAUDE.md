@@ -106,6 +106,30 @@ before changing anything.
   - `ticket_roster` returns `share_state` (`me`/`shared`/`pending`/`none`),
     which is what the roster row renders from.
   - See `supabase/changes/2026-08-10_number_requests.sql`.
+- **Screens refresh themselves; pull-to-refresh is the FALLBACK** (2026-08-11).
+  There was no `WidgetsBindingObserver` anywhere — the app could sit for an hour
+  and every screen still showed what it fetched when you left. New screens
+  showing server data should mix in `AutoRefresh`
+  (`lib/frontend/widgets/auto_refresh.dart`): reloads on app-resume, on
+  `refreshOnReturn()` from a destination that changes what the caller renders,
+  and on an explicit `autoRefresh()` call. Reload **silently** — no spinner
+  takeover — since the user didn't ask. A 15s gap stops triggers stacking but
+  deliberately does **not** gate a pull. **Never remove an existing
+  pull-to-refresh**; it stays as the second route on purpose.
+  - Data that changes because of **someone else's** action needs realtime, not
+    resume-refresh — the lobby filling up while you watch. `match_players` is
+    published (`2026-08-11_match_players_realtime.sql`) and
+    `MatchService.rosterStream` drives both the lobby and the Home hero.
+  - **Scope a realtime subscription to one id.** `match_players` RLS is
+    `using (true)` — every row readable by everybody — so an unfiltered stream
+    delivers every join in the app to every phone. Home watches only the match
+    its hero is showing and re-subscribes when that changes.
+  - The stream's rows are **ignored** by design: realtime can't join, and a
+    lobby needs names, levels and `matches.status` (which flips to `full` on the
+    fourth player). The event means "go re-read", nothing more.
+  - That `using (true)` policy is looser than the rest of the schema and
+    deserves its own look — the lobby, ticket roster and matchmaker all read
+    other players' rows, so it isn't a one-line tighten.
 - **Private casual matches + invite codes** (2026-08-11). `matches.is_private`
   and `matches.invite_code` existed from the first migration and were **dead**:
   a `PDL-` code was minted for every match, nothing read it, no discovery path
