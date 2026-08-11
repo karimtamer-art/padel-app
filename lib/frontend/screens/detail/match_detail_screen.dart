@@ -301,10 +301,14 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   }
 
   void _share() {
-    final code = _match?['invite_code'] as String? ?? '';
+    final code = (_match?['invite_code'] as String? ?? '').trim();
     final when = _fmtWhen();
+    // A public match has no code, and promising one that isn't there sends the
+    // reader looking for something that doesn't exist.
     Clipboard.setData(ClipboardData(
-        text: 'Join my padel match on Padel Rivals — $when. Invite code: $code'));
+        text: code.isEmpty
+            ? 'Join my padel match on Padel Rivals — $when.'
+            : 'Join my padel match on Padel Rivals — $when. Invite code: $code'));
     _snack('Match details copied — paste anywhere to share');
   }
 
@@ -528,7 +532,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
     final court = _match?['courts'] as Map?;
     final courtName = court?['venue_name'] as String? ??
         court?['name'] as String? ?? 'To be agreed';
-    final code = _match?['invite_code'] as String? ?? '—';
+    // Empty for a public match — public matches carry no code at all now.
+    final code = (_match?['invite_code'] as String? ?? '').trim();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: Column(children: [
@@ -585,18 +590,27 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
             ],
           ]),
         ),
-        if (_inMatch) ...[
+        // Only a private match has a code, and it is the ONLY way in — so it
+        // gets the gold treatment and says what it's for. A public match used
+        // to show a code here that did nothing at all.
+        if (_inMatch && code.isNotEmpty) ...[
           const SizedBox(height: 12),
           AppCard(
-            color: AppColors.field,
+            color: AppColors.gold.withValues(alpha: 0.08),
             child: Row(children: [
-              const Icon(Icons.ios_share_rounded, size: 20, color: AppColors.primary),
+              const Icon(Icons.vpn_key_outlined, size: 20, color: AppColors.gold),
               const SizedBox(width: 12),
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Invite code', style: AppText.bodyStrong().copyWith(fontSize: 13)),
-                Text(code, style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 12, letterSpacing: 2)),
-              ]),
-              const Spacer(),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Invite code', style: AppText.bodyStrong().copyWith(fontSize: 13)),
+                  Text(code,
+                      style: AppText.bodyStrong(AppColors.ink)
+                          .copyWith(fontSize: 15, letterSpacing: 2)),
+                  const SizedBox(height: 2),
+                  Text('Private match — share this and they can join',
+                      style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
+                ]),
+              ),
               AppButton('Copy', height: 32, variant: AppBtnVariant.ghost, onPressed: _copyInvite),
             ]),
           ),

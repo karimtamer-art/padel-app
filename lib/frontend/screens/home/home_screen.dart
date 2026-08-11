@@ -394,6 +394,67 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadData();
   }
 
+  /// Redeem a private match's invite code. The code is the only way into a
+  /// private match — it's in no list and RLS won't serve the row — so a wrong
+  /// one has to fail clearly rather than silently.
+  Future<void> _joinWithCode() async {
+    final ctrl = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text('Join with a code', style: AppText.cardTitle()),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('Enter the invite code the host sent you.',
+              style: AppText.body(AppColors.inkSoft).copyWith(height: 1.4)),
+          const SizedBox(height: 14),
+          TextField(
+            controller: ctrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.characters,
+            textInputAction: TextInputAction.go,
+            onSubmitted: (v) => Navigator.pop(dCtx, v),
+            style: AppText.bodyStrong(AppColors.ink)
+                .copyWith(fontSize: 18, letterSpacing: 2),
+            decoration: InputDecoration(
+              hintText: 'PDL-AB12C',
+              hintStyle: AppText.bodyStrong(AppColors.inkFaint)
+                  .copyWith(fontSize: 18, letterSpacing: 2),
+              filled: true,
+              fillColor: AppColors.field,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: Text('Cancel', style: AppText.bodyStrong(AppColors.inkSoft)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, ctrl.text),
+            child: Text('Join', style: AppText.bodyStrong(AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+    if (code == null || code.trim().isEmpty || !mounted) return;
+
+    final (err, id) = await MatchService.joinByCode(code);
+    if (!mounted) return;
+    if (err != null || id == null) {
+      AppToast.show(context, err ?? 'Could not join that match.',
+          kind: ToastKind.error);
+      return;
+    }
+    AppToast.show(context, "You're in — see you on court.");
+    if (!mounted) return;
+    await _openMatch(context, id);
+  }
+
   Future<void> _openTournament(BuildContext c, String id) async {
     await Navigator.of(c).push(MaterialPageRoute(
         builder: (_) => TournamentDetailScreen(tournamentId: id)));
@@ -591,6 +652,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     onFindMatch: _startSearch,
                     onSchedule: _scheduleSearch,
                   ),
+                // Sits under the hero on purpose: someone who was just handed a
+                // code opens the app and has to SEE where it goes. A private
+                // match is in no list, so this row is the only way in.
+                const SizedBox(height: 12),
+                _InviteCodeRow(onTap: _joinWithCode),
                 const SizedBox(height: 24),
                 SectionHeader('Recent Form'),
                 _recentForm(),
@@ -1754,6 +1820,43 @@ class _PlacementWelcome extends StatelessWidget {
 }
 
 // ── Book-next hero (placed player, nothing booked) ───────────────────────────
+
+/// "Got a code?" — the only door into a private match. Deliberately quiet: it
+/// matters enormously to the few people holding a code and not at all to
+/// everyone else, so it reads as a row rather than competing with the hero.
+class _InviteCodeRow extends StatelessWidget {
+  final VoidCallback onTap;
+  const _InviteCodeRow({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.field,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(children: [
+          const Icon(Icons.vpn_key_outlined, size: 18, color: AppColors.gold),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Got an invite code?',
+                  style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 13.5)),
+              const SizedBox(height: 1),
+              Text('Join a private match someone set up',
+                  style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
+            ]),
+          ),
+          const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
+        ]),
+      ),
+    );
+  }
+}
 
 class _BookNextHero extends StatelessWidget {
   final Ranking ranking;

@@ -106,6 +106,34 @@ before changing anything.
   - `ticket_roster` returns `share_state` (`me`/`shared`/`pending`/`none`),
     which is what the roster row renders from.
   - See `supabase/changes/2026-08-10_number_requests.sql`.
+- **Private casual matches + invite codes** (2026-08-11). `matches.is_private`
+  and `matches.invite_code` existed from the first migration and were **dead**:
+  a `PDL-` code was minted for every match, nothing read it, no discovery path
+  filtered on `is_private`, no join path asked for a code. Now: a **private
+  match has a code and no other way in; a public match has no code at all.**
+  - **Casual only.** Ranked stays open to the band — a private ranked lobby is
+    how you'd farm rating off a hand-picked opponent. `create_match` **ignores**
+    `p_open` for ranked rather than rejecting it, so an older client can't fail
+    to create a match over a flag it doesn't know is casual-only.
+  - `matches` RLS is participant-read, so a stranger can't read a private row.
+    That leaves three doors, all closed: `mm_candidates` (which
+    `mm_count_candidates` selects from), `mm_player_sees_match` (the **push**
+    fan-out — missing it would announce a private match to strangers, the exact
+    leak the feature prevents), and the two RPCs taking a match id directly,
+    `join_match` and `mm_accept`. `mm_accept` does its own band check instead of
+    calling `mm_player_sees_match`, so filtering the lists does **not** cover
+    it. `respond_match_invite` is deliberately ungated: being invited is its own
+    permission.
+  - `join_match_by_code` sets `padel.join_code_ok` to **the match id** (not just
+    `on`) for the transaction, so a redeemed code can't be leaned on to enter a
+    different match. Same GUC pattern as `padel.invite_accept`.
+  - Wrong / expired / already-started codes all answer **"No match with that
+    code"** on purpose — distinguishing them makes it an oracle for probing
+    which codes exist. Codes skip `0/O/1/I/L` (`_new_invite_code`), because
+    these get read aloud and typed by hand.
+  - Entry point is the "Got an invite code?" row under the Home hero — a
+    private match is in no list, so that row is the only way in.
+  - See `supabase/changes/2026-08-11_private_casual.sql`.
 - **Deleting a DM clears your copy, never the messages** (2026-08-11). Long-press
   a conversation in the Messages inbox → Delete chat → `clear_conversation`
   stamps a `conversation_clears(conversation_id, user_id, cleared_at)` row.

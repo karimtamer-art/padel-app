@@ -32,6 +32,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
   String? _createdId; // set once the match is written; "View match" pops it
   int _step = 0;
   int _type = 0; // 0 competitive 1 casual
+  bool _private = false; // casual only — see _typeStep
   int _date = 0;
   late TimeOfDay _tod; // scroll-picked time
   bool _busy = false;
@@ -123,14 +124,15 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
       _busy = true;
       _phase = _CreatePhase.creating;
     });
-    // Matchmaking-only: the band handles who can join, so there's no public/
-    // private lobby or manual min-ELO. Always open to the band, no floor.
+    // No manual min-ELO: the band handles who a competitive match is offered
+    // to. Visibility is the one thing the host chooses, and only for casual —
+    // the server ignores `open` on a ranked match rather than trusting this.
     final createFuture = MatchService.createMatch(
       competitive: _type == 0,
       scheduledAt: _scheduledAt,
       courtId: _courtId,
       partnerId: _partner?['id'] as String?,
-      open: true,
+      open: !(_type == 1 && _private),
       minElo: 0,
     );
     await Future.delayed(const Duration(milliseconds: 700));
@@ -419,7 +421,62 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
         _typeCard(Icons.emoji_events_rounded, 'Competitive', 'Ranked — affects your ELO rating', AppColors.accent, 0),
         const SizedBox(height: 12),
         _typeCard(Icons.sports_tennis_rounded, 'Casual', 'Play for fun — no ranking impact', AppColors.inkSoft, 1),
+        // Casual only. A competitive match moves everybody's rating, so it
+        // stays open to the band — a private ranked lobby is how you would
+        // farm rating off a hand-picked opponent.
+        if (_type == 1) ...[
+          const SizedBox(height: 22),
+          Text('Who can join?', style: AppText.cardTitle().copyWith(fontSize: 16)),
+          const SizedBox(height: 3),
+          Text('You can\'t change this after the match is created',
+              style: AppText.small()),
+          const SizedBox(height: 14),
+          _visCard(Icons.public_rounded, 'Public',
+              'Anyone nearby can find it and join', false),
+          const SizedBox(height: 12),
+          _visCard(Icons.lock_outline_rounded, 'Private',
+              'Hidden — only people you send the code to can join', true),
+        ],
       ]);
+
+  Widget _visCard(IconData icon, String title, String sub, bool value) {
+    final on = _private == value;
+    final accent = value ? AppColors.gold : AppColors.primary;
+    return GestureDetector(
+      onTap: () => setState(() => _private = value),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: on ? accent.withValues(alpha: 0.08) : AppColors.field,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: on ? accent : AppColors.line, width: 1.5),
+        ),
+        child: Row(children: [
+          Icon(icon, size: 20, color: on ? accent : AppColors.inkFaint),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title,
+                  style: AppText.bodyStrong(on ? AppColors.ink : AppColors.inkSoft)
+                      .copyWith(fontSize: 14.5)),
+              const SizedBox(height: 1),
+              Text(sub, style: AppText.small()),
+            ]),
+          ),
+          Container(
+            width: 22, height: 22,
+            decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: on ? accent : Colors.transparent,
+                border: Border.all(color: on ? accent : AppColors.line, width: 1.5)),
+            child: on
+                ? const Icon(Icons.check_rounded, size: 13, color: AppColors.primaryInk)
+                : null,
+          ),
+        ]),
+      ),
+    );
+  }
 
   Widget _typeCard(IconData icon, String title, String sub, Color accent, int i) {
     final on = _type == i;
@@ -718,29 +775,54 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
           ),
         ],
         const SizedBox(height: 22),
-        // The matchmaker (rating band + city + time window) decides who this
-        // match is offered to — no public/private lobby or manual level floor.
-        Container(
-          padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
-          ),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.bolt_rounded, size: 18, color: AppColors.primary),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text.rich(TextSpan(children: [
-                TextSpan(text: 'Matchmaking finds your opponents. ',
-                    style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
-                TextSpan(
-                    text: "We'll offer this match to players near your level, in your city, free around this time.",
-                    style: AppText.small().copyWith(fontSize: 12.5, height: 1.45)),
-              ])),
+        // A private match is the exact opposite of what the matchmaking note
+        // promises, so it must not be shown alongside one.
+        if (_type == 1 && _private)
+          Container(
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+              color: AppColors.gold.withValues(alpha: 0.09),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
             ),
-          ]),
-        ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.lock_outline_rounded, size: 18, color: AppColors.gold),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text.rich(TextSpan(children: [
+                  TextSpan(text: 'Nobody can find this match. ',
+                      style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
+                  TextSpan(
+                      text: "You'll get an invite code once it's created — share it and they can join with it.",
+                      style: AppText.small().copyWith(fontSize: 12.5, height: 1.45)),
+                ])),
+              ),
+            ]),
+          )
+        else
+          // The matchmaker (rating band + city + time window) decides who this
+          // match is offered to.
+          Container(
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.bolt_rounded, size: 18, color: AppColors.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text.rich(TextSpan(children: [
+                  TextSpan(text: 'Matchmaking finds your opponents. ',
+                      style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
+                  TextSpan(
+                      text: "We'll offer this match to players near your level, in your city, free around this time.",
+                      style: AppText.small().copyWith(fontSize: 12.5, height: 1.45)),
+                ])),
+              ),
+            ]),
+          ),
         const SizedBox(height: 22),
         AppCard(
           color: AppColors.field,
@@ -748,6 +830,8 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
             Text('SUMMARY', style: AppText.kicker()),
             const SizedBox(height: 8),
             _sumRow('Type', _type == 0 ? 'Competitive · Doubles' : 'Casual · Doubles'),
+            if (_type == 1)
+              _sumRow('Who can join', _private ? 'Private · code only' : 'Anyone nearby'),
             _sumRow('When', '${_dayLabel(_date)}, ${_todLabel(_tod)}'),
             _sumRow('Court', _courtName()),
             _sumRow(

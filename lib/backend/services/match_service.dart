@@ -269,6 +269,32 @@ class MatchService {
 
   /// Creates the match and adds the creator (+ optional partner) to team A.
   /// Returns `(error, matchId)`.
+  /// Joins the private match behind [code]. Returns `(error, matchId)` — the
+  /// id is non-null whenever you end up in the match, including when you were
+  /// already in it, so pasting the same code twice navigates instead of
+  /// failing.
+  ///
+  /// The server normalises the code (case, spacing, an optional `PDL-`) and
+  /// answers "no match with that code" for wrong, expired and already-started
+  /// alike, so this can't be used to probe which codes exist.
+  static Future<(String?, String?)> joinByCode(String code,
+      {String? partnerId}) async {
+    if (_uid == null) return ('Not signed in.', null);
+    try {
+      final rows = await _db.rpc('join_match_by_code',
+          params: {'p_code': code, 'p_partner_id': partnerId});
+      final list = List<Map<String, dynamic>>.from(rows as List);
+      if (list.isEmpty) return ('Could not join that match.', null);
+      final row = list.first;
+      return (row['error'] as String?, row['match_id'] as String?);
+    } on PostgrestException catch (e) {
+      return (e.message, null);
+    } catch (e) {
+      debugPrint('[MatchService] joinByCode: $e');
+      return ('Could not join that match. Please try again.', null);
+    }
+  }
+
   static Future<(String?, String?)> createMatch({
     required bool competitive,
     required DateTime scheduledAt,
