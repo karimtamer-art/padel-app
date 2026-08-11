@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text.dart';
 import '../theme/app_spacing.dart';
+import 'common.dart' show AppAvatar;
+import '../../backend/services/profile_service.dart' show ProfileService;
 
 /// Translucent sticky app bar used across screens.
 class ScreenBar extends StatelessWidget implements PreferredSizeWidget {
@@ -58,22 +60,29 @@ class ScreenBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
+/// The signed-in player's header avatar.
+///
+/// Drew initials and nothing else, so an uploaded profile picture showed up in
+/// Edit Profile and on the You tab but never here. Now it reuses [AppAvatar]
+/// — same circle, same tint, same border, but it can draw a photo and falls
+/// back to the initials while loading or if the URL is broken.
+///
+/// Reads [ProfileService.currentAvatar] instead of taking a url argument: this
+/// bar sits four widgets below anything that fetches profiles, and Home is kept
+/// alive, so a passed-in value would go stale as soon as the photo changed.
 class _Avatar extends StatelessWidget {
   final String initials;
   const _Avatar(this.initials);
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 34,
-      height: 34,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: AppColors.primary.withValues(alpha: 0.14),
-        border: Border.all(color: AppColors.primary, width: 1.5),
+    return ValueListenableBuilder<String?>(
+      valueListenable: ProfileService.currentAvatar,
+      builder: (_, url, __) => AppAvatar(
+        initials,
+        size: 34,
+        ring: 1.5,
+        imageUrl: url,
       ),
-      child: Text(initials,
-          style: AppText.bodyStrong(AppColors.primary).copyWith(fontSize: 12)),
     );
   }
 }

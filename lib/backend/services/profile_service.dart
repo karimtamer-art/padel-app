@@ -31,9 +31,21 @@ class ProfileService {
 
   final SupabaseClient _sb;
 
-  // Both old and new column names — fromJson reads whichever are non-null.
+  /// The signed-in user's photo, for chrome that shows it without owning a
+  /// fetch — the Home header avatar in particular.
+  ///
+  /// A notifier rather than a constructor argument because the header sits four
+  /// widgets above anything that knows about profiles (AuthGate → RootScaffold
+  /// → HomeScreen → ScreenBar), and Home is kept alive: plumbed down, the photo
+  /// would go stale the moment someone changed it from the You tab and stay
+  /// stale until Home was rebuilt. [uploadAvatar] writes it too, so the new
+  /// picture appears the instant it uploads.
+  static final ValueNotifier<String?> currentAvatar = ValueNotifier<String?>(null);
+
+  // avatar_url rides along on the startup fetch below so the header has a photo
+  // from the first frame without a second round trip. fromJson ignores it.
   static const _onbCols =
-      'date_of_birth, gender, preferred_hand, preferred_court_side, phone, is_admin';
+      'date_of_birth, gender, preferred_hand, preferred_court_side, phone, is_admin, avatar_url';
 
   /// Current user's profile, or `null` if the row doesn't exist yet.
   /// Selects the RBAC `admin_role` too, falling back for pre-migration DBs that
@@ -54,6 +66,8 @@ class ProfileService {
           .maybeSingle();
     }
     if (row == null) return null;
+    final url = (row['avatar_url'] as String?)?.trim();
+    currentAvatar.value = (url == null || url.isEmpty) ? null : url;
     return OnboardingProfile.fromJson(row);
   }
 
@@ -357,7 +371,10 @@ class ProfileService {
           .select('avatar_url, bio')
           .eq('id', userId)
           .maybeSingle();
-      return (avatarUrl: clean(row?['avatar_url']), bio: clean(row?['bio']));
+      final avatar = clean(row?['avatar_url']);
+      // Keep the header in step with the profile header it was fetched for.
+      if (userId == _db.auth.currentUser?.id) currentAvatar.value = avatar;
+      return (avatarUrl: avatar, bio: clean(row?['bio']));
     } catch (e) {
       debugPrint('[ProfileService] fetchHeaderBits: $e');
       return (avatarUrl: null, bio: null);
@@ -383,6 +400,9 @@ class ProfileService {
       final base = _db.storage.from('avatars').getPublicUrl(path);
       final url = '$base?v=${DateTime.now().millisecondsSinceEpoch}';
       await _db.from('profiles').update({'avatar_url': url}).eq('id', uid);
+      // Every surface reading currentAvatar repaints now, rather than showing
+      // the old initials until the next cold start.
+      currentAvatar.value = url;
       return url;
     } catch (e) {
       debugPrint('[ProfileService] uploadAvatar: $e');
