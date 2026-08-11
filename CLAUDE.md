@@ -145,7 +145,22 @@ before changing anything.
   the one in Supabase → Auth → Google, because that is the audience Supabase
   validates; Android also needs an **Android** OAuth client for
   `com.padelegypt.app` + the signing SHA-1 to exist, though its id is never
-  typed anywhere. Two Android traps: `google_sign_in_android` forces
+  typed anywhere.
+  - **Three SHA-1s, three Android clients** (Google allows one fingerprint
+    each). Registering only the upload key is the trap: with Play App Signing
+    on, Google re-signs the AAB with ITS key, so sign-in works under
+    `flutter run` and fails for everyone installing from Play — which reads as
+    "only happens to some people".
+    - Play App signing — `C2:2F:D9:99:62:92:65:9A:1F:F5:3B:F2:B4:D0:64:CE:CE:2A:DA:65`
+      (Play Console → Protected with Play → Automatic protection → Manage;
+      the old `…/app/<id>/keymanagement` URL still resolves)
+    - Upload key — `5C:7C:C4:B8:65:17:98:EF:05:0C:A0:98:EF:CB:C9:10:C3:58:A7:3B`
+      (`android/upload-keystore.jks`, alias `upload`)
+    - Debug key — `FD:61:85:FB:3C:BA:95:6C:41:BA:5F:60:5F:CD:00:A2:E4:79:1B:C2`
+  - Fingerprints are public identifiers (readable from any APK), not secrets.
+    The Web client **secret** is one, and lives only in Supabase.
+  - Firebase/Cloud project is **`padel-app-a4407`** (number `61629095085`).
+  Two Android traps: `google_sign_in_android` forces
   **minSdk 24**, and the browser fallback only returns because
   `AndroidManifest.xml` declares `flutter_web_auth_2`'s `CallbackActivity` for
   the `padelrivals` scheme — iOS needs no such entry (ASWebAuthenticationSession
