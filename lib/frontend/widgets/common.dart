@@ -123,6 +123,14 @@ class AppAvatar extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color.withValues(alpha: 0.14),
+      ),
+      // The ring is a FOREGROUND decoration so it paints OVER the photo.
+      // As a normal border it drew underneath: a Container insets its child by
+      // the border width, but the image was given the full `size`, so it
+      // overflowed that inset and covered the ring — leaving a circle whose
+      // outline showed on some edges and vanished on others.
+      foregroundDecoration: BoxDecoration(
+        shape: BoxShape.circle,
         border: Border.all(color: color, width: ring),
       ),
       child: url.isEmpty

@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/avatar_crop_sheet.dart';
 import 'package:padel_clay/backend/services/auth_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import 'auth_widgets.dart';
@@ -380,18 +381,18 @@ class _SignUpFlowState extends State<SignUpFlow> {
     try {
       final f = await ImagePicker().pickImage(
         source: ImageSource.gallery,
-        maxWidth: 800,
-        maxHeight: 800,
-        imageQuality: 82,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 90,
       );
       if (f == null) return;
-      final bytes = await f.readAsBytes();
-      final dot = f.name.lastIndexOf('.');
-      final ext = dot >= 0 ? f.name.substring(dot + 1).toLowerCase() : 'jpg';
+      final raw = await f.readAsBytes();
       if (!mounted) return;
+      final bytes = await AvatarCropSheet.show(context, raw);
+      if (bytes == null || !mounted) return; // cancelled
       setState(() {
         _data.avatarBytes = bytes;
-        _data.avatarExt = ext.isEmpty ? 'jpg' : ext;
+        _data.avatarExt = 'png'; // the crop always encodes PNG
       });
     } catch (e) {
       if (!mounted) return;

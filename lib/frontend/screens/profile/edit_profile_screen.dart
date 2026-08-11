@@ -7,6 +7,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
+import 'package:padel_clay/frontend/widgets/avatar_crop_sheet.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import '../auth/auth_widgets.dart';
 
@@ -79,12 +80,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _pickAvatar() async {
     try {
       final f = await ImagePicker().pickImage(
-          source: ImageSource.gallery, maxWidth: 800, maxHeight: 800, imageQuality: 82);
+          source: ImageSource.gallery, maxWidth: 1600, maxHeight: 1600, imageQuality: 90);
       if (f == null) return;
-      final bytes = await f.readAsBytes();
-      final dot = f.name.lastIndexOf('.');
-      final ext = dot >= 0 ? f.name.substring(dot + 1) : 'jpg';
+      final raw = await f.readAsBytes();
       if (!mounted) return;
+      // Let them frame it. Picked up larger above than we used to, because the
+      // crop throws pixels away and 800px zoomed in looks soft.
+      final bytes = await AvatarCropSheet.show(context, raw);
+      if (bytes == null || !mounted) return; // cancelled
+      const ext = 'png'; // the crop always encodes PNG
       setState(() => _savingAvatar = true);
       final url = await ProfileService.uploadAvatar(bytes, ext);
       if (!mounted) return;

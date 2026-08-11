@@ -9,6 +9,7 @@ import '../../../theme/app_text.dart';
 import '../../../../backend/models/onboarding_models.dart';
 import '../../../../backend/services/profile_service.dart';
 import '../auth_widgets.dart' show PhotoPicker, BioField;
+import '../../../widgets/avatar_crop_sheet.dart';
 import 'onboarding_widgets.dart';
 
 /// Mandatory profile-completion flow. Shown by [AuthGate] when a signed-in user
@@ -167,18 +168,18 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     try {
       final f = await ImagePicker().pickImage(
         source: ImageSource.gallery,
-        maxWidth: 800,
-        maxHeight: 800,
-        imageQuality: 82,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 90,
       );
       if (f == null) return;
-      final bytes = await f.readAsBytes();
-      final dot = f.name.lastIndexOf('.');
-      final ext = dot >= 0 ? f.name.substring(dot + 1).toLowerCase() : 'jpg';
+      final raw = await f.readAsBytes();
       if (!mounted) return;
+      final bytes = await AvatarCropSheet.show(context, raw);
+      if (bytes == null || !mounted) return; // cancelled
       setState(() {
         _avatarBytes = bytes;
-        _avatarExt = ext.isEmpty ? 'jpg' : ext;
+        _avatarExt = 'png'; // the crop always encodes PNG
       });
     } catch (e) {
       if (!mounted) return;
