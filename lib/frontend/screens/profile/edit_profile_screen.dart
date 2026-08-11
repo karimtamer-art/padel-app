@@ -97,7 +97,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             content: Text('Could not update your photo — try again.')));
       }
     } catch (_) {
-      if (mounted) setState(() => _savingAvatar = false);
+      // Used to swallow this entirely: tapping the photo did nothing at all,
+      // with no way to tell a denied permission from a broken app.
+      if (!mounted) return;
+      setState(() => _savingAvatar = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not open your photos. If access is turned off, '
+              'you can enable it in Settings.')));
     }
   }
 

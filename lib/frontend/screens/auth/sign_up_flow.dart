@@ -396,8 +396,11 @@ class _SignUpFlowState extends State<SignUpFlow> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open your photos: $e'),
-            backgroundColor: const Color(0xFFB00020)),
+        // Was interpolating the raw exception into the signup screen.
+        const SnackBar(
+            content: Text('Could not open your photos. If access is turned off, '
+                'you can enable it in Settings.'),
+            backgroundColor: Color(0xFFB00020)),
       );
     }
   }

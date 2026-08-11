@@ -702,14 +702,24 @@ class _AnnouncementFormState extends State<_AnnouncementForm> {
   }
 
   Future<void> _pickImage() async {
-    final f = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (f == null) return;
-    final bytes = await f.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _imgBytes = bytes;
-      _imgExt = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';
-    });
+    // Had no try at all: a denied permission or an unreadable file threw an
+    // unhandled async error, which in release is indistinguishable from the
+    // button being dead.
+    try {
+      final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (f == null) return;
+      final bytes = await f.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _imgBytes = bytes;
+        _imgExt = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not open your photos. If access is turned off, '
+              'you can enable it in Settings.')));
+    }
   }
 
   Future<void> _post() async {

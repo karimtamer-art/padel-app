@@ -447,14 +447,22 @@ class _BroadcastSheetState extends State<_BroadcastSheet> {
   }
 
   Future<void> _pickImage() async {
-    final f = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (f == null) return;
-    final b = await f.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _imgBytes = b;
-      _imgExt = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';
-    });
+    // Had no try at all — see the same fix in admin_community_screen.
+    try {
+      final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (f == null) return;
+      final b = await f.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _imgBytes = b;
+        _imgExt = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : 'jpg';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not open your photos. If access is turned off, '
+              'you can enable it in Settings.')));
+    }
   }
 
   Future<void> _send() async {
