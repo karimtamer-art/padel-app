@@ -132,9 +132,13 @@ before changing anything.
   typed anywhere. Two Android traps: `google_sign_in_android` forces
   **minSdk 24**, and the browser fallback only returns because
   `AndroidManifest.xml` declares `flutter_web_auth_2`'s `CallbackActivity` for
-  the `padelclay` scheme — iOS needs no such entry (ASWebAuthenticationSession
+  the `padelrivals` scheme — iOS needs no such entry (ASWebAuthenticationSession
   intercepts it), which is exactly why its absence went unnoticed. The scheme
-  is mirrored in `AuthService._redirectUrl` and the manifest; change both.
+  is mirrored in `AuthService._redirectUrl`, the manifest and
+  `ios/Runner/Info.plist`; change all three. It was `padelclay` until
+  2026-08-11 — builds older than that still ask Supabase to redirect to
+  `padelclay://…`, so leave those two URLs in the Redirect URLs allow-list
+  until nobody is running one.
 - **Password reset** (2026-08-10). Three things were wrong: the button fired
   with no visible feedback (so people tapped until Supabase rate-limited them
   and nothing arrived), it was offered to Google/Apple accounts that have no
@@ -154,8 +158,8 @@ before changing anything.
     clock when Supabase answers 429, since that ban is longer than ours and
     counts sends from other devices.
   - **The link comes back into the app**: `AuthService.passwordResetUrl` =
-    `padelclay://reset-password/`, a **different host** from the OAuth callback
-    `padelclay://login-callback/`. On Android the two are claimed by different
+    `padelrivals://reset-password/`, a **different host** from the OAuth callback
+    `padelrivals://login-callback/`. On Android the two are claimed by different
     activities (MainActivity vs `flutter_web_auth_2.CallbackActivity`) and
     CallbackActivity used to claim the whole scheme — if both filters match a
     URL, Android shows an app chooser. Change a host, change the manifest.
@@ -163,7 +167,7 @@ before changing anything.
     → `SetPasswordScreen(recovery: true)` (same screen as the organizer
     first-login flow, different copy). The recovery branch must be checked
     BEFORE `signedIn`/`userUpdated`, or saving bounces them out mid-edit.
-  - **Manual step, not in git**: `padelclay://reset-password/` has to be added
+  - **Manual step, not in git**: `padelrivals://reset-password/` has to be added
     to Supabase → Authentication → URL Configuration → **Redirect URLs**, or
     the link fails with "requested path is invalid".
 - **Money / Reports (P&L)**: the Reports tab is the platform's profit & loss.

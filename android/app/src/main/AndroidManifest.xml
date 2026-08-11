@@ -38,16 +38,16 @@
                  to arrive as an ordinary deep link, which supabase_flutter
                  picks up and turns into a passwordRecovery event.
                  The host MUST differ from the OAuth callback's, or both
-                 filters match every padelclay:// URL and Android shows an app
+                 filters match every padelrivals:// URL and Android shows an app
                  chooser. Mirrored in AuthService.passwordResetUrl. -->
             <intent-filter android:label="password reset">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="padelclay" android:host="reset-password"/>
+                <data android:scheme="padelrivals" android:host="reset-password"/>
             </intent-filter>
         </activity>
-        <!-- Catches the padelclay:// redirect at the end of Google sign-in.
+        <!-- Catches the padelrivals:// redirect at the end of Google sign-in.
              iOS needs nothing here because ASWebAuthenticationSession watches
              for the scheme itself; on Android the Chrome Custom Tab hands the
              URL to the system, so without this filter NOTHING claims it and the
@@ -63,7 +63,7 @@
             android:launchMode="singleTop"
             android:taskAffinity="">
             <!-- Scoped to the login-callback host. It used to claim the whole
-                 padelclay:// scheme, which would have swallowed the
+                 padelrivals:// scheme, which would have swallowed the
                  password-reset link declared on MainActivity above (or worse,
                  produced a chooser). Keep the host in sync with
                  AuthService._redirectUrl. -->
@@ -71,7 +71,7 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="padelclay" android:host="login-callback"/>
+                <data android:scheme="padelrivals" android:host="login-callback"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

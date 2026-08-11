@@ -63,8 +63,8 @@ class AuthService {
   /// Must also be registered as an intent-filter on
   /// `com.linusu.flutter_web_auth_2.CallbackActivity` in
   /// android/app/src/main/AndroidManifest.xml — change one, change the other.
-  static const _redirectUrl = 'padelclay://login-callback/';
-  static const _callbackScheme = 'padelclay';
+  static const _redirectUrl = 'padelrivals://login-callback/';
+  static const _callbackScheme = 'padelrivals';
 
   // Set from the constructor — see the note there on why these are static.
   static String _webClientId = '';
@@ -202,7 +202,7 @@ class AuthService {
       redirectTo: _redirectUrl,
     );
     // ASWebAuthenticationSession opens as an in-app modal and intercepts the
-    // padelclay:// redirect automatically — no white screen, no app switch.
+    // padelrivals:// redirect automatically — no white screen, no app switch.
     final String callbackUrl;
     try {
       callbackUrl = await FlutterWebAuth2.authenticate(
@@ -305,7 +305,7 @@ class AuthService {
   /// would show an app chooser. Must also be allow-listed in Supabase under
   /// Authentication → URL Configuration → Redirect URLs, or the link dies with
   /// "requested path is invalid".
-  static const passwordResetUrl = 'padelclay://reset-password/';
+  static const passwordResetUrl = 'padelrivals://reset-password/';
 
   /// Sign-in providers behind the CURRENT user, e.g. {email, google, apple}.
   /// `email` present means there is a real password on the account.
