@@ -8,6 +8,7 @@ import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/frontend/widgets/skeleton.dart';
+import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
@@ -59,7 +60,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   List<Map<String, dynamic>> _myMatches = [];
   // Open matches from other players I'm allowed to see (mm_candidates) —
   // joinable straight from Home, no radar needed.
@@ -143,6 +144,10 @@ class _HomeScreenState extends State<HomeScreen> {
         )
         .subscribe();
   }
+
+  /// Coming back to the app re-reads matches, badges and the hero silently.
+  @override
+  Future<void> onAutoRefresh() => _loadData(silent: true);
 
   Future<void> _loadData({bool silent = false}) async {
     if (!silent && mounted) setState(() => _loading = true);

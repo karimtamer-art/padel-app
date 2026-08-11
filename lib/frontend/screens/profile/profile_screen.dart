@@ -6,6 +6,7 @@ import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
 import '../../widgets/elo_chart.dart';
 import '../../widgets/padel_refresh.dart';
+import '../../widgets/auto_refresh.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/profile_service.dart';
 import '../../../backend/models/mock_data.dart' show CartLine;
@@ -48,7 +49,7 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileScreen> {
   late PlayerProfile _profile;
   String? _avatarUrl;
   String? _bio;
@@ -67,6 +68,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.didUpdateWidget(old);
     if (widget.refreshTick != old.refreshTick) _refresh();
   }
+
+  @override
+  Future<void> onAutoRefresh() => _refresh();
 
   Future<void> _refresh() async {
     final uid = Supabase.instance.client.auth.currentUser?.id;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -7,6 +9,7 @@ import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
+import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import '../chat/dm_chat_screen.dart';
@@ -26,7 +29,7 @@ class MatchDetailScreen extends StatefulWidget {
   State<MatchDetailScreen> createState() => _MatchDetailScreenState();
 }
 
-class _MatchDetailScreenState extends State<MatchDetailScreen> {
+class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<MatchDetailScreen> {
   int _view = 0; // 0 lobby, 1 result
   Map<String, dynamic>? _match;
   Map<String, dynamic>? _myRating; // my ranking_history row for this match
@@ -40,11 +43,32 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
 
   String? get _uid => Supabase.instance.client.auth.currentUser?.id;
 
+  StreamSubscription<List<Map<String, dynamic>>>? _roster;
+
   @override
   void initState() {
     super.initState();
     _load();
+    // Someone joining is the one change that happens while you sit and watch.
+    // The rows themselves are ignored — see rosterStream — so this just says
+    // "something moved, go re-read it". The first emission is the current
+    // roster, which arrives right after _load, hence markRefreshed().
+    markRefreshed();
+    _roster = MatchService.rosterStream(widget.matchId).listen((_) {
+      if (mounted) autoRefresh();
+    });
   }
+
+  @override
+  void dispose() {
+    _roster?.cancel();
+    super.dispose();
+  }
+
+  /// A lobby is the screen most likely to be stale — someone joins or leaves
+  /// while you are looking at it.
+  @override
+  Future<void> onAutoRefresh() => _load();
 
   Future<void> _load() async {
     final m = await MatchService.fetchMatch(widget.matchId);

@@ -5,6 +5,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
+import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'package:padel_clay/backend/services/dm_service.dart';
 import 'package:padel_clay/backend/services/ticket_service.dart';
 import 'dm_chat_screen.dart';
@@ -22,7 +23,7 @@ class MessagesInboxScreen extends StatefulWidget {
   State<MessagesInboxScreen> createState() => _MessagesInboxScreenState();
 }
 
-class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
+class _MessagesInboxScreenState extends State<MessagesInboxScreen> with AutoRefresh<MessagesInboxScreen> {
   List<Map<String, dynamic>> _rows = [];
   List<Map<String, dynamic>> _tickets = [];
   bool _loading = true;
@@ -32,6 +33,9 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
     super.initState();
     _load();
   }
+
+  @override
+  Future<void> onAutoRefresh() => _load();
 
   Future<void> _load() async {
     // Independently, so a database without the tickets delta still shows DMs.

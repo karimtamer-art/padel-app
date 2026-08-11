@@ -270,6 +270,26 @@ class MatchService {
 
   /// Creates the match and adds the creator (+ optional partner) to team A.
   /// Returns `(error, matchId)`.
+  /// Fires whenever the roster of [matchId] changes — someone joins, leaves,
+  /// or an invited partner accepts.
+  ///
+  /// Emits the raw `match_players` rows, which the lobby ignores: it re-reads
+  /// the whole match instead. The rows here carry no embedded profile (a
+  /// realtime stream can't join), and a lobby needs names, levels and the
+  /// match's own status, which flips to 'full' on the fourth player.
+  ///
+  /// Realtime must be enabled for `match_players` in Supabase, same as
+  /// `direct_messages` and `ticket_messages`. If it isn't, this simply never
+  /// fires and the screen still refreshes on resume and on pull — so a missing
+  /// publication degrades quietly instead of breaking the lobby.
+  static Stream<List<Map<String, dynamic>>> rosterStream(String matchId) {
+    return _db
+        .from('match_players')
+        .stream(primaryKey: ['id'])
+        .eq('match_id', matchId)
+        .map((rows) => List<Map<String, dynamic>>.from(rows));
+  }
+
   /// Joins the private match behind [code]. Returns `(error, matchId)` — the
   /// id is non-null whenever you end up in the match, including when you were
   /// already in it, so pasting the same code twice navigates instead of

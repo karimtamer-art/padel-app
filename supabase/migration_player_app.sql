@@ -10933,4 +10933,20 @@ returns table (
 $$;
 grant execute on function public.dm_inbox() to authenticated;
 
+-- ===========================================================================
+-- Live match lobby (2026-08-11). Publishes match_players so the lobby updates
+-- when someone joins instead of waiting for a pull-to-refresh.
+-- Standalone delta: supabase/changes/2026-08-11_match_players_realtime.sql
+-- ===========================================================================
+
+do $$ begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'match_players'
+  ) then
+    alter publication supabase_realtime add table public.match_players;
+  end if;
+end $$;
+
 notify pgrst, 'reload schema';

@@ -6,6 +6,7 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
+import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import 'tournament_detail_screen.dart';
@@ -16,7 +17,7 @@ class TournamentsScreen extends StatefulWidget {
   State<TournamentsScreen> createState() => _TournamentsScreenState();
 }
 
-class _TournamentsScreenState extends State<TournamentsScreen> {
+class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<TournamentsScreen> {
   List<Map<String, dynamic>> _tournaments = [];
   bool _loading = true;
 
@@ -27,6 +28,9 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
     super.initState();
     _load();
   }
+
+  @override
+  Future<void> onAutoRefresh() => _load();
 
   Future<void> _load() async {
     final tournaments = await TournamentService.fetchTournaments();
