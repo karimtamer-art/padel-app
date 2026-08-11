@@ -37,6 +37,10 @@ class _DMChatScreenState extends State<DMChatScreen> {
   List<Map<String, dynamic>> _messages = [];
   StreamSubscription<List<Map<String, dynamic>>>? _sub;
   bool _loading = true;
+  /// Set if this thread was deleted from the inbox. The messages still exist
+  /// server-side (the other person kept theirs), so the stream still delivers
+  /// them and this screen is what hides the ones from before the delete.
+  DateTime? _clearedAt;
 
   static const _quickReplies = [
     'On my way 🎾',
@@ -63,17 +67,31 @@ class _DMChatScreenState extends State<DMChatScreen> {
       return;
     }
     _convId = id;
+    // Before subscribing, or the first batch renders the history back.
+    _clearedAt = await DmService.clearedAt(id);
+    if (!mounted) return;
     NotificationService.markConversationRead(id);
     _sub = DmService.messageStream(id).listen((rows) {
       if (!mounted) return;
       setState(() {
-        _messages = rows;
+        _messages = _visible(rows);
         _loading = false;
       });
       _scrollToBottom();
       // Reading live — keep the bell from counting these.
       NotificationService.markConversationRead(id);
     });
+  }
+
+  /// Drops anything sent at or before the delete. `sent_at` is set by Postgres
+  /// and [_clearedAt] by `now()` in the same database, so the two clocks agree.
+  List<Map<String, dynamic>> _visible(List<Map<String, dynamic>> rows) {
+    final cut = _clearedAt;
+    if (cut == null) return rows;
+    return rows.where((m) {
+      final at = DateTime.tryParse('${m['sent_at']}');
+      return at == null || at.isAfter(cut);
+    }).toList();
   }
 
   @override

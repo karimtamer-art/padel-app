@@ -106,6 +106,22 @@ before changing anything.
   - `ticket_roster` returns `share_state` (`me`/`shared`/`pending`/`none`),
     which is what the roster row renders from.
   - See `supabase/changes/2026-08-10_number_requests.sql`.
+- **Deleting a DM clears your copy, never the messages** (2026-08-11). Long-press
+  a conversation in the Messages inbox → Delete chat → `clear_conversation`
+  stamps a `conversation_clears(conversation_id, user_id, cleared_at)` row.
+  Nothing leaves `direct_messages`. `dm_inbox` left-joins the clear and filters
+  the lateral to messages newer than it — the lateral stays an INNER join, so a
+  conversation with nothing newer drops off the list; `DMChatScreen` fetches
+  `clearedAt` **before** subscribing and filters the stream, or the first batch
+  paints the history back. Three reasons it is one-sided: the other person's
+  thread is theirs, reports point at `direct_messages` rows by id (so a real
+  delete would let a reported harasser destroy the evidence from both sides),
+  and it is what the gesture means in every other messenger. Tickets get no
+  such option — a ticket belongs to the match, not to you. The confirm dialog
+  says out loud that the other side keeps their copy. Only
+  `clear_conversation` may write the table (SELECT-only grant), so nobody can
+  back-date someone else's `cleared_at` to hide messages from them. See
+  `supabase/changes/2026-08-11_delete_chat.sql`.
 - **Score flow**: only players in the match can submit; only the OTHER team
   can confirm; settlement runs inside `confirm_match_result` → `_settle_rating`.
   Sets are stored as team-A-perspective strings, per set `A-B` comma-separated

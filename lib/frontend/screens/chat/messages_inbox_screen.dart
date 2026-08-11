@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -72,6 +73,82 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
     ));
     // Reading a chat marks it read — refresh so the dot clears.
     if (mounted) _load();
+  }
+
+  /// Long-press a DM. Only tickets are excluded — a ticket isn't yours to
+  /// delete, it belongs to the match and would reappear on the next message.
+  Future<void> _rowMenu(Map<String, dynamic> r) async {
+    final name = (r['other_name'] as String?)?.trim();
+    final display = (name == null || name.isEmpty) ? 'this player' : name;
+    HapticFeedback.selectionClick();
+    final delete = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 10),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+                color: AppColors.line, borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(height: 14),
+          ListTile(
+            leading: const Icon(Icons.delete_outline_rounded,
+                color: AppColors.danger),
+            title: Text('Delete chat',
+                style: AppText.bodyStrong(AppColors.danger)),
+            subtitle: Text('Removes it from your Messages only',
+                style: AppText.small(AppColors.inkFaint)),
+            onTap: () => Navigator.pop(sheetCtx, true),
+          ),
+          const SizedBox(height: 10),
+        ]),
+      ),
+    );
+    if (delete != true || !mounted) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text('Delete this chat?', style: AppText.cardTitle()),
+        // Say plainly that it is one-sided. People assume delete means gone
+        // everywhere, and finding out otherwise later feels like a betrayal.
+        content: Text(
+          'It disappears from your Messages. $display keeps their copy, and '
+          'the chat comes back if they message you again.',
+          style: AppText.body(AppColors.inkSoft).copyWith(height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: Text('Cancel', style: AppText.bodyStrong(AppColors.inkSoft)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: Text('Delete', style: AppText.bodyStrong(AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    final err = await DmService.clearConversation(r['conversation_id'] as String);
+    if (!mounted) return;
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating, content: Text(err)));
+      return;
+    }
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        behavior: SnackBarBehavior.floating, content: Text('Chat deleted.')));
   }
 
   @override
@@ -274,6 +351,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
     final hasUnread = unread > 0;
     return GestureDetector(
       onTap: () => _open(r),
+      onLongPress: () => _rowMenu(r),
       child: AppCard(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(children: [

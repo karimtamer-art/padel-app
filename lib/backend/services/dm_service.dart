@@ -63,6 +63,47 @@ class DmService {
     }
   }
 
+  /// Deletes the conversation FOR THE CALLER ONLY. Returns an error or null.
+  ///
+  /// Nothing is removed from `direct_messages` — the server stamps a
+  /// `conversation_clears` row and every surface hides what came before it. The
+  /// other person keeps their thread, and a message someone reported outlives
+  /// the reported person tapping delete. If they write again the thread returns
+  /// carrying only the new messages.
+  static Future<String?> clearConversation(String conversationId) async {
+    try {
+      await _db.rpc('clear_conversation',
+          params: {'p_conversation': conversationId});
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not delete this chat. Please try again.';
+    }
+  }
+
+  /// When the caller last cleared this conversation, or null if never.
+  ///
+  /// The chat screen hides everything at or before this, so a deleted thread
+  /// re-opened from a profile starts empty instead of restoring itself. Null on
+  /// any failure, which shows the full history — the safe way to be wrong,
+  /// since the alternative hides messages that were never deleted.
+  static Future<DateTime?> clearedAt(String conversationId) async {
+    final uid = _uid;
+    if (uid == null) return null;
+    try {
+      final row = await _db
+          .from('conversation_clears')
+          .select('cleared_at')
+          .eq('conversation_id', conversationId)
+          .eq('user_id', uid)
+          .maybeSingle();
+      return DateTime.tryParse('${row?['cleared_at']}');
+    } catch (_) {
+      return null; // pre-migration DB has no such table
+    }
+  }
+
   /// Sends a message. Returns an error string or null. The row arrives back
   /// through [messageStream], so the UI shouldn't append it manually.
   static Future<String?> send(String conversationId, String text) async {
