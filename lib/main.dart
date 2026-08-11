@@ -25,9 +25,20 @@ const String kSupabaseUrl = 'https://lxihwifpcufhieppfeza.supabase.co';
 /// project — its id is never typed anywhere, it just has to be there.
 ///
 /// Leave these empty and Google sign-in silently falls back to the slower
-/// browser flow, which still works. A `--dart-define` of the same name wins
-/// over the fallback, so CI can override without editing the file.
-const String kGoogleWebClientIdFallback = '';
+/// browser flow, which still works — that fallback is what shipped in every
+/// build up to 1.2.0+5, because this constant was empty. "It opens a browser"
+/// is the symptom of that, not of Android.
+///
+/// The Android OAuth clients must be in the SAME Cloud project as this Web
+/// client (its numeric prefix is that project's number). Across projects
+/// Google will not mint a token with this audience and `authenticate()`
+/// returns a null idToken. Three SHA-1s are registered — Play App Signing,
+/// upload, and debug; see the Google sign-in notes in CLAUDE.md.
+///
+/// A `--dart-define` of the same name wins over the fallback, so CI can
+/// override without editing the file.
+const String kGoogleWebClientIdFallback =
+    '260262268929-6tu57339u99hv13bbvli5h4i3k454bh1.apps.googleusercontent.com';
 const String kGoogleIosClientIdFallback = '';
 
 Future<void> main() async {
