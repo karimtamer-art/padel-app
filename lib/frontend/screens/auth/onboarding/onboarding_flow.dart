@@ -1,16 +1,29 @@
+import 'dart:typed_data';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_spacing.dart';
 import '../../../theme/app_text.dart';
 import '../../../../backend/models/onboarding_models.dart';
 import '../../../../backend/services/profile_service.dart';
+import '../auth_widgets.dart' show PhotoPicker, BioField;
 import 'onboarding_widgets.dart';
 
 /// Mandatory profile-completion flow. Shown by [AuthGate] when a signed-in user
 /// is missing any onboarding field.
 ///
-/// Steps: Date of Birth → Gender → Hand + Court Side → Phone.
+/// Steps: Date of Birth → Gender → Hand + Court Side → Phone → Photo + Bio.
+///
+/// The last step is where a Google/Apple signup gets asked for a picture and a
+/// bio at all. [SignUpFlow] asks on its own final step, but a social signup
+/// never passes through it — it lands straight here — so without this step
+/// those accounts had no way to add either during setup.
+///
+/// Photo and bio are both OPTIONAL: the step is always valid and the button
+/// says Finish. They are also saved AFTER the onboarding upsert, so a failed
+/// upload can never cost someone the answers they just gave.
 class OnboardingFlow extends StatefulWidget {
   final String userId;
   final String displayName;
@@ -34,7 +47,7 @@ class OnboardingFlow extends StatefulWidget {
 }
 
 class _OnboardingFlowState extends State<OnboardingFlow> {
-  static const _total = 4;
+  static const _total = 5;
 
   late OnboardingProfile _draft = widget.initial;
   late int _step = _firstIncompleteStep();
@@ -42,20 +55,29 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   bool _saving = false;
   String? _error;
 
+  // Step 4. Kept out of OnboardingProfile on purpose — that model's isComplete
+  // mirrors the server's generated onboarding_completed column, and neither of
+  // these is required to finish.
+  Uint8List? _avatarBytes;
+  String _avatarExt = 'jpg';
+  String _bio = '';
+
   static const _kickers = [
-    'About you', 'About you', 'Your game', 'Contact',
+    'About you', 'About you', 'Your game', 'Contact', 'Your profile',
   ];
   static const _titles = [
     'When were you born?',
     'How do you identify?',
     'Your playing style',
     'What\'s your phone number?',
+    'Put a face to your name',
   ];
   static const _subs = [
     'We use this to match you with players in your age group.',
     'Helps us place you in the right leagues and events.',
     'Tell us your dominant hand and preferred court side.',
     'So other players can reach you to arrange matches.',
+    'Both are optional — you can add or change them later in Edit Profile.',
   ];
 
   int _firstIncompleteStep() {
@@ -76,6 +98,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         return _draft.hand != null && _draft.side != null;
       case 3:
         return OnboardingValidation.phone(_draft.phone) == null;
+      case 4:
+        return true; // photo and bio are both optional
       default:
         return false;
     }
@@ -111,11 +135,54 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     setState(() { _saving = true; _error = null; });
     try {
       await widget.profileService.saveOnboarding(widget.userId, _draft, name: widget.displayName);
+      // Optional extras, deliberately after the answers are safely stored and
+      // deliberately not awaited into the same try/catch outcome: a photo that
+      // fails to upload must not throw away a completed onboarding and drop
+      // someone back at step one. Worst case they add it in Edit Profile.
+      await _saveExtras();
       if (!mounted) return;
       widget.onCompleted();
     } catch (e) {
       if (!mounted) return;
       setState(() { _saving = false; _error = _friendly(e); });
+    }
+  }
+
+  /// Photo + bio. Swallows its own failures — see the call site.
+  Future<void> _saveExtras() async {
+    try {
+      final bio = _bio.trim();
+      if (bio.isNotEmpty) {
+        await ProfileService.updateProfile(widget.userId, {'bio': bio});
+      }
+      final bytes = _avatarBytes;
+      if (bytes != null) {
+        // Writes profiles.avatar_url itself on success.
+        await ProfileService.uploadAvatar(bytes, _avatarExt);
+      }
+    } catch (_) {/* onboarding is already saved; not worth blocking on */}
+  }
+
+  Future<void> _pickPhoto() async {
+    try {
+      final f = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 82,
+      );
+      if (f == null) return;
+      final bytes = await f.readAsBytes();
+      final dot = f.name.lastIndexOf('.');
+      final ext = dot >= 0 ? f.name.substring(dot + 1).toLowerCase() : 'jpg';
+      if (!mounted) return;
+      setState(() {
+        _avatarBytes = bytes;
+        _avatarExt = ext.isEmpty ? 'jpg' : ext;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not open your photos. You can add one later.');
     }
   }
 
@@ -270,6 +337,17 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             _error = null;
           }),
         );
+      case 4:
+        return Column(key: const ValueKey('photo_bio'), children: [
+          const SizedBox(height: 6),
+          Center(child: PhotoPicker(onTap: _pickPhoto, imageBytes: _avatarBytes)),
+          const SizedBox(height: 14),
+          Text('A photo helps opponents recognise you on court.',
+              textAlign: TextAlign.center,
+              style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 12.5)),
+          const SizedBox(height: 22),
+          BioField(onChanged: (v) => _bio = v),
+        ]);
       default:
         return const SizedBox.shrink();
     }
