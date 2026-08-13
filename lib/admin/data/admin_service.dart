@@ -27,8 +27,8 @@ class AdminService {
   }
 
   static Future<List<Map<String, dynamic>>> fetchPlayers() async {
-    const base = 'id, name, phone, city, avatar_url, tier, division_pts, '
-        'level, placement_played, status, verified, is_admin, created_at';
+    const base = 'id, name, phone, city, avatar_url, tier, '
+        'level, placement_played, status, is_admin, created_at';
     // Rating engine v2 columns; fall back for pre-migration databases.
     try {
       final res = await _db

@@ -87,7 +87,7 @@ class ProfileService {
 
   static const _profileCols =
       'id, name, username, phone, bio, date_of_birth, gender, preferred_hand, preferred_court_side, city, avatar_url, '
-      'rating, tier, division_pts, level, placement_played, created_at';
+      'rating, tier, level, placement_played, created_at';
 
   /// True when [username] is free (and validly formatted). Backed by the
   /// `username_available` RPC so it works pre-auth during signup. On a network

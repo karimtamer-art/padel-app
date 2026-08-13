@@ -2049,7 +2049,6 @@ alter table public.profiles add column if not exists preferred_hand text;
 alter table public.profiles add column if not exists preferred_court_side text;
 alter table public.profiles add column if not exists level numeric;
 alter table public.profiles add column if not exists tier text;
-alter table public.profiles add column if not exists division_pts int;
 alter table public.profiles add column if not exists placement_played int;
 -- Legacy/backfill columns (rating engine v2 uses `rating`): allow NULL so an
 -- unranked player can have no level/tier. Older DBs created them NOT NULL.
@@ -2232,7 +2231,7 @@ begin
     insert into public.profiles
       (id, name, username, avatar_url, phone, bio,
        date_of_birth, gender, preferred_hand, preferred_court_side,
-       level, tier, division_pts, placement_played)
+       level, tier, placement_played)
     values
       (new.id, v_name, v_username,
        new.raw_user_meta_data->>'avatar_url',
@@ -2245,7 +2244,7 @@ begin
        -- its default (0.95, the V3-F5 prior's uncertainty). The player earns a
        -- rating over 5 placement matches (or an admin sets it).
        -- placement_played 0 = in placement.
-       null, null, 0, 0)
+       null, null, 0)
     on conflict (id) do nothing;
   exception when others then
     raise warning 'handle_new_user: % — inserting minimal profile for %', sqlerrm, new.id;
@@ -11225,6 +11224,105 @@ begin
     raise exception 'a payout function still reads profiles.instapay_handle';
   end if;
   raise notice 'payout_accounts is live; profiles.instapay_* is now stale.';
+end $$;
+
+-- ── profiles dead columns (2026-08-14) ────────────────────
+-- Standalone delta: supabase/changes/2026-08-14_profiles_dead_columns.sql
+
+-- ---------------------------------------------------------------------------
+-- 1. Refuse to drop anything that actually holds data.
+--
+--    Each column has a default (0 / 0 / false). A row holding something else
+--    means somebody used it, and dropping would destroy that silently. This
+--    follows the 2026-06-16 precedent of auditing read-only first, except it
+--    is enforced here instead of being done by hand.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_credit  bigint := 0;
+  v_pts     bigint := 0;
+  v_ver     bigint := 0;
+  v_msg     text;
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='profiles'
+                and column_name='store_credit') then
+    execute 'select count(*) from public.profiles where coalesce(store_credit,0) <> 0'
+      into v_credit;
+  end if;
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='profiles'
+                and column_name='division_pts') then
+    execute 'select count(*) from public.profiles where coalesce(division_pts,0) <> 0'
+      into v_pts;
+  end if;
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='profiles'
+                and column_name='verified') then
+    execute 'select count(*) from public.profiles where coalesce(verified,false)'
+      into v_ver;
+  end if;
+
+  if v_credit > 0 or v_pts > 0 or v_ver > 0 then
+    v_msg := format('store_credit=%s division_pts=%s verified=%s',
+                    v_credit, v_pts, v_ver);
+    raise exception 'refusing to drop columns that hold data: %', v_msg
+      using hint = 'Inspect those rows first. If the data really is '
+                   'disposable, delete this guard block and re-run.';
+  end if;
+
+  raise notice 'profiles dead-column audit: all three are empty, proceeding.';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 2. Anything depending on them?
+--
+--    Learned the hard way on 2026-08-14: v_user_ranking, a view from
+--    migrations/0001 that no repo grep could find, blocked a column drop with
+--    a dependency error. Ask the catalog rather than assuming.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_dep text;
+begin
+  select string_agg(distinct dependent.relname, ', ') into v_dep
+    from pg_depend d
+    join pg_rewrite r       on r.oid = d.objid
+    join pg_class dependent on dependent.oid = r.ev_class
+    join pg_class src       on src.oid = d.refobjid
+    join pg_attribute a     on a.attrelid = d.refobjid and a.attnum = d.refobjsubid
+   where src.relname = 'profiles'
+     and a.attname in ('store_credit','division_pts','verified')
+     and dependent.relkind = 'v';
+  if v_dep is not null then
+    raise exception 'view(s) depend on these columns: %', v_dep
+      using hint = 'Inspect with select pg_get_viewdef(''<name>'', true), then '
+                   'drop or port them before re-running.';
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 3. Drop.
+-- ---------------------------------------------------------------------------
+alter table public.profiles drop column if exists store_credit;
+alter table public.profiles drop column if exists division_pts;
+alter table public.profiles drop column if exists verified;
+
+-- ---------------------------------------------------------------------------
+-- 4. Confirm.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_left text;
+begin
+  select string_agg(column_name, ', ') into v_left
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'profiles'
+     and column_name in ('store_credit','division_pts','verified');
+  if v_left is not null then
+    raise exception 'still present on profiles: %', v_left;
+  end if;
+  raise notice 'profiles is down to % columns.',
+    (select count(*) from information_schema.columns
+      where table_schema='public' and table_name='profiles');
 end $$;
 
 notify pgrst, 'reload schema';
