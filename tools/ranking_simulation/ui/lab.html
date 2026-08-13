@@ -1,0 +1,476 @@
+<title>Padel Rivals — Ranking Lab</title>
+
+<div class="top">
+  <div class="topbar">
+    <div class="brand">
+      <h1>Ranking Lab</h1>
+      <span class="sub">rating engine bench · padel rivals</span>
+    </div>
+    <span class="simbadge" title="No production data is reachable from this page.">Simulation only — no production data</span>
+    <label class="seedbox" title="Every run is reproducible from this number.">
+      seed
+      <input id="seed" type="number" value="482901" step="1" aria-label="Random seed" />
+      <button class="tiny ghost" id="seedCopy" title="Copy seed">copy</button>
+      <button class="tiny ghost" id="seedNew" title="New random seed">new</button>
+    </label>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Lab sections">
+    <button class="tab" role="tab" data-tab="story" aria-selected="true">Story</button>
+    <button class="tab" role="tab" data-tab="compare" aria-selected="false">Compare engines</button>
+    <button class="tab" role="tab" data-tab="population" aria-selected="false">Population</button>
+    <button class="tab" role="tab" data-tab="doubles" aria-selected="false">Doubles &amp; boosting</button>
+    <button class="tab" role="tab" data-tab="knobs" aria-selected="false">Knob sweeps</button>
+    <button class="tab" role="tab" data-tab="career" aria-selected="false">Career events</button>
+    <button class="tab" role="tab" data-tab="settings" aria-selected="false">Settings</button>
+  </nav>
+</div>
+
+<!-- ══ STORY ══════════════════════════════════════════════════════════════ -->
+<section class="page" data-panel="story">
+  <div class="panelgrid">
+    <div class="card sticky stack">
+      <header><h2>One player, one match at a time</h2></header>
+      <p class="hint">Give a player a <strong>true skill</strong> the engines cannot see, then play
+      matches and watch what each engine believes about them.</p>
+
+      <div class="row">
+        <label class="field"><span>Name</span><input type="text" id="st_name" value="Karim" /></label>
+        <label class="field"><span>True skill</span><input type="number" id="st_true" value="5.5" step="0.1" min="0" max="7" /></label>
+      </div>
+      <div class="chips" id="st_presets"></div>
+
+      <label class="field"><span>Placement length</span>
+        <input type="number" id="st_placement" value="10" min="1" max="60" step="1" /></label>
+      <div class="chips" id="st_placementQuick"></div>
+      <p class="hint" id="st_placementNote"></p>
+
+      <details class="foldout">
+        <summary>Starting state &amp; opponents — what the player and the app already know</summary>
+        <div class="stack" style="padding-top:4px">
+          <p class="hint">Four things that are true <em>before</em> the first match is played.
+          Defaults are the honest ones; change them to build a specific awkward case.</p>
+
+          <div class="row">
+            <label class="field"><span>Start rating</span><input type="text" id="st_startRating" placeholder="engine default" /></label>
+            <label class="field"><span>Start sigma</span><input type="text" id="st_startSigma" placeholder="engine default" /></label>
+          </div>
+          <p class="hint"><strong>Where the engine begins guessing, and how unsure it is.</strong>
+          Blank means "wherever a new player normally starts" — 2.00 for V2, 3.30 for V3. Sigma is
+          the uncertainty: high sigma means big steps, so the rating can travel fast.
+          Force them to build a <strong>smurf</strong> (true 5.5 starting at 1.5) or an
+          <strong>overrated beginner</strong> (true 1.5 starting at 5.3), and see how long the
+          engine takes to undo a bad start.</p>
+
+          <label class="field"><span>Everyone else</span>
+            <select id="st_pool">
+              <option value="established">Established — already rated correctly</option>
+              <option value="fresh">Brand new too — launch week</option>
+            </select>
+          </label>
+          <p class="hint"><strong>Who the partner and opponents are.</strong>
+          <em>Established</em> gives them a correct, settled rating, so the only thing moving is
+          your player — the clean measurement. <em>Brand new</em> is launch week: nobody is rated
+          yet, every rating in the match is a guess, and the engine is learning from opponents it
+          knows nothing about. That is the harder and more realistic case, and it is where the
+          opponent-reliability rule does its damage.</p>
+
+          <label class="field"><span>World</span><select id="st_world"></select></label>
+          <p class="hint"><strong>How padel itself behaves</strong> — the rules deciding who
+          actually wins, which no engine ever sees. The main choice is how decisive a one-level
+          gap really is: the default assumes a level better wins about 87% of the time.
+          Nobody knows the true figure, so if a conclusion only holds in one world, it is not a
+          conclusion.</p>
+
+          <label class="field"><span>Onboarding answer</span>
+            <select id="st_declared">
+              <option value="unknown">Not asked</option>
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
+              <option value="competitive">Competitive</option>
+            </select>
+          </label>
+          <p class="hint"><strong>"What's your level?" at sign-up.</strong> The answer moves the
+          starting point only — sigma stays at maximum, so lying is worth a couple of matches
+          rather than a rank. Pick one that disagrees with the true skill above to see how fast a
+          dishonest answer gets undone.</p>
+        </div>
+      </details>
+
+      <div>
+        <h4>Engines watching</h4>
+        <div class="chips" id="st_engines" style="margin-top:7px"></div>
+      </div>
+
+      <button class="primary big" id="st_start">Start placement</button>
+      <p class="hint" id="st_note"></p>
+    </div>
+
+    <div class="stack" id="st_out">
+      <div class="empty">Set a true skill and press <strong>Start placement</strong>.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ COMPARE ════════════════════════════════════════════════════════════ -->
+<section class="page" data-panel="compare" hidden>
+  <div class="panelgrid">
+    <div class="card sticky stack">
+      <div class="chips seg" id="cm_mode">
+        <button class="chip" data-mode="engines" aria-pressed="true">Compare engines</button>
+        <button class="chip" data-mode="variants" aria-pressed="false">Compare V3 variants</button>
+      </div>
+
+    <div id="cm_pane_engines" class="stack">
+      <header><h2>Same player, every engine</h2></header>
+      <p class="hint">Identical partners, opponents, scorelines and seed for every engine —
+      the only thing that differs is the maths.</p>
+
+      <div class="row">
+        <label class="field"><span>True skill</span><input type="number" id="cm_true" value="5.5" step="0.1" min="0" max="7" /></label>
+        <label class="field"><span>Matches</span><input type="number" id="cm_matches" value="10" step="1" min="1" max="200" /></label>
+      </div>
+      <div class="btnrow" id="cm_quick"></div>
+
+      <div class="row">
+        <label class="field"><span>Repeat over seeds</span><input type="number" id="cm_reps" value="12" min="1" max="100" /></label>
+        <label class="field"><span>Start rating</span><input type="text" id="cm_startRating" placeholder="default" /></label>
+      </div>
+      <p class="hint">One seed is an anecdote. Averaging a dozen shows the engine, not the luck.</p>
+
+      <div>
+        <h4>Engines</h4>
+        <div class="chips" id="cm_engines" style="margin-top:7px"></div>
+      </div>
+      <div class="btnrow split">
+        <button class="primary" id="cm_run">Run</button>
+        <button class="ghost" id="cm_smurf">Smurf test</button>
+      </div>
+      <div class="btnrow split">
+        <button class="ghost" id="cm_over">Overrated test</button>
+        <button class="ghost" id="cm_new">Everyone new</button>
+      </div>
+    </div>
+
+    <div id="cm_pane_variants" class="stack" hidden>
+      <header><h2>V3 placement tuning</h2></header>
+      <p class="hint">Five V3 variants differing <strong>only</strong> in the placement K
+      schedule and the placement sigma decay. Everything else — prior 3.30, margin cap,
+      reliability floor, established behaviour — is identical, so any difference is
+      attributable to those two knobs.</p>
+
+      <div>
+        <h4>Variants</h4>
+        <div class="chips" id="cm_vpick" style="margin-top:7px"></div>
+      </div>
+      <div>
+        <h4>Reference lines <span class="tag quiet">not proposals</span></h4>
+        <div class="chips" id="cm_refs" style="margin-top:7px"></div>
+      </div>
+
+      <div class="row">
+        <label class="field"><span>Seeds each</span><input type="number" id="cm_vreps" value="50" min="1" max="200" /></label>
+        <label class="field"><span>World</span><select id="cm_vworld"></select></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>Horizon</span>
+          <select id="cm_horizon">
+            <option value="10" selected>Placement only — 10</option>
+            <option value="10,20">Plus follow-up — 10, 20</option>
+            <option value="10,20,50">Full — 10, 20, 50</option>
+          </select>
+        </label>
+      </div>
+
+      <button class="primary big" id="cm_sweep">Run skill sweep</button>
+      <p class="hint">True skills 0.5 → 6.5 in half-level steps, both surroundings
+      (everyone established, then everyone brand new). Every variant replays the
+      <strong>same</strong> matches.</p>
+
+      <div>
+        <h4>Single-skill shortcuts</h4>
+        <div class="btnrow" id="cm_extreme" style="margin-top:7px"></div>
+      </div>
+      <p class="hint">Each runs the same multi-seed comparison at one true skill and shows
+      the start → final movement per variant.</p>
+    </div>
+    </div>
+    <div class="stack" id="cm_out"><div class="empty">Press <strong>Run</strong>.</div></div>
+  </div>
+</section>
+
+<!-- ══ POPULATION ═════════════════════════════════════════════════════════ -->
+<section class="page" data-panel="population" hidden>
+  <div class="panelgrid">
+    <div class="card sticky stack">
+      <header><h2>A whole league at once</h2></header>
+      <div class="row">
+        <label class="field"><span>Players</span>
+          <select id="pp_players">
+            <option>50</option><option>100</option><option selected>200</option>
+            <option>500</option><option>1000</option>
+          </select>
+        </label>
+        <label class="field"><span>Matches each</span>
+          <select id="pp_matches">
+            <option>5</option><option selected>10</option><option>20</option>
+            <option>30</option><option>50</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="field"><span>Skill spread</span>
+          <select id="pp_dist">
+            <option value="bell">Realistic bell around 3.3</option>
+            <option value="uniform">Uniform 0.5 – 6.5</option>
+          </select>
+        </label>
+        <label class="field"><span>World</span><select id="pp_world"></select></label>
+      </div>
+      <div>
+        <h4>Engines</h4>
+        <div class="chips" id="pp_engines" style="margin-top:7px"></div>
+      </div>
+      <button class="primary big" id="pp_run">Generate &amp; run</button>
+      <p class="hint">Every engine replays the <strong>same</strong> matches, so any difference
+      between them is the engine and nothing else.</p>
+    </div>
+    <div class="stack" id="pp_out"><div class="empty">Press <strong>Generate &amp; run</strong>.</div></div>
+  </div>
+</section>
+
+<!-- ══ DOUBLES ════════════════════════════════════════════════════════════ -->
+<section class="page" data-panel="doubles" hidden>
+  <div class="stack">
+    <div class="card stack">
+      <header>
+        <h2>Is an average a fair description of a pair?</h2>
+        <span class="tag quiet grow" id="db_lamlabel">λ = 0.20</span>
+      </header>
+      <p class="hint">A 5.0 with a 2.0 partner and two 3.5s both average 3.5. They do not win
+      equally often. The λ model charges a pair for being lopsided:
+      <code>strength = average − λ · gap</code>.</p>
+      <label class="field" style="max-width:340px"><span>λ (imbalance penalty)</span>
+        <input type="range" id="db_lambda" min="0" max="0.4" step="0.05" value="0.2" />
+      </label>
+      <div id="db_out"><div class="empty">Adjust λ to see the fit.</div></div>
+    </div>
+
+    <div class="card stack">
+      <header><h2>Boosting: does a strong partner inflate a weak player?</h2></header>
+      <p class="hint">The same weak player plays a run of matches <strong>always with a strong
+      partner</strong>, then the identical run <strong>with random partners</strong>. The gap
+      between the two ratings is the inflation the partner bought.</p>
+      <div class="row">
+        <label class="field"><span>Weak player's true skill</span><input type="number" id="bo_weak" value="2.5" step="0.1" /></label>
+        <label class="field"><span>Strong partner</span>
+          <select id="bo_strong"><option>3.5</option><option>4.5</option><option selected>5.0</option><option>6.0</option></select>
+        </label>
+        <label class="field"><span>Matches</span>
+          <select id="bo_matches"><option>10</option><option>20</option><option selected>30</option><option>50</option><option>100</option></select>
+        </label>
+        <label class="field"><span>Partner gap limit</span>
+          <select id="bo_gap">
+            <option value="">No limit</option>
+            <option value="2.0">2.00</option><option value="1.5">1.50</option>
+            <option value="1.25">1.25</option><option value="1.0">1.00</option><option value="0.75">0.75</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">The gap limit is an <strong>experimental match-quality control</strong>, not a
+      proposed ranked restriction — the study found rating-gap limits do not meaningfully stop
+      boosting. This is here to show that, not to ship it.</p>
+      <div class="chips" id="bo_engines"></div>
+      <div class="btnrow"><button class="primary" id="bo_run">Run boost test</button></div>
+      <div id="bo_out"></div>
+    </div>
+
+    <div class="card stack">
+      <header><h2>Is the rating about the player, or their regular partner?</h2></header>
+      <p class="hint">One player, three phases of the same length: always with a strong partner,
+      always with a weak partner, then random partners. A rating that identifies the
+      <em>individual</em> should land in the same place all three times.</p>
+      <div class="row">
+        <label class="field"><span>True skill</span><input type="number" id="pf_true" value="3.5" step="0.1" /></label>
+        <label class="field"><span>Strong partner</span><input type="number" id="pf_strong" value="5.0" step="0.1" /></label>
+        <label class="field"><span>Weak partner</span><input type="number" id="pf_weak" value="2.0" step="0.1" /></label>
+        <label class="field"><span>Matches per phase</span><input type="number" id="pf_matches" value="20" min="4" max="120" /></label>
+      </div>
+      <div class="chips" id="pf_engines"></div>
+      <div class="btnrow"><button class="primary" id="pf_run">Run partner test</button></div>
+      <div id="pf_out"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ KNOBS ══════════════════════════════════════════════════════════════ -->
+<section class="page" data-panel="knobs" hidden>
+  <div class="stack">
+    <div class="card stack">
+      <header>
+        <h2>Sweep one knob, hold everything else</h2>
+        <span class="grow"></span>
+        <label class="field" style="flex:0 0 150px"><span>Base engine</span><select id="kn_engine"></select></label>
+      </header>
+      <p class="hint">Each row reruns the same seeded population with a single value changed.
+      Sweeps run on their own seeds, kept apart from the ones used to report results.</p>
+      <div class="row">
+        <label class="field"><span>Knob</span>
+          <select id="kn_param">
+            <option value="prior">Starting prior</option>
+            <option value="placementK">Placement K (first stage)</option>
+            <option value="reliability">Opponent reliability in placement</option>
+            <option value="margin">Score margin weight &amp; cap</option>
+            <option value="curve">Expected-win curve scale</option>
+            <option value="lambda">Team imbalance λ</option>
+            <option value="sigmaDecay">Sigma decay per match</option>
+          </select>
+        </label>
+        <label class="field"><span>Players</span><input type="number" id="kn_players" value="200" min="20" max="2000" /></label>
+        <label class="field"><span>Matches</span><input type="number" id="kn_matches" value="10" min="1" max="60" /></label>
+        <label class="field"><span>Seeds</span><input type="number" id="kn_seeds" value="4" min="1" max="20" /></label>
+      </div>
+      <div class="btnrow"><button class="primary" id="kn_run">Run sweep</button></div>
+      <div id="kn_out"><div class="empty">Pick a knob and press <strong>Run sweep</strong>.</div></div>
+    </div>
+
+    <div class="card stack">
+      <header><h2>What is a scoreline worth?</h2></header>
+      <p class="hint">The same four players and the same win, three different margins. Under
+      today's 70/30 rule the difference is large enough to be worth chasing; capping the games
+      term shrinks it without erasing it.</p>
+      <div class="row">
+        <label class="field"><span>Team A</span><input type="text" id="sc_a" value="3.5, 3.5" /></label>
+        <label class="field"><span>Team B</span><input type="text" id="sc_b" value="3.5, 3.5" /></label>
+        <label class="field"><span>Sigma</span><input type="number" id="sc_sigma" value="0.45" step="0.05" /></label>
+        <label class="field"><span>Scorelines</span><input type="text" id="sc_scores" value="7-6,7-6 | 6-4,6-4 | 6-0,6-0" /></label>
+      </div>
+      <div class="chips" id="sc_engines"></div>
+      <div class="btnrow"><button class="primary" id="sc_run">Compare scorelines</button></div>
+      <div id="sc_out"></div>
+    </div>
+
+    <div class="card stack">
+      <header><h2>Does asking "what's your level?" help?</h2></header>
+      <p class="hint">The onboarding answer moves the <strong>starting point only</strong> — sigma
+      stays at maximum, so a dishonest answer is worth a couple of matches, not a rank.</p>
+      <div class="row">
+        <label class="field"><span>Players</span><input type="number" id="dc_players" value="300" min="50" max="2000" /></label>
+        <label class="field"><span>Matches</span><input type="number" id="dc_matches" value="10" min="3" max="50" /></label>
+        <label class="field"><span>Seeds</span><input type="number" id="dc_seeds" value="3" min="1" max="15" /></label>
+      </div>
+      <div class="btnrow"><button class="primary" id="dc_run">Run declaration test</button></div>
+      <div id="dc_out"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ CAREER ═════════════════════════════════════════════════════════════ -->
+<section class="page" data-panel="career" hidden>
+  <div class="stack">
+    <div class="card stack">
+      <header><h2>When a player genuinely changes</h2></header>
+      <p class="hint">A settled player's real level moves. Watch both the rating and the
+      <strong>uncertainty</strong>: an engine that grows more confident while being repeatedly
+      proven wrong has a real problem.</p>
+      <div class="row">
+        <label class="field"><span>Settles at</span><input type="number" id="sh_from" value="5.0" step="0.1" /></label>
+        <label class="field"><span>Then really becomes</span><input type="number" id="sh_to" value="3.0" step="0.1" /></label>
+        <label class="field"><span>Matches before</span><input type="number" id="sh_pre" value="25" min="5" max="120" /></label>
+        <label class="field"><span>Matches after</span><input type="number" id="sh_post" value="30" min="5" max="120" /></label>
+      </div>
+      <div class="chips" id="sh_engines"></div>
+      <div class="btnrow"><button class="primary" id="sh_run">Run skill change</button></div>
+      <div id="sh_out"></div>
+    </div>
+
+    <div class="card stack">
+      <header><h2>Coming back after time away</h2></header>
+      <p class="hint">Today an absence costs rating. The alternative is to keep the rating and
+      widen the uncertainty — the engine says "I'm less sure", not "you got worse".</p>
+      <div class="row">
+        <label class="field"><span>Settled at</span><input type="number" id="in_settled" value="5.0" step="0.1" /></label>
+        <label class="field"><span>Days away</span>
+          <select id="in_days"><option>30</option><option>60</option><option selected>90</option><option>180</option></select>
+        </label>
+        <label class="field"><span>True skill on return</span>
+          <select id="in_return"><option>5.3</option><option selected>5.0</option><option>4.8</option><option>4.5</option></select>
+        </label>
+        <label class="field"><span>Matches back</span>
+          <select id="in_after"><option>1</option><option>5</option><option selected>15</option><option>30</option></select>
+        </label>
+      </div>
+      <div class="chips" id="in_engines"></div>
+      <div class="btnrow"><button class="primary" id="in_run">Run inactivity</button></div>
+      <div id="in_out"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ SETTINGS ═══════════════════════════════════════════════════════════ -->
+<section class="page" data-panel="settings" hidden>
+  <div class="panelgrid">
+    <div class="card sticky stack">
+      <header><h2>Engine configuration</h2></header>
+      <label class="field"><span>Editing</span><select id="cfg_which"></select></label>
+      <div class="btnrow">
+        <button class="ghost tiny" data-preset="v3">Reset to V3</button>
+        <button class="ghost tiny" data-preset="tuned">Study's tuned</button>
+        <button class="ghost tiny" data-preset="aggressive">Aggressive</button>
+      </div>
+      <p class="hint">Changes apply to every tab immediately. <strong>V2 is locked</strong> — it is
+      the production baseline and the golden tests pin it.</p>
+      <div class="btnrow">
+        <button class="ghost tiny" id="cfg_export">Export scenario</button>
+        <button class="ghost tiny" id="cfg_import">Import</button>
+      </div>
+      <div class="btnrow">
+        <button class="ghost tiny" id="cfg_save">Save scenario</button>
+        <button class="ghost tiny" id="cfg_clear">Clear saved</button>
+      </div>
+      <div id="cfg_saved"></div>
+    </div>
+    <div class="stack">
+      <div class="card stack">
+        <header><h2 id="cfg_title">V3 · Candidate</h2><span class="tag info grow" id="cfg_badge">not production-approved</span></header>
+        <div id="cfg_form"></div>
+      </div>
+      <div class="card stack">
+        <header><h2>Replay real match history</h2><span class="tag quiet grow">no ground truth</span></header>
+        <p class="hint">The biggest limitation of everything else on this page is that it has to
+        guess how decisive a level gap really is in padel. Feeding <strong>actual anonymised
+        matches</strong> through the same engines removes the guess. Load a JSON file shaped like:</p>
+        <pre class="mono hint" style="overflow-x:auto;background:var(--sunk);border:1px solid var(--rule);border-radius:7px;padding:10px 12px">{"matches":[
+  {"a":["p1","p2"], "b":["p3","p4"], "score":"6-4,3-6,7-5"},
+  ...in chronological order
+]}</pre>
+        <p class="hint">Nobody knows a real player's true level, so error against the truth is
+        meaningless here. What is measured instead is <strong>prediction</strong>: before each
+        match the engine is asked who wins, and scored against what actually happened. Predictions
+        are made before the engine sees that match, so they are genuinely out of sample.</p>
+        <div class="chips" id="rp_engines"></div>
+        <div class="btnrow"><button class="primary" id="rp_load">Load match history…</button></div>
+        <div id="rp_out"></div>
+      </div>
+
+      <div class="card stack">
+        <header><h2>What this page is</h2></header>
+        <div class="hint stack">
+          <p>Every engine here is the <strong>same Dart code</strong> the batch study and the
+          golden tests run, compiled to JavaScript. The lab cannot drift from the study because
+          there is only one copy of the maths.</p>
+          <p><strong>V2 is verified against production.</strong> A 244-case grid in
+          <code>test/ranking_lab_test.dart</code> asserts it reproduces
+          <code>RatingEngine</code> — the mirror of the SQL <code>_settle_rating</code> — exactly.
+          If that ever fails, the simulator is wrong, not the assertion.</p>
+          <p><strong>Nothing here can reach production.</strong> No Supabase client, no network
+          call, no database. Players, ratings and matches are invented in memory and disappear
+          when the tab closes.</p>
+          <p><strong>True skill is hidden from the engines.</strong> They only ever see ratings,
+          sigma, teammates, opponents and scorelines. True skill exists so <em>you</em> can mark
+          the answer.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
