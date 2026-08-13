@@ -265,12 +265,14 @@ class DivisionCard extends StatelessWidget {
     final done = ranking.placement.clamp(0, total);
     final remaining = total - done;
     final pct = done / total;
+    // Placement finds a first useful level, it does not settle one — the
+    // reliability figure on the placed card is where confidence is stated.
     final help = done == 0
-        ? 'Complete 5 placement matches to determine your level.'
+        ? 'Play $total placement matches to find your starting level.'
         : remaining == 1
-            ? 'One more match to determine your level and unlock your division.'
+            ? 'One more match to find your level and unlock your division.'
             : remaining > 0
-                ? 'Complete $remaining more matches to unlock your level.'
+                ? 'Play $remaining more ${remaining == 1 ? 'match' : 'matches'} to unlock your level.'
                 : 'All placement matches done — calculating your level.';
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

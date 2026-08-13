@@ -23,20 +23,41 @@ before changing anything.
    `submit_match_result`, `confirm_match_result`, `join_match`,
    `record_bracket_winner`, `generate_draw`). Never compute or write
    rating/level from the client — that's the anti-cheat boundary.
-3. **One rating engine, one display (rating engine v2, 2026-07-02).** The engine
-   is the native **0.00–7.00 `profiles.rating`** (Playtomic-style: Elo + sigma
-   uncertainty + margin-of-victory + doubles averaging), settled server-side in
-   `_settle_rating` (idempotent via `matches.rating_applied`). `profiles.level`
-   is kept as a **display mirror** of `rating` (`level := rating` on every
-   write); `profiles.elo` + `level_from_elo` are **legacy/backfill only**. The
-   authoritative math is mirrored in Dart by **`RatingEngine`**
-   (`lib/backend/models/rating_engine.dart`) — the reference/test copy: if you
-   change the formula, change BOTH `_settle_rating` (SQL) and `RatingEngine`,
-   and say so (golden vectors + simulation in `test/rating_engine_test.dart`).
-   Display rounds to 0.25 steps (`RankingScale.fmtQuarter`). `reliability`
-   (=(1−sigma)·100) + `is_provisional` are generated from `sigma` /
-   `competitive_matches`. Casual matches are **unrated**. Full notes:
-   `supabase/changes/2026-07-02_rating_engine_v2.sql`.
+3. **One rating engine, one display (V3-F5, 2026-08-13).** The engine is the
+   native **0.00–7.00 `profiles.rating`**, settled server-side in
+   `_settle_rating` → `_settle_rating_v3f5` (idempotent via
+   `matches.rating_applied`). Dart mirror: **`RatingEngineV3F5`**
+   (`lib/backend/models/rating_engine_v3f5.dart`). Change the formula and you
+   change BOTH, and say so — `test/rating_engine_v3f5_test.dart` (golden
+   vectors) and `test/rating_engine_v3f5_parity_test.dart` (lab ↔ Dart ↔ SQL)
+   will stop you otherwise.
+   - **V3-F5 came out of the Ranking Lab and the lab stays the source of
+     truth.** `kV3F5` in `tools/ranking_simulation/engines.dart` is the
+     executable spec; production is a port of it. Re-derive numbers from the
+     lab, never by hand.
+   - Prior **3.30**, sigma₀ **0.95**. Placement is **5 matches** (staged K
+     1.15/0.90/0.70), then `K = 0.04 + 0.31·σ` — **no elevated K for matches
+     6-10**. `S = 0.85·result + 0.15·saturating margin` (cap 0.15).
+     `W` floor 1.00 in placement, 0.65 after. Sigma decays deterministically by
+     match-count band: 0.970 / 0.980 / 0.975 / 0.970.
+   - **Known and deliberate, do not "fix" without a new engine version:** a
+     huge favourite can lose rating on a narrow win; sigma ignores evidence
+     (confidently wrong); the K cliff at match 5→6; `5.0+2.0 == 3.5+3.5`
+     (lambda stays 0). Adaptive sigma and lambda exist in the lab and are OFF.
+   - **Precision:** `profiles.rating` is `numeric(9,6)` and the engine does no
+     rounding; `profiles.level` is the 2dp **display mirror** and is never read
+     back into the math. Display rounds to 0.25 (`RankingScale.fmtQuarter`).
+   - **Placement ≠ confidence.** `placement_played >= 5` reveals the rating;
+     `is_provisional` (`sigma > 0.58 or competitive_matches < 20`) is the
+     separate confidence flag. Don't conflate them on a new surface.
+   - Rollback: `app_settings.rating_engine = 'v2'` routes back to
+     `_settle_rating_v2` with no redeploy. `ranking_history.engine_version`
+     stamps `v3_f5`; NULL means a v2-era row.
+   - `rating_engine.dart` / `_settle_rating_v2` are **legacy**, kept for
+     regression vectors and rollback. Don't settle with them.
+   - `profiles.elo` + `level_from_elo` are **legacy/backfill only**. Casual
+     matches are **unrated**. Full notes:
+     `supabase/changes/2026-08-13_rating_engine_v3f5.sql`.
 4. **Match status machine** (don't invent new states):
    `open → full → (time passes) → pending_confirm → completed | disputed`.
    Casual (`match_type = 'casual'`) skips `pending_confirm`.
@@ -382,10 +403,17 @@ before changing anything.
 - `flutter pub get` first if dependencies look stale.
 - The Supabase URL + anon key are in `lib/main.dart` (anon key is public by
   design; do not move it to a .env without being asked).
-- Tests live under `test/` (run `flutter test`) — currently the rating engine
-  (`rating_engine_test.dart`: golden vectors + a convergence simulation). Add a
-  small test for logic-heavy Dart (e.g. `RankingScale`, `RatingEngine`) rather
-  than skipping; keep `RatingEngine` and the SQL `_settle_rating` in lockstep.
+- Tests live under `test/` (run `flutter test`). Rating coverage:
+  `rating_engine_v3f5_test.dart` (golden vectors generated FROM the lab),
+  `rating_engine_v3f5_parity_test.dart` (lab ↔ Dart ↔ SQL constants + a 50-seed
+  convergence guard), `rating_engine_test.dart` (legacy v2 vectors — keep them
+  passing, they are how an intentional migration difference is told from a port
+  bug) and `ranking_lab_test.dart`. Add a small test for logic-heavy Dart
+  rather than skipping; keep `RatingEngineV3F5` and `_settle_rating_v3f5` in
+  lockstep.
+- Two known-failing tests predate this work and are unrelated to rating:
+  `app_version_test.dart` (kAppVersion vs pubspec) and `widget_test.dart`
+  (smoke test). Don't take them as a regression from a rating change.
 - When a task needs DB changes: update the migration file AND list the exact
   SQL the user must re-run in your summary.
 - `postgrest`'s `.order(col)` defaults to **descending** (`ascending: false`),

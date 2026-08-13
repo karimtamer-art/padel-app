@@ -1,11 +1,21 @@
-/// Playtomic-style rating math — pure, deterministic, NO I/O.
+/// **LEGACY — rating engine v2.** Superseded in production on 2026-08-13 by
+/// V3-F5 (`rating_engine_v3f5.dart`, `_settle_rating_v3f5`). Nothing settles a
+/// match through this class any more.
 ///
-/// This is the **reference / test mirror**. The authoritative runtime copy of
-/// this exact algorithm lives in the Postgres `_settle_rating` function
-/// (rating writes only happen server-side, per the anti-cheat boundary). The
-/// two MUST be kept identical — same discipline as `level_from_elo` ↔
-/// `RankingScale.levelFromElo`. `test/rating_engine_test.dart` pins golden
-/// vectors both implementations must satisfy.
+/// It is kept, unchanged and still tested, for three reasons:
+///
+///  1. `test/rating_engine_test.dart`'s golden vectors are the record of what
+///     v2 actually did. They are what lets anyone tell an intentional migration
+///     difference from a port bug — deleting them would leave "v3-f5 gives a
+///     different number" unfalsifiable.
+///  2. `ranking_history` rows with `engine_version IS NULL` were produced by
+///     this math, so replaying or explaining history needs it.
+///  3. `_settle_rating_v2` still exists in SQL as the rollback path, and this
+///     is its Dart mirror.
+///
+/// **Do not port fixes into this file and do not settle with it.** New work
+/// belongs in `RatingEngineV3F5`. `parseSetGames` below is NOT legacy — it is
+/// the shared, still-current score parser used by both engines.
 ///
 /// Rating scale is 0.00–7.00. Core = Elo, with a Glicko-style uncertainty
 /// (`sigma`) driving the K-factor and an opponent-reliability discount, plus

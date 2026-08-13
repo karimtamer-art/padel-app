@@ -6,6 +6,7 @@
 library;
 
 import 'mock_data.dart';
+import 'rating_engine_v3f5.dart';
 
 /// One rung of the four-tier ladder.
 class Division {
@@ -37,7 +38,10 @@ class RankingScale {
     Division('A', 'Division A', 'elite', 'Elite', 'Expert League', 5.0, 7.0),
   ];
 
-  static const int placementTotal = 5;
+  /// Competitive matches before a rating goes public. THE authoritative
+  /// placement count for every player-facing surface — sourced from the engine
+  /// so a screen can never disagree with settlement about it.
+  static const int placementTotal = RatingEngineV3F5.placementMatches;
   static const double maxLevel = 7.0;
 
   static double _clamp(double v, double a, double b) =>
@@ -177,9 +181,15 @@ class Ranking {
   int get remaining =>
       (RankingScale.placementTotal - placement).clamp(0, RankingScale.placementTotal);
 
-  /// Ranked matches still needed to shed provisional status (threshold 10).
+  /// Ranked matches still needed to shed **provisional** status.
+  ///
+  /// Not the placement count — placement ended at
+  /// [RankingScale.placementTotal] and the rating is already public. This is
+  /// the separate confidence gate, which under V3-F5 clears at
+  /// [RatingEngineV3F5.establishedMatches] (the engine's own end-of-calibration
+  /// boundary), not at v2's 10.
   int get matchesToConfirm {
-    final n = 10 - competitiveMatches;
+    final n = RatingEngineV3F5.establishedMatches - competitiveMatches;
     return n < 0 ? 0 : n;
   }
 }
