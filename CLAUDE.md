@@ -370,6 +370,18 @@ before changing anything.
   proxies the same body back with the right header at
   `padel-rivals.com/report`, and `REPORT_BASE_URL` points the mailer there.
   Tokens are unchanged, so links already sent keep working.
+- **Payout details live in `payout_accounts`, not on the profile**
+  (2026-08-14, `changes/2026-08-14_payout_accounts.sql`). Keyed
+  `(player_id, provider)` so a second rail is a ROW, not a migration;
+  `provider` has no CHECK on purpose. `profiles.instapay_handle/link` still
+  exist but are **stale** — nothing writes them — and come out in a follow-up
+  once the new client is live. Don't read them.
+  - The `instapay_*` columns on `tournament_entries` and `orders` are a
+    DIFFERENT thing and stay put: they are evidence of one payment (sender +
+    proof screenshot) and belong on the transaction they prove.
+  - Handles are **not normalised in the DB**: an InstaPay address can be issued
+    against a bank (`name@cib`), so forcing an `@instapay` suffix server-side
+    would break those transfers. `AdminService.normalizeInstapay` owns it.
 - **Sponsors / partners** (added 2026-08-06): the `sponsors` table is the
   player-facing "Our Partners" page (`lib/frontend/screens/sponsors/`, read via
   `SponsorService`), reached from the Home "Our Partners" strip. Managed from

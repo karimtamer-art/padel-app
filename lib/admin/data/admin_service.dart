@@ -1628,14 +1628,17 @@ class AdminService {
     try {
       final uid = _db.auth.currentUser?.id;
       if (uid == null) return (handle: null, link: null);
+      // payout_accounts, not profiles — payout details moved off the profile
+      // row on 2026-08-14. No row simply means the organizer hasn't set any.
       final row = await _db
-          .from('profiles')
-          .select('instapay_handle, instapay_link')
-          .eq('id', uid)
+          .from('payout_accounts')
+          .select('handle, link')
+          .eq('player_id', uid)
+          .eq('provider', 'instapay')
           .maybeSingle();
       return (
-        handle: (row?['instapay_handle'] as String?)?.trim(),
-        link: (row?['instapay_link'] as String?)?.trim(),
+        handle: (row?['handle'] as String?)?.trim(),
+        link: (row?['link'] as String?)?.trim(),
       );
     } catch (_) {
       return (handle: null, link: null);

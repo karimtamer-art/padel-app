@@ -1,7 +1,7 @@
 // ============================================================================
 // organizer_payout_card.dart — reusable "InstaPay payout" card.
 // Self-loads and self-edits the signed-in organizer's InstaPay username + link
-// (profiles.instapay_handle / instapay_link) via AdminService. Embedded on the
+// (payout_accounts, provider 'instapay') via AdminService. Embedded on the
 // Overview and Community screens so it can be seen/edited from either place —
 // one source of truth, no drift. Players registering for the organizer's PAID
 // tournaments transfer to these details (see tournament_pay_info).
