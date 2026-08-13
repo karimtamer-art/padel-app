@@ -183,8 +183,9 @@ Map<String, String> sqlConstants() {
   }
   final sql = file.readAsStringSync();
 
-  final start = sql.indexOf('create or replace function public._settle_rating_v3f5');
-  if (start < 0) throw StateError('_settle_rating_v3f5 not in migration');
+  final start = sql.lastIndexOf(
+      'create or replace function public._settle_rating(p_match_id uuid)');
+  if (start < 0) throw StateError('_settle_rating not in migration');
   final end = sql.indexOf('begin', start);
   final decl = sql.substring(start, end);
 
@@ -484,24 +485,46 @@ void main() {
   group('migration guardrails', () {
     final sql = File('supabase/migration_player_app.sql').readAsStringSync();
 
-    test('the v2 engine is still present as the rollback path', () {
-      expect(sql, contains('_settle_rating_v2'));
-      expect(sql, contains('rating_engine_version()'));
+    test('rating engine v2 is GONE — there is exactly one engine', () {
+      // Removed 2026-08-14. No dispatcher, no selector, no second body to
+      // drift from this one. Recovering v2 means git, not a config row.
+      //
+      // The names survive in `drop function if exists` and in the post-run
+      // self-check, which is the point of those statements — so this asserts
+      // no DEFINITION and no CALL, rather than no mention.
+      for (final gone in const [
+        '_settle_rating_v2',
+        '_settle_rating_v3f5',
+        'rating_engine_version'
+      ]) {
+        expect(sql.contains('create or replace function public.$gone'), isFalse,
+            reason: '$gone is still defined');
+        expect(sql.contains('perform public.$gone'), isFalse,
+            reason: '$gone is still called');
+      }
+      // the selector row is deleted, never re-inserted
+      expect(sql.contains("values ('rating_engine'"), isFalse);
+      expect(sql, contains("delete from public.app_settings where key = 'rating_engine'"));
     });
 
-    test('_settle_rating dispatches rather than computing', () {
-      final i = sql.lastIndexOf('create or replace function public._settle_rating(p_match_id uuid)');
-      expect(i, greaterThan(-1));
-      final body = sql.substring(i, i + 1400);
-      expect(body, contains('_settle_rating_v3f5'));
-      expect(body, contains('_settle_rating_v2'));
-      // casual matches must never reach an engine
+    test('_settle_rating is defined exactly once and IS the engine', () {
+      final defs = RegExp(
+              r'create or replace function public\._settle_rating\(p_match_id uuid\)')
+          .allMatches(sql)
+          .length;
+      expect(defs, 1, reason: 'a superseded copy would silently shadow or be shadowed');
+
+      final body = bodyAt(sql, sql.indexOf(
+          'create or replace function public._settle_rating(p_match_id uuid)'));
+      expect(body, contains('c_prior      constant numeric   := 3.30;'));
+      expect(body, contains('_award_season_points'));
+      // casual matches must never reach the engine
       expect(body, contains("<> 'ranked'"));
     });
 
     test('settlement stays idempotent', () {
-      final i = sql.indexOf('create or replace function public._settle_rating_v3f5');
-      final body = sql.substring(i, sql.indexOf('end \$\$;', i));
+      final body = bodyAt(sql, sql.indexOf(
+          'create or replace function public._settle_rating(p_match_id uuid)'));
       expect(body, contains('if v_applied then return; end if;'));
       expect(body, contains('rating_applied = true'));
     });
@@ -561,8 +584,7 @@ void main() {
       expect(
           writers,
           {
-            'public._settle_rating_v2', // rollback path, deliberately kept
-            'public._settle_rating_v3f5', // the engine
+            'public._settle_rating', // the engine, and the only one
             'public.admin_set_player_rating', // explicit admin action
             'public.admin_set_rating', // explicit admin action
           },
@@ -585,6 +607,7 @@ void main() {
     test('rating history records the engine that produced each row', () {
       expect(sql, contains('engine_version'));
       expect(sql, contains("c_version, r.cm + 1"));
+      expect(sql, contains("c_version    constant text      := 'v3_f5';"));
     });
   });
 

@@ -50,10 +50,20 @@ before changing anything.
    - **Placement ≠ confidence.** `placement_played >= 5` reveals the rating;
      `is_provisional` (`sigma > 0.58 or competitive_matches < 20`) is the
      separate confidence flag. Don't conflate them on a new surface.
-   - Rollback: `app_settings.rating_engine = 'v2'` routes back to
-     `_settle_rating_v2` with no redeploy. `ranking_history.engine_version`
-     stamps `v3_f5`; NULL means a v2-era row. Other values: `v2` (rollback
-     path), `admin`, `sigma_migration`.
+   - **There is no second engine.** Rating engine v2, its SQL rollback path
+     and its Dart reference were all removed on 2026-08-14
+     (`changes/2026-08-14_drop_rating_engine_v2.sql`). `_settle_rating` no
+     longer dispatches — it IS the engine, defined exactly once, and a test
+     enforces that. Reverting to v2 now means restoring it from git
+     (`changes/2026-08-13_rating_engine_v3f5.sql`, section 6), not flipping a
+     config row. `ranking_history.engine_version` stamps `v3_f5`; NULL is a
+     v2-era row, and `v2` / `admin` / `sigma_migration` / `decay` also appear.
+     History is never rewritten.
+   - The v2 maths is frozen in `test/ranking_lab_test.dart::_production()` —
+     NOT in `lib/`. It is still pinned because the lab's `CurrentEngine` is the
+     baseline every candidate is scored against, including the comparison that
+     picked V3-F5; nothing else can contradict it now, so nothing else can
+     catch it drifting.
    - **Existing players' sigma was re-derived once** (2026-08-13,
      `changes/2026-08-13_v3f5_sigma_backfill.sql`, guarded by
      `app_settings.v3f5_sigma_migrated` so it cannot run twice). v2's 0.92
@@ -64,11 +74,12 @@ before changing anything.
      curve hits the 0.12 floor; neither is invented. Sigma is only ever raised,
      ratings and match counts are untouched, and hand-set sigmas (anchors,
      leveling sessions) are detected by fingerprint and skipped.
-   - `rating_engine.dart` / `_settle_rating_v2` are **legacy**, kept for
-     regression vectors and rollback. Don't settle with them.
-   - `profiles.elo` + `level_from_elo` are **legacy/backfill only**. Casual
-     matches are **unrated**. Full notes:
-     `supabase/changes/2026-08-13_rating_engine_v3f5.sql`.
+   - `profiles.elo` + `level_from_elo` are the older **v1 ELO layer** —
+     legacy/backfill only, still read by the admin console and the profile
+     chart, and deliberately NOT removed with v2. Its own change when wanted.
+   - Casual matches are **unrated** — `_settle_rating` refuses anything whose
+     `match_type` isn't `ranked`, on top of casual never reaching it. Full
+     notes: `supabase/changes/2026-08-13_rating_engine_v3f5.sql`.
 4. **Match status machine** (don't invent new states):
    `open → full → (time passes) → pending_confirm → completed | disputed`.
    Casual (`match_type = 'casual'`) skips `pending_confirm`.
@@ -416,12 +427,12 @@ before changing anything.
   design; do not move it to a .env without being asked).
 - Tests live under `test/` (run `flutter test`). Rating coverage:
   `rating_engine_v3f5_test.dart` (golden vectors generated FROM the lab),
-  `rating_engine_v3f5_parity_test.dart` (lab ↔ Dart ↔ SQL constants + a 50-seed
-  convergence guard), `rating_engine_test.dart` (legacy v2 vectors — keep them
-  passing, they are how an intentional migration difference is told from a port
-  bug) and `ranking_lab_test.dart`. Add a small test for logic-heavy Dart
-  rather than skipping; keep `RatingEngineV3F5` and `_settle_rating_v3f5` in
-  lockstep.
+  `rating_engine_v3f5_parity_test.dart` (lab ↔ Dart ↔ SQL constants, migration
+  guardrails, and a 50-seed convergence guard) and `ranking_lab_test.dart`
+  (which also holds the frozen v2 reference). Add a small test for logic-heavy
+  Dart rather than skipping; keep `RatingEngineV3F5` and the SQL
+  `_settle_rating` in lockstep — the parity test reads the SQL constant block
+  out of the migration, so drift fails a test rather than mis-rating people.
 - Two known-failing tests predate this work and are unrelated to rating:
   `app_version_test.dart` (kAppVersion vs pubspec) and `widget_test.dart`
   (smoke test). Don't take them as a regression from a rating change.

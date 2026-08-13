@@ -3,21 +3,25 @@
 /// The lab exists to decide whether to change the rating engine, so its
 /// baseline has to BE the baseline. Three things are pinned here:
 ///
-///  1. the simulator's V2 engine reproduces `RatingEngine` (the production
-///     mirror of the SQL `_settle_rating`) exactly, over a grid of states;
+///  1. the simulator's V2 engine reproduces rating engine v2 exactly, over a
+///     grid of states. V2 was production until 2026-08-13 and has since been
+///     removed from the app, so the reference now lives in `_production()`
+///     below — see the note there for why it is still pinned;
 ///  2. turning on the lab's explanation traces does not change any number —
 ///     observing an engine must not perturb it;
 ///  3. the V3 candidate is deterministic, so a seed names one run for good.
 ///
 /// If (1) fails, fix the SIMULATOR, never the assertion — a lab whose baseline
-/// has drifted from production is worse than no lab, because it produces
-/// confident comparisons against a straw man.
+/// has drifted from what production actually ran is worse than no lab, because
+/// it produces confident comparisons against a straw man.
 library;
 
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:padel_clay/backend/models/rating_engine.dart';
+import 'package:padel_clay/backend/models/rating_engine_v3f5.dart'
+    show parseSetGames;
 
 import '../tools/ranking_simulation/engines.dart';
 import '../tools/ranking_simulation/sim.dart';
@@ -64,24 +68,57 @@ List<_Case> _grid() {
   return out;
 }
 
-/// Production's answer for the same case, as (rating, sigma) per player.
+/// **Rating engine v2, transcribed.** The reference the lab's `CurrentEngine`
+/// is pinned against.
+///
+/// This used to call `settleMatch` from `lib/backend/models/rating_engine.dart`.
+/// V2 was removed from production on 2026-08-13, and the twenty lines below are
+/// what it did — kept HERE, in the lab's own test, rather than in the app.
+///
+/// It is still worth pinning. `CurrentEngine` is the baseline every candidate
+/// is scored against, including the comparison that selected V3-F5; a baseline
+/// that had quietly drifted from what production actually ran would make every
+/// one of those comparisons a straw man. That this code no longer exists in the
+/// app is exactly why it must be frozen here — nothing else can contradict it
+/// any more, so nothing else can catch it going wrong.
+///
+///   E     = 1 / (1 + 10^((R_opp - R_team) / 1.0))     team = plain average
+///   S     = 0.7*result + 0.3*(gamesFor / total)       raw ratio, uncapped
+///   W     = 0.5 + 0.5*(1 - mean sigma_opp)            floor 0.5
+///   K     = 0.04 + 0.31*sigma,  x1.5 while n < 5
+///   delta = K*W*(S - E),  rating clamped 0..7,  sigma = max(0.12, sigma*0.92)
+///
+/// Returns full doubles, unrounded — v2's Dart reference did not round; only
+/// its SQL did, which is why the caller compares against round2 / round4.
 List<List<double>> _production(_Case c) {
-  RatedPlayer p(int i) => RatedPlayer(
-        id: '$i',
-        rating: c.ratings[i],
-        sigma: c.sigmas[i],
-        competitiveMatches: c.played[i],
-      );
-  final changes = RatingEngine.settleMatch(
-    team1: [p(0), p(1)],
-    team2: [p(2), p(3)],
-    team1Games: c.gamesA,
-    team2Games: c.gamesB,
-    outcome: c.aWon ? MatchOutcome.team1Win : MatchOutcome.team2Win,
-  );
-  return [
-    for (final ch in changes) [ch.ratingAfter, ch.sigmaAfter],
-  ];
+  double team(int a, int b) => (c.ratings[a] + c.ratings[b]) / 2;
+  double sig(int a, int b) => (c.sigmas[a] + c.sigmas[b]) / 2;
+  double expected(double rTeam, double rOpp) =>
+      1.0 / (1.0 + math.pow(10.0, (rOpp - rTeam) / 1.0));
+  double signal(double result, int gf, int ga) {
+    final total = gf + ga;
+    return 0.7 * result + 0.3 * (total == 0 ? 0.5 : gf / total);
+  }
+
+  final rA = team(0, 1), rB = team(2, 3);
+  final eA = expected(rA, rB), eB = expected(rB, rA);
+  final sA = signal(c.aWon ? 1 : 0, c.gamesA, c.gamesB);
+  final sB = signal(c.aWon ? 0 : 1, c.gamesB, c.gamesA);
+  final wA = 0.5 + 0.5 * (1 - sig(2, 3));
+  final wB = 0.5 + 0.5 * (1 - sig(0, 1));
+
+  final out = <List<double>>[];
+  for (var i = 0; i < 4; i++) {
+    final onA = i < 2;
+    var k = 0.04 + (0.35 - 0.04) * c.sigmas[i];
+    if (c.played[i] < 5) k *= 1.5;
+    final delta = k * (onA ? wA : wB) * ((onA ? sA : sB) - (onA ? eA : eB));
+    out.add([
+      clampD(c.ratings[i] + delta, 0.0, 7.0),
+      math.max(0.12, c.sigmas[i] * 0.92),
+    ]);
+  }
+  return out;
 }
 
 /// The simulator's answer, driven through the same public interface the lab
@@ -142,7 +179,7 @@ List<List<double>> _simulatorWith(_Case c, {required bool scaled}) {
 }
 
 void main() {
-  group('simulator V2 == production RatingEngine', () {
+  group('simulator V2 == rating engine v2', () {
     test('reproduces settleMatch over a 244-case grid', () {
       for (final c in _grid()) {
         final prod = _production(c);
@@ -164,13 +201,19 @@ void main() {
       expect(e.estimate(0), 2.0);
       expect(e.sigmaOf(0), 0.85);
       expect(CurrentEngine.prior, 2.0);
-      expect(CurrentEngine.sigma0, RatingEngine.sigmaMax * 0.85);
+      expect(CurrentEngine.sigma0, 0.85); // v2: sigmaMax 1.0 x 0.85
     });
 
-    test('K, W and S agree with the production formulas', () {
-      expect(RatingEngine.kFactor(0.85, 0), closeTo((0.04 + 0.31 * 0.85) * 1.5, 1e-12));
-      expect(RatingEngine.wOpp([0.85, 0.85]), closeTo(0.5 + 0.5 * (1 - 0.85), 1e-12));
-      expect(RatingEngine.scoreSignal(1, 12, 6), closeTo(0.7 + 0.3 * (12 / 18), 1e-12));
+    test('K, W and S agree with the v2 formulas', () {
+      // Frozen v2 constants, stated rather than imported — the engine they
+      // describe no longer exists anywhere else.
+      final v2 = _production(const _Case([2.0, 2.0, 2.0, 2.0],
+          [0.85, 0.85, 0.85, 0.85], [0, 0, 0, 0], 12, 6, true));
+      final k = (0.04 + 0.31 * 0.85) * 1.5;   // placement boost
+      final w = 0.5 + 0.5 * (1 - 0.85);
+      final sg = 0.7 + 0.3 * (12 / 18);       // E is 0.5 (equal teams)
+      expect(v2[0][0] - 2.0, closeTo(k * w * (sg - 0.5), 1e-12));
+      expect(v2[0][1], closeTo(0.85 * 0.92, 1e-12));
     });
   });
 

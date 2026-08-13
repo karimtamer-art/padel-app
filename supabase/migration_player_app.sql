@@ -4021,84 +4021,6 @@ begin
   a := ta; b := tb; return next;
 end $$;
 
-create or replace function public._settle_rating(p_match_id uuid)
-returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  v_winner text; v_score_a text; v_applied boolean;
-  v_ga int; v_gb int; v_tot int;
-  v_avg_a numeric; v_avg_b numeric; v_sig_a numeric; v_sig_b numeric;
-  v_e_a numeric; v_e_b numeric; v_ratio_a numeric; v_ratio_b numeric;
-  v_s_a numeric; v_s_b numeric; v_w_a numeric; v_w_b numeric;
-  r record; v_k numeric; v_w numeric; v_s numeric; v_e numeric;
-  v_delta numeric; v_after numeric; v_sig_after numeric;
-begin
-  select winner_team, score_team_a, coalesce(rating_applied, false)
-    into v_winner, v_score_a, v_applied
-    from matches where id = p_match_id for update;
-  if v_applied then return; end if;
-  if v_winner is null then return; end if;
-
-  select a, b into v_ga, v_gb from public._parse_set_games(v_score_a);
-  v_ga := coalesce(v_ga, 0); v_gb := coalesce(v_gb, 0); v_tot := v_ga + v_gb;
-
-  select avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'a'),
-         avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'b'),
-         avg(coalesce(p.sigma, 0.85)) filter (where mp.team = 'a'),
-         avg(coalesce(p.sigma, 0.85)) filter (where mp.team = 'b')
-    into v_avg_a, v_avg_b, v_sig_a, v_sig_b
-    from match_players mp join profiles p on p.id = mp.player_id
-   where mp.match_id = p_match_id;
-  v_avg_a := coalesce(v_avg_a, 2.0); v_avg_b := coalesce(v_avg_b, 2.0);
-  v_sig_a := coalesce(v_sig_a, 0.85); v_sig_b := coalesce(v_sig_b, 0.85);
-
-  v_e_a := 1.0 / (1.0 + power(10.0, (v_avg_b - v_avg_a) / 1.0));
-  v_e_b := 1.0 / (1.0 + power(10.0, (v_avg_a - v_avg_b) / 1.0));
-  v_ratio_a := case when v_tot = 0 then 0.5 else v_ga::numeric / v_tot end;
-  v_ratio_b := case when v_tot = 0 then 0.5 else v_gb::numeric / v_tot end;
-  v_s_a := 0.7 * (case when v_winner = 'a' then 1 else 0 end) + 0.3 * v_ratio_a;
-  v_s_b := 0.7 * (case when v_winner = 'b' then 1 else 0 end) + 0.3 * v_ratio_b;
-  v_w_a := 0.5 + 0.5 * (1 - v_sig_b);
-  v_w_b := 0.5 + 0.5 * (1 - v_sig_a);
-
-  for r in
-    select mp.player_id, mp.team,
-           coalesce(p.rating, 2.0) as rating, coalesce(p.sigma, 0.85) as sigma,
-           coalesce(p.competitive_matches, 0) as cm, coalesce(p.is_anchor, false) as anchor
-      from match_players mp join profiles p on p.id = mp.player_id
-     where mp.match_id = p_match_id
-  loop
-    if r.team = 'a' then v_s := v_s_a; v_e := v_e_a; v_w := v_w_a;
-    else                 v_s := v_s_b; v_e := v_e_b; v_w := v_w_b; end if;
-    v_k := 0.04 + (0.35 - 0.04) * (r.sigma / 1.0);
-    if r.cm < 5 then v_k := v_k * 1.5; end if;
-    v_delta := v_k * v_w * (v_s - v_e);
-    if r.anchor then v_delta := greatest(-0.05, least(0.05, v_delta)); end if;
-    v_after := round(greatest(0.0, least(7.0, r.rating + v_delta)), 2);
-    v_sig_after := greatest(0.12, round(r.sigma * 0.92, 4));
-    update profiles set
-      rating = v_after, level = v_after, tier = public.tier_from_level(v_after),
-      sigma = v_sig_after, competitive_matches = r.cm + 1,
-      -- keep the placement counter (0..5) in step so the "X/5 placement" UI and
-      -- the ranked/unranked gate reflect settled competitive matches.
-      placement_played = least(coalesce(placement_played, 0) + 1, 5),
-      last_competitive_match_at = now()
-    where id = r.player_id;
-    insert into ranking_history
-      (profile_id, match_id, level_before, level_after,
-       rating_before, rating_after, sigma_before, sigma_after, delta,
-       opp_avg_rating, games_for, games_against, won)
-    values (r.player_id, p_match_id, r.rating, v_after,
-       r.rating, v_after, r.sigma, v_sig_after, round(v_after - r.rating, 2),
-       round((case when r.team = 'a' then v_avg_b else v_avg_a end)::numeric, 2),
-       case when r.team = 'a' then v_ga else v_gb end,
-       case when r.team = 'a' then v_gb else v_ga end,
-       (r.team = v_winner));
-  end loop;
-
-  update matches set rating_applied = true where id = p_match_id;
-end $$;
-
 -- Two-claim dispute model: each team's submitted result, kept even after a
 -- dispute clears matches.score (so an admin can see both claims side-by-side).
 create table if not exists public.match_result_submissions (
@@ -6825,85 +6747,6 @@ end $$;
 -- call, placed before the rating loop so the season engine still sees the
 -- PRE-match ratings (that is what the upset bonus is measured against).
 -- ============================================================================
-create or replace function public._settle_rating(p_match_id uuid)
-returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  v_winner text; v_score_a text; v_applied boolean;
-  v_ga int; v_gb int; v_tot int;
-  v_avg_a numeric; v_avg_b numeric; v_sig_a numeric; v_sig_b numeric;
-  v_e_a numeric; v_e_b numeric; v_ratio_a numeric; v_ratio_b numeric;
-  v_s_a numeric; v_s_b numeric; v_w_a numeric; v_w_b numeric;
-  r record; v_k numeric; v_w numeric; v_s numeric; v_e numeric;
-  v_delta numeric; v_after numeric; v_sig_after numeric;
-begin
-  select winner_team, score_team_a, coalesce(rating_applied, false)
-    into v_winner, v_score_a, v_applied
-    from matches where id = p_match_id for update;
-  if v_applied then return; end if;
-  if v_winner is null then return; end if;
-
-  select a, b into v_ga, v_gb from public._parse_set_games(v_score_a);
-  v_ga := coalesce(v_ga, 0); v_gb := coalesce(v_gb, 0); v_tot := v_ga + v_gb;
-
-  select avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'a'),
-         avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'b'),
-         avg(coalesce(p.sigma, 0.85)) filter (where mp.team = 'a'),
-         avg(coalesce(p.sigma, 0.85)) filter (where mp.team = 'b')
-    into v_avg_a, v_avg_b, v_sig_a, v_sig_b
-    from match_players mp join profiles p on p.id = mp.player_id
-   where mp.match_id = p_match_id;
-  v_avg_a := coalesce(v_avg_a, 2.0); v_avg_b := coalesce(v_avg_b, 2.0);
-  v_sig_a := coalesce(v_sig_a, 0.85); v_sig_b := coalesce(v_sig_b, 0.85);
-
-  v_e_a := 1.0 / (1.0 + power(10.0, (v_avg_b - v_avg_a) / 1.0));
-  v_e_b := 1.0 / (1.0 + power(10.0, (v_avg_a - v_avg_b) / 1.0));
-  v_ratio_a := case when v_tot = 0 then 0.5 else v_ga::numeric / v_tot end;
-  v_ratio_b := case when v_tot = 0 then 0.5 else v_gb::numeric / v_tot end;
-  v_s_a := 0.7 * (case when v_winner = 'a' then 1 else 0 end) + 0.3 * v_ratio_a;
-  v_s_b := 0.7 * (case when v_winner = 'b' then 1 else 0 end) + 0.3 * v_ratio_b;
-  v_w_a := 0.5 + 0.5 * (1 - v_sig_b);
-  v_w_b := 0.5 + 0.5 * (1 - v_sig_a);
-
-  -- season ladder (separate from rating) — must run on the pre-match ratings
-  perform public._award_season_points(p_match_id);
-
-  for r in
-    select mp.player_id, mp.team,
-           coalesce(p.rating, 2.0) as rating, coalesce(p.sigma, 0.85) as sigma,
-           coalesce(p.competitive_matches, 0) as cm, coalesce(p.is_anchor, false) as anchor
-      from match_players mp join profiles p on p.id = mp.player_id
-     where mp.match_id = p_match_id
-  loop
-    if r.team = 'a' then v_s := v_s_a; v_e := v_e_a; v_w := v_w_a;
-    else                 v_s := v_s_b; v_e := v_e_b; v_w := v_w_b; end if;
-    v_k := 0.04 + (0.35 - 0.04) * (r.sigma / 1.0);
-    if r.cm < 5 then v_k := v_k * 1.5; end if;
-    v_delta := v_k * v_w * (v_s - v_e);
-    if r.anchor then v_delta := greatest(-0.05, least(0.05, v_delta)); end if;
-    v_after := round(greatest(0.0, least(7.0, r.rating + v_delta)), 2);
-    v_sig_after := greatest(0.12, round(r.sigma * 0.92, 4));
-    update profiles set
-      rating = v_after, level = v_after, tier = public.tier_from_level(v_after),
-      sigma = v_sig_after, competitive_matches = r.cm + 1,
-      placement_played = least(coalesce(placement_played, 0) + 1, 5),
-      last_competitive_match_at = now()
-    where id = r.player_id;
-    insert into ranking_history
-      (profile_id, match_id, level_before, level_after,
-       rating_before, rating_after, sigma_before, sigma_after, delta,
-       opp_avg_rating, games_for, games_against, won)
-    values (r.player_id, p_match_id, r.rating, v_after,
-       r.rating, v_after, r.sigma, v_sig_after, round(v_after - r.rating, 2),
-       round((case when r.team = 'a' then v_avg_b else v_avg_a end)::numeric, 2),
-       case when r.team = 'a' then v_ga else v_gb end,
-       case when r.team = 'a' then v_gb else v_ga end,
-       (r.team = v_winner));
-  end loop;
-
-  update matches set rating_applied = true where id = p_match_id;
-end $$;
-
 -- ============================================================================
 -- Tournament title / podium points. Derived from the winners bracket: the
 -- highest round is the final (champion + runner-up), the round before it the
@@ -11058,24 +10901,6 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 4. Engine selector — the rollback path.
---
---    app_settings.rating_engine = 'v3_f5' (default) | 'v2'. Setting it to 'v2'
---    routes settlement back through the untouched v2 maths WITHOUT a redeploy,
---    which is what makes turning V3-F5 on during live verification reversible.
---    Matches already settled are not re-settled either way (rating_applied).
--- ---------------------------------------------------------------------------
-insert into public.app_settings(key, value) values ('rating_engine', 'v3_f5')
-  on conflict (key) do nothing;
-
-create or replace function public.rating_engine_version()
-returns text language sql stable set search_path = public as $$
-  select coalesce((select value from public.app_settings where key = 'rating_engine'),
-                  'v3_f5')::text
-$$;
-grant execute on function public.rating_engine_version() to authenticated;
-
--- ---------------------------------------------------------------------------
 -- 5. The saturating games margin — the whole of V3-F5's margin contribution.
 --
 --        rho  = gamesFor / (gamesFor + gamesAgainst)      (0.5 if no games)
@@ -11099,131 +10924,17 @@ returns numeric language sql immutable as $$
 $$;
 
 -- ---------------------------------------------------------------------------
--- 6. _settle_rating_v2 — rating engine v2, PRESERVED VERBATIM.
+-- 1. _settle_rating absorbs the engine.
 --
---    This is the exact body _settle_rating had before this change, moved
---    behind a name so the dispatcher can reach it. Do not "improve" it: its
---    whole value is being an unchanged record of what settled every
---    engine_version IS NULL row in ranking_history, and the rollback target.
+--    Previously: a dispatcher that read app_settings and delegated. Now the
+--    V3-F5 body directly, with the casual guard at the top — one function, one
+--    engine, nothing to select. The engine identity lives where it is actually
+--    useful: stamped on every ranking_history row as engine_version.
+--
+--    The constant block below is still the SQL half of the Dart/SQL parity
+--    test, which reads THIS function by name.
 -- ---------------------------------------------------------------------------
-create or replace function public._settle_rating_v2(p_match_id uuid)
-returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  v_winner text; v_score_a text; v_applied boolean;
-  v_ga int; v_gb int; v_tot int;
-  v_avg_a numeric; v_avg_b numeric; v_sig_a numeric; v_sig_b numeric;
-  v_e_a numeric; v_e_b numeric; v_ratio_a numeric; v_ratio_b numeric;
-  v_s_a numeric; v_s_b numeric; v_w_a numeric; v_w_b numeric;
-  r record; v_k numeric; v_w numeric; v_s numeric; v_e numeric;
-  v_delta numeric; v_after numeric; v_sig_after numeric;
-begin
-  select winner_team, score_team_a, coalesce(rating_applied, false)
-    into v_winner, v_score_a, v_applied
-    from matches where id = p_match_id for update;
-  if v_applied then return; end if;
-  if v_winner is null then return; end if;
-
-  select a, b into v_ga, v_gb from public._parse_set_games(v_score_a);
-  v_ga := coalesce(v_ga, 0); v_gb := coalesce(v_gb, 0); v_tot := v_ga + v_gb;
-
-  select avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'a'),
-         avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'b'),
-         avg(coalesce(p.sigma, 0.85)) filter (where mp.team = 'a'),
-         avg(coalesce(p.sigma, 0.85)) filter (where mp.team = 'b')
-    into v_avg_a, v_avg_b, v_sig_a, v_sig_b
-    from match_players mp join profiles p on p.id = mp.player_id
-   where mp.match_id = p_match_id;
-  v_avg_a := coalesce(v_avg_a, 2.0); v_avg_b := coalesce(v_avg_b, 2.0);
-  v_sig_a := coalesce(v_sig_a, 0.85); v_sig_b := coalesce(v_sig_b, 0.85);
-
-  v_e_a := 1.0 / (1.0 + power(10.0, (v_avg_b - v_avg_a) / 1.0));
-  v_e_b := 1.0 / (1.0 + power(10.0, (v_avg_a - v_avg_b) / 1.0));
-  v_ratio_a := case when v_tot = 0 then 0.5 else v_ga::numeric / v_tot end;
-  v_ratio_b := case when v_tot = 0 then 0.5 else v_gb::numeric / v_tot end;
-  v_s_a := 0.7 * (case when v_winner = 'a' then 1 else 0 end) + 0.3 * v_ratio_a;
-  v_s_b := 0.7 * (case when v_winner = 'b' then 1 else 0 end) + 0.3 * v_ratio_b;
-  v_w_a := 0.5 + 0.5 * (1 - v_sig_b);
-  v_w_b := 0.5 + 0.5 * (1 - v_sig_a);
-
-  perform public._award_season_points(p_match_id);
-
-  for r in
-    select mp.player_id, mp.team,
-           coalesce(p.rating, 2.0) as rating, coalesce(p.sigma, 0.85) as sigma,
-           coalesce(p.competitive_matches, 0) as cm, coalesce(p.is_anchor, false) as anchor
-      from match_players mp join profiles p on p.id = mp.player_id
-     where mp.match_id = p_match_id
-  loop
-    if r.team = 'a' then v_s := v_s_a; v_e := v_e_a; v_w := v_w_a;
-    else                 v_s := v_s_b; v_e := v_e_b; v_w := v_w_b; end if;
-    v_k := 0.04 + (0.35 - 0.04) * (r.sigma / 1.0);
-    if r.cm < 5 then v_k := v_k * 1.5; end if;
-    v_delta := v_k * v_w * (v_s - v_e);
-    if r.anchor then v_delta := greatest(-0.05, least(0.05, v_delta)); end if;
-    v_after := round(greatest(0.0, least(7.0, r.rating + v_delta)), 2);
-    v_sig_after := greatest(0.12, round(r.sigma * 0.92, 4));
-    update profiles set
-      rating = v_after, level = v_after, tier = public.tier_from_level(v_after),
-      sigma = v_sig_after, competitive_matches = r.cm + 1,
-      placement_played = least(coalesce(placement_played, 0) + 1, 5),
-      last_competitive_match_at = now()
-    where id = r.player_id;
-    insert into ranking_history
-      (profile_id, match_id, level_before, level_after,
-       rating_before, rating_after, sigma_before, sigma_after, delta,
-       opp_avg_rating, games_for, games_against, won, engine_version, match_no)
-    values (r.player_id, p_match_id, r.rating, v_after,
-       r.rating, v_after, r.sigma, v_sig_after, round(v_after - r.rating, 2),
-       round((case when r.team = 'a' then v_avg_b else v_avg_a end)::numeric, 2),
-       case when r.team = 'a' then v_ga else v_gb end,
-       case when r.team = 'a' then v_gb else v_ga end,
-       (r.team = v_winner), 'v2', r.cm + 1);
-  end loop;
-
-  update matches set rating_applied = true where id = p_match_id;
-end $$;
-
--- ---------------------------------------------------------------------------
--- 7. _settle_rating_v3f5 — THE ENGINE.
---
---    Per player i on team T against O, with every input read PRE-match:
---
---      T     = (R1 + R2) / 2                        pure average, lambda = 0
---      E_T   = 1 / (1 + 10^((T_O - T_T) / 1.0))     E_O = 1 - E_T
---      S     = 0.85*result + 0.15*rho'              rho' from _v3f5_margin
---      W     = max(0.5 + 0.5*(1 - mean sigma_opp), floor)
---              floor = 1.00 while n < 5, else 0.65
---      K     = stageK[j] * clamp(sigma/0.95, 0.35, 1.0)   if n < 5
---            = 0.04 + 0.31*sigma                          if n >= 5
---      delta = K * W * (S - E_T)                    +/-0.05 for ANCHORS only
---      R'    = clamp(R + delta, 0.0, 7.0)
---      sigma'= clamp(sigma * d, 0.12, 1.0)
---      n'    = n + 1
---
---    n is competitive_matches read BEFORE this match is counted, which is what
---    puts the stage and decay boundaries at 5/6, 10/11 and 20/21.
---
---    THREE BEHAVIOURS THAT LOOK LIKE BUGS AND ARE NOT. All three were measured
---    and accepted when V3-F5 was selected; changing any of them here makes
---    production stop matching the engine that was validated.
---
---      * A WINNER CAN LOSE A LITTLE RATING. At E ~ 0.99 the winner needs a
---        games ratio >= 0.630 to gain; 6-4 6-4 yields delta = -0.002. Do not
---        add `if won then delta := greatest(delta, 0)`.
---      * SIGMA IGNORES EVIDENCE. Decay is a pure function of match count, so a
---        player who keeps being wrong still gets more confident, and K falls
---        with sigma. This is the "confidently wrong" weakness. The lab's
---        surprise-aware sigma exists and is deliberately OFF.
---      * K DROPS OFF A CLIFF at match 5 -> 6 (0.62 -> 0.29). There is NO
---        elevated early-career K stage for matches 6-10; the normal
---        sigma-driven formula takes over immediately. Matches 6-10 differ only
---        in their sigma decay band.
---
---    Any change to the above is a new engine version (V3-F5.1), studied in the
---    lab first, not an edit here.
--- ---------------------------------------------------------------------------
-create or replace function public._settle_rating_v3f5(p_match_id uuid)
+create or replace function public._settle_rating(p_match_id uuid)
 returns void
 language plpgsql security definer set search_path = public as $$
 declare
@@ -11254,6 +10965,7 @@ declare
   c_version    constant text      := 'v3_f5';
   -- ========================================================================
 
+  v_type text;
   v_winner text; v_score_a text; v_applied boolean;
   v_ga int; v_gb int; v_tot int;
   v_avg_a numeric; v_avg_b numeric; v_sig_a numeric; v_sig_b numeric;
@@ -11263,10 +10975,14 @@ declare
   v_delta numeric; v_after numeric; v_sig_after numeric; v_decay numeric;
   v_placement boolean;
 begin
-  select winner_team, score_team_a, coalesce(rating_applied, false)
-    into v_winner, v_score_a, v_applied
+  select coalesce(match_type, 'ranked'), winner_team, score_team_a,
+         coalesce(rating_applied, false)
+    into v_type, v_winner, v_score_a, v_applied
     from matches where id = p_match_id for update;
-  if v_applied then return; end if;   -- idempotency: never settle twice
+
+  if v_type is null then return; end if;          -- no such match
+  if v_type <> 'ranked' then return; end if;      -- casual is unrated, always
+  if v_applied then return; end if;               -- idempotency: never twice
   if v_winner is null then return; end if;
 
   select a, b into v_ga, v_gb from public._parse_set_games(v_score_a);
@@ -11328,7 +11044,8 @@ begin
     -- K: staged in placement (exploration / calibration / validation), scaled
     -- inside the stage by remaining uncertainty so the stage value is a
     -- ceiling. After placement, the plain sigma-driven formula — no
-    -- intermediate schedule.
+    -- intermediate schedule, and the drop from 0.62 to 0.29 between match 5
+    -- and match 6 is characteristic of V3-F5, not a bug to smooth.
     if v_placement then
       if    r.cm < c_stage_end[1] then v_k := c_stage_k[1];
       elsif r.cm < c_stage_end[2] then v_k := c_stage_k[2];
@@ -11339,6 +11056,9 @@ begin
       v_k := c_k_min + (c_k_max - c_k_min) * r.sigma;
     end if;
 
+    -- A huge favourite winning narrowly gives S < E and therefore a NEGATIVE
+    -- delta. That is measured, accepted V3-F5 behaviour; do not add a
+    -- `if won then delta := greatest(delta, 0)` here.
     v_delta := v_k * v_w * (v_s - v_e);
     -- Anchors are a SOFT pin: a hand-calibrated player still moves, by at most
     -- 0.05 a match, and their sigma still decays normally.
@@ -11347,7 +11067,8 @@ begin
 
     -- Sigma: deterministic, keyed on matches already played. Approaches the
     -- established rate from ABOVE and never dips below it, which is what keeps
-    -- K alive after the rating goes public.
+    -- K alive after the rating goes public. It ignores the RESULT entirely —
+    -- the known "confidently wrong" weakness, preserved on purpose.
     if    v_placement            then v_decay := c_pl_decay;
     elsif r.cm < c_post_end[1]   then v_decay := c_post_decay[1];
     elsif r.cm < c_post_end[2]   then v_decay := c_post_decay[2];
@@ -11388,32 +11109,53 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 8. The dispatcher. Every existing caller (confirm_match_result,
---    admin_resolve_match, expire_stale_matches' 48h auto-settle,
---    finalize_tournament) keeps calling _settle_rating and does not care which
---    engine ran.
+-- 2. Drop what is now unreachable.
 --
---    The casual guard is belt-and-braces: casual matches already never reach
---    settlement (submit_match_result sends them straight to 'completed',
---    skipping pending_confirm), but a rating engine should refuse an unrated
---    match itself rather than rely on every caller remembering.
+--    _settle_rating_v3f5 goes too: its body is _settle_rating now, and leaving
+--    a second identical copy behind is how the two drift apart later. Nothing
+--    calls it — every caller (confirm_match_result, admin_resolve_match,
+--    expire_stale_matches, finalize_tournament) goes through _settle_rating.
 -- ---------------------------------------------------------------------------
-create or replace function public._settle_rating(p_match_id uuid)
-returns void
-language plpgsql security definer set search_path = public as $$
-declare v_type text;
-begin
-  select coalesce(match_type, 'ranked') into v_type
-    from public.matches where id = p_match_id;
-  if v_type is null then return; end if;
-  if v_type <> 'ranked' then return; end if;   -- casual is unrated, always
+drop function if exists public._settle_rating_v2(uuid);
+drop function if exists public._settle_rating_v3f5(uuid);
+drop function if exists public.rating_engine_version();
 
-  if public.rating_engine_version() = 'v2' then
-    perform public._settle_rating_v2(p_match_id);
-  else
-    perform public._settle_rating_v3f5(p_match_id);
+delete from public.app_settings where key = 'rating_engine';
+
+-- ---------------------------------------------------------------------------
+-- 3. Prove nothing was left pointing at the removed engine.
+--
+--    A stale call would only surface when a match settled, which is exactly
+--    when nobody wants to discover it.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_bad text;
+begin
+  select string_agg(p.proname, ', ')
+    into v_bad
+    from pg_proc p
+   where p.pronamespace = 'public'::regnamespace
+     and p.proname <> '_settle_rating'
+     and (p.prosrc like '%_settle_rating_v2%'
+       or p.prosrc like '%_settle_rating_v3f5%'
+       or p.prosrc like '%rating_engine_version%');
+  if v_bad is not null then
+    raise exception 'still referencing the removed v2 engine: %', v_bad;
   end if;
+
+  if not exists (select 1 from pg_proc
+                  where proname = '_settle_rating'
+                    and pronamespace = 'public'::regnamespace) then
+    raise exception '_settle_rating is missing — do not leave the DB in this state';
+  end if;
+
+  raise notice 'rating engine v2 removed. _settle_rating is V3-F5, no dispatch.';
+  raise notice 'ranking_history keeps % v2-era rows (engine_version null or ''v2'').',
+    (select count(*) from public.ranking_history
+      where engine_version is null or engine_version = 'v2');
 end $$;
+
+grant execute on function public._settle_rating(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 9. Existing players are NOT reset.

@@ -19,9 +19,13 @@
 /// rating inactivity decay) are deliberately **not ported at all** rather than
 /// ported and disabled, so there is nothing here to switch on by accident.
 ///
-/// The predecessor engine (rating engine v2) is kept verbatim in
-/// `rating_engine.dart` as the legacy regression reference. It is no longer
-/// what settles a match.
+/// **This is the only rating engine.** Rating engine v2 was removed on
+/// 2026-08-13, along with its SQL rollback path and its Dart reference — there
+/// is no second engine to fall back to, and `_settle_rating` no longer
+/// dispatches. `ranking_history` rows with `engine_version IS NULL` were
+/// settled by v2 and are kept; the maths that produced them is frozen in
+/// `test/ranking_lab_test.dart`, where it still pins the Ranking Lab's
+/// baseline.
 ///
 /// ## What the engine does, per player, per match
 ///
@@ -65,9 +69,64 @@ library;
 
 import 'dart:math' as math;
 
-import 'rating_engine.dart' show MatchOutcome, RatedPlayer;
+/// A player's rating state going into a match.
+class RatedPlayer {
+  final String id;
+  final double rating; // 0..7
+  final double sigma; // 0.12..1.0 (uncertainty)
+  final int competitiveMatches; // completed competitive matches
+  final bool isAnchor; // hand-calibrated seed player
 
-export 'rating_engine.dart' show MatchOutcome, RatedPlayer, parseSetGames;
+  const RatedPlayer({
+    required this.id,
+    required this.rating,
+    required this.sigma,
+    this.competitiveMatches = 0,
+    this.isAnchor = false,
+  });
+}
+
+/// The result of a match from team 1's perspective.
+///
+/// Padel has no draws — `winner_team` is always 'a' or 'b' — but [draw] is
+/// kept because the engine handles a 0.5 result coherently and refusing it
+/// would be an invented restriction. It is outside the lab's tested domain.
+enum MatchOutcome { team1Win, team2Win, draw }
+
+/// Parses a team-A-perspective set-score string like `'6-4,3-6,7-6'` into
+/// total games won by each team. A championship / super tie-break set (any
+/// side ≥ 10, e.g. `'10-8'`) counts as a single game to its winner rather than
+/// ten games, so a match tie-break doesn't dwarf the games ratio.
+///
+/// Mirrors the SQL `_parse_set_games` used by `_settle_rating`, and agrees
+/// with the Ranking Lab's `parseScore` on the games count. (The lab's parser
+/// additionally rejects malformed input; this one skips it. That is an
+/// input-validation difference, not a scoring one.)
+({int team1, int team2}) parseSetGames(String? scoreTeamA) {
+  if (scoreTeamA == null || scoreTeamA.trim().isEmpty) {
+    return (team1: 0, team2: 0);
+  }
+  var t1 = 0, t2 = 0;
+  for (final rawSet in scoreTeamA.split(',')) {
+    final parts = rawSet.trim().split('-');
+    if (parts.length != 2) continue;
+    final a = int.tryParse(parts[0].trim());
+    final b = int.tryParse(parts[1].trim());
+    if (a == null || b == null) continue;
+    if (a >= 10 || b >= 10) {
+      // Match tie-break set → 1 game to the winner.
+      if (a > b) {
+        t1 += 1;
+      } else if (b > a) {
+        t2 += 1;
+      }
+    } else {
+      t1 += a;
+      t2 += b;
+    }
+  }
+  return (team1: t1, team2: t2);
+}
 
 /// The identifier production stamps on everything this engine settles.
 ///
