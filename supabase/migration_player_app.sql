@@ -10956,6 +10956,49 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- 4a. Dependent objects the repo does not know about.
+--
+--    `profiles` predates migration_player_app.sql, so the live database can
+--    carry objects created by supabase/migrations/0001..0004 that nothing in
+--    this file mentions. v_user_ranking is one: an ELO-era "convenience view
+--    for the profile screen" from 0001_ranking.sql that selects p.elo, so
+--    `drop column elo` fails against it with a dependency error.
+--
+--    It is safe to drop. Nothing references it — not the Flutter app, not an
+--    Edge Function, not another view or function — and the profile screen it
+--    was built for reads `profiles` directly now. It is NOT recreated
+--    rating-native, because recreating an object with no readers just moves
+--    the problem to the next migration.
+--
+--    The pre-flight below lists ANY other dependent view before the drops run,
+--    so a second unknown object gets a clear message rather than a raw
+--    dependency error halfway through.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_dep text;
+begin
+  select string_agg(distinct dependent.relname, ', ')
+    into v_dep
+    from pg_depend d
+    join pg_rewrite r      on r.oid = d.objid
+    join pg_class dependent on dependent.oid = r.ev_class
+    join pg_class src       on src.oid = d.refobjid
+    join pg_attribute a     on a.attrelid = d.refobjid and a.attnum = d.refobjsubid
+   where src.relname in ('profiles','matches','tournaments','match_players')
+     and a.attname in ('elo','min_elo','max_elo','elo_before','elo_after')
+     and dependent.relkind = 'v'
+     and dependent.relname <> 'v_user_ranking';
+  if v_dep is not null then
+    raise exception
+      'unexpected view(s) depend on the v1 ELO columns: %. Inspect with '
+      '`select pg_get_viewdef(''%%'', true)` and handle them before re-running.',
+      v_dep, v_dep;
+  end if;
+end $$;
+
+drop view if exists public.v_user_ranking;
+
+-- ---------------------------------------------------------------------------
 -- 4. Drop the v1 layer. Functions first -- a column cannot go while something
 --    still references it.
 -- ---------------------------------------------------------------------------
