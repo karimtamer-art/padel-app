@@ -11423,35 +11423,22 @@ end $$;
 --    number; players part-way through placement keep their progress and carry
 --    on toward five. Only FUTURE matches settle under V3-F5.
 --
---    KNOWN CONSEQUENCE, deliberately left alone: existing sigmas came off v2's
---    0.92-per-match curve, which falls much faster than V3-F5's. A 10-match
---    player carries sigma ~0.36 where a V3-F5 10-match player would hold 0.74,
---    so early adopters will move more slowly than the engine intends until
---    their sigma and match count re-converge (they never fully do — sigma only
---    falls). The re-derivation that would fix it is written out below and is
---    NOT RUN: it rewrites the uncertainty of every existing player, which is a
---    product decision about fairness to early adopters, not a migration step.
+--    THE SIGMA GAP IS NOW CLOSED — see
+--    supabase/changes/2026-08-13_v3f5_sigma_backfill.sql, run straight after
+--    this one.
 --
---    To apply it, uncomment and run deliberately:
+--    The problem it solves: existing sigmas came off v2's 0.92-per-match
+--    curve, which falls ~3x faster than V3-F5's, so a 10-match player carried
+--    sigma ~0.43 where V3-F5 expects 0.74. K is sigma-driven, so early
+--    adopters would have corrected at roughly half the intended rate — the
+--    people who were here first getting a materially weaker engine than new
+--    signups.
 --
---    do $$
---    declare r record; s numeric; n int;
---    begin
---      for r in select id, coalesce(competitive_matches, 0) as cm
---                 from public.profiles loop
---        s := 0.95; n := 0;
---        while n < r.cm loop
---          s := greatest(0.12, least(1.0, s * case
---                 when n < 5  then 0.970
---                 when n < 10 then 0.980
---                 when n < 20 then 0.975
---                 else 0.970 end));
---          n := n + 1;
---        end loop;
---        update public.profiles set sigma = round(s, 6)
---          where id = r.id and not coalesce(is_anchor, false);
---      end loop;
---    end $$;
+--    That backfill re-derives sigma from `competitive_matches` alone (which is
+--    valid precisely because V3-F5's sigma carries no player information), in
+--    full below 20 matches and tapering to no-change at 72. It touches sigma
+--    and nothing else: no rating, no match count, no placement state. Ratings
+--    and match counts remain preserved exactly as described above.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------

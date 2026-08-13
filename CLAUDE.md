@@ -52,7 +52,18 @@ before changing anything.
      separate confidence flag. Don't conflate them on a new surface.
    - Rollback: `app_settings.rating_engine = 'v2'` routes back to
      `_settle_rating_v2` with no redeploy. `ranking_history.engine_version`
-     stamps `v3_f5`; NULL means a v2-era row.
+     stamps `v3_f5`; NULL means a v2-era row. Other values: `v2` (rollback
+     path), `admin`, `sigma_migration`.
+   - **Existing players' sigma was re-derived once** (2026-08-13,
+     `changes/2026-08-13_v3f5_sigma_backfill.sql`, guarded by
+     `app_settings.v3f5_sigma_migrated` so it cannot run twice). v2's 0.92
+     curve falls ~3x faster than V3-F5's, so carried-over sigmas halved early
+     adopters' K. Re-derivation is legitimate only because V3-F5 sigma is a
+     pure function of match count. Full curve below 20 matches, tapering to
+     no-change at 72 — 20 is the engine's established boundary, 72 is where its
+     curve hits the 0.12 floor; neither is invented. Sigma is only ever raised,
+     ratings and match counts are untouched, and hand-set sigmas (anchors,
+     leveling sessions) are detected by fingerprint and skipped.
    - `rating_engine.dart` / `_settle_rating_v2` are **legacy**, kept for
      regression vectors and rollback. Don't settle with them.
    - `profiles.elo` + `level_from_elo` are **legacy/backfill only**. Casual

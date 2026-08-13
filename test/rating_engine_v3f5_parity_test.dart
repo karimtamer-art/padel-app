@@ -589,6 +589,142 @@ void main() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // 5b. The one-off sigma backfill (2026-08-13_v3f5_sigma_backfill.sql)
+  //
+  // Existing players carried sigmas off v2's 0.92 curve, which falls ~3x
+  // faster than V3-F5's, so they corrected at roughly half the intended rate.
+  // The backfill re-derives sigma from match count, fully below 20 matches and
+  // tapering to no-change at 72. Both endpoints are read off the engine, and
+  // the assertions below are what stops the SQL drifting away from them.
+  // ═══════════════════════════════════════════════════════════════════════
+  group('sigma backfill', () {
+    // The migration's closed-form curve, transcribed from the SQL.
+    double closedForm(int n) {
+      final s = 0.95 *
+          math.pow(0.970, math.min(n, 5)) *
+          math.pow(0.980, math.max(0, math.min(n, 10) - 5)) *
+          math.pow(0.975, math.max(0, math.min(n, 20) - 10)) *
+          math.pow(0.970, math.max(0, n - 20));
+      return RatingEngineV3F5.clampD(s.toDouble(), 0.12, 1.0);
+    }
+
+    double legacy(int n) => math.max(0.12, math.pow(0.92, n).toDouble());
+
+    double migrated(int n, double current) {
+      var t = closedForm(n);
+      if (n >= 20) {
+        final w = RatingEngineV3F5.clampD((72 - n) / (72 - 20), 0.0, 1.0);
+        t = current + (t - current) * w;
+      }
+      return math.max(current, math.min(1.0, t));
+    }
+
+    test('the closed form equals the engine\'s iterated decay bands', () {
+      // The SQL clamps once at the end rather than per step. That is only
+      // valid because sigma falls monotonically and 0.12 is absorbing — if a
+      // future band ever raised sigma, this assertion is what catches it.
+      for (var n = 0; n <= 150; n++) {
+        expect(closedForm(n), closeTo(RatingEngineV3F5.sigmaAfter(n), 1e-12),
+            reason: 'n=$n');
+      }
+    });
+
+    test('72 really is where the V3-F5 curve reaches the sigma floor', () {
+      expect(RatingEngineV3F5.sigmaAfter(71),
+          greaterThan(RatingEngineV3F5.sigmaMin));
+      expect(RatingEngineV3F5.sigmaAfter(72),
+          closeTo(RatingEngineV3F5.sigmaMin, 1e-12));
+    });
+
+    test('20 is the engine\'s own established boundary', () {
+      expect(RatingEngineV3F5.establishedMatches, 20);
+      expect(RatingEngineV3F5.postStageEnds.last, 20);
+    });
+
+    test('below 20 matches the full curve is applied', () {
+      for (final n in [0, 1, 3, 5, 10, 15, 19]) {
+        expect(migrated(n, legacy(n)),
+            closeTo(math.max(legacy(n), closedForm(n)), 1e-12),
+            reason: 'n=$n');
+      }
+    });
+
+    test('the taper is continuous across the 19/20 boundary', () {
+      // The failure mode of the rejected "stop dead at 20" option: a 19-match
+      // player on 0.587 next to a 20-match player on 0.189.
+      final at19 = migrated(19, legacy(19));
+      final at20 = migrated(20, legacy(20));
+      expect((at19 - at20).abs(), lessThan(0.02));
+    });
+
+    test('sigma is monotonically non-increasing in match count after migration',
+        () {
+      var prev = 2.0;
+      for (var n = 0; n <= 100; n++) {
+        final v = migrated(n, legacy(n));
+        expect(v, lessThanOrEqualTo(prev + 1e-12), reason: 'rose at n=$n');
+        prev = v;
+      }
+    });
+
+    test('sigma is only ever raised, never lowered', () {
+      for (var n = 0; n <= 120; n++) {
+        expect(migrated(n, legacy(n)), greaterThanOrEqualTo(legacy(n) - 1e-12),
+            reason: 'n=$n');
+      }
+    });
+
+    test('veterans past the convergence point are untouched', () {
+      for (final n in [72, 80, 120]) {
+        expect(migrated(n, legacy(n)), closeTo(legacy(n), 1e-12), reason: 'n=$n');
+      }
+    });
+
+    test('the published movement table is what the formula produces', () {
+      // These are the numbers written into the migration's header comment and
+      // shown to the user before they approved it.
+      const table = <int, double>{
+        0: 1.0000, 3: 0.8670, 5: 0.8158, 10: 0.7374, 15: 0.6497,
+        19: 0.5872, 20: 0.5725, 25: 0.4563, 30: 0.3641, 35: 0.2926,
+        40: 0.2377, 50: 0.1664, 60: 0.1314, 71: 0.1200,
+      };
+      table.forEach((n, expected) {
+        expect(migrated(n, legacy(n)), closeTo(expected, 5e-5), reason: 'n=$n');
+      });
+    });
+
+    test('hand-set sigmas do not look like the legacy curve', () {
+      // What protects anchors and leveling sessions from being migrated: the
+      // admin RPCs force competitive_matches >= 10, and at every such count
+      // 0.30 and 0.50 sit outside the 0.005 fingerprint tolerance.
+      for (final handSet in [0.30, 0.50]) {
+        for (var n = 10; n <= 60; n++) {
+          final d1 = (handSet - legacy(n)).abs();
+          final d2 = (handSet - math.max(0.12, 0.85 * math.pow(0.92, n)))
+              .abs()
+              .toDouble();
+          expect(math.min(d1, d2), greaterThan(0.005),
+              reason: 'hand-set $handSet collides with the legacy curve at n=$n');
+        }
+      }
+    });
+
+    test('the SQL uses the same endpoints and tolerance', () {
+      final f = File('supabase/changes/2026-08-13_v3f5_sigma_backfill.sql');
+      expect(f.existsSync(), isTrue);
+      final sqlSrc = f.readAsStringSync();
+      expect(sqlSrc, contains('c_full_below constant int     := 20;'));
+      expect(sqlSrc, contains('c_no_change  constant int     := 72;'));
+      expect(sqlSrc, contains('c_tol        constant numeric := 0.005;'));
+      // rating must not be written anywhere in the backfill
+      expect(sqlSrc.contains('set rating'), isFalse);
+      expect(sqlSrc.contains('set sigma'), isTrue);
+      // and it must be guarded against a second run
+      expect(sqlSrc, contains('v3f5_sigma_migrated'));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // 6. Convergence — the engine still works, at the level the lab reported
   // ═══════════════════════════════════════════════════════════════════════
   test('50-seed convergence: V3-F5 places players near their true skill', () {
