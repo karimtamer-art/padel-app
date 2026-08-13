@@ -529,6 +529,18 @@ before changing anything.
   APNs on iOS via `PushService`, driven off `notifications` inserts and honouring
   `profiles.notify_*` prefs.
 - `division_demo_screen.dart` is a demo/dev screen; ignore it.
+- **`supabase/functions/` — what is actually deployed.** Live: `push-notify`,
+  `create-staff`, `weekly-report`, `weekly-report-send`. NOT deployed and not
+  meant to be: `admin-order-ping`, which says SKETCH in its own header — it is
+  an optional alternative to the pg_net SQL for order alerts, kept for whoever
+  wants WhatsApp. Don't re-flag it as dead code.
+  - `confirm_match` was deleted on 2026-08-14. It was a v1-era rating engine in
+    TypeScript that computed its own ELO-style math and wrote `profiles.level`
+    + `ranking_history` directly — a checked-in counter-example to rule #2,
+    whose header claimed it was "the ONLY writer allowed to mutate level". It
+    was never deployed and nothing referenced it. **Rating changes happen only
+    in Postgres**; if a rating engine ever appears outside `_settle_rating`
+    again, that is the bug.
 
 ## When unsure
 
