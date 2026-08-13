@@ -81,6 +81,41 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- 2b. Retire stale create_match OVERLOADS before recreating it.
+--
+--    `create or replace function` only replaces a function with the SAME
+--    argument signature. create_match gains p_min_rating here, so a plain
+--    create-or-replace would leave the previous 6-argument version in place as
+--    an OVERLOAD instead of replacing it — and that old body still writes
+--    matches.min_elo.
+--
+--    Two things go wrong if it survives. The column drop below fails, because
+--    something still references min_elo. And worse: PostgREST would have two
+--    candidates for the same RPC name. A client posting the six original
+--    parameter names matches BOTH (the new one defaults p_min_rating), which
+--    resolves as "Could not choose the best candidate function" — match
+--    creation breaks for everyone, not just old builds.
+--
+--    Keeping exactly ONE function that still accepts p_min_elo is what
+--    actually delivers the old-client compatibility that parameter was kept
+--    for. Dropping loses the grant, so it is reissued after section 3.
+-- ---------------------------------------------------------------------------
+do $$
+declare r record; v_n int := 0;
+begin
+  for r in
+    select p.oid::regprocedure::text as sig
+      from pg_proc p
+     where p.pronamespace = 'public'::regnamespace
+       and p.proname = 'create_match'
+  loop
+    execute 'drop function ' || r.sig;
+    v_n := v_n + 1;
+  end loop;
+  raise notice 'create_match: dropped % old signature(s), recreating one', v_n;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- 3. Every function that read elo / min_elo, re-created rating-native. These
 --    bodies are extracted verbatim from migration_player_app.sql so the two
 --    files cannot drift.
@@ -478,6 +513,7 @@ begin
 
   return v_id;
 end $$;
+grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean, numeric) to authenticated;
 
 create or replace function public.join_match(
   p_match_id uuid, p_team text default null, p_partner_id uuid default null)

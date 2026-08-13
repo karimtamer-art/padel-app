@@ -257,4 +257,103 @@ void main() {
       expect(a!.$1, a.$2, reason: 'false positive on: $ok');
     }
   });
+
+  // ── grants must follow the definition they name ──────────────────────────
+  //
+  // Two ways this breaks, both hit on 2026-08-14:
+  //
+  //  * Removing a superseded `create or replace` definition leaves its GRANT
+  //    behind. On a fresh database the grant then runs before anything has
+  //    defined the function and fails with "function does not exist".
+  //  * Changing a function's SIGNATURE does not replace it — Postgres creates
+  //    an OVERLOAD. The old grant then names a signature that should no longer
+  //    exist, and PostgREST is left with two candidates for one RPC name,
+  //    which it refuses to resolve ("could not choose the best candidate
+  //    function"). That breaks the RPC for every client, not just old ones.
+  //
+  // Neither is visible without a Postgres to run against, so it is checked
+  // statically: every granted function must be defined earlier in the file.
+  test('every grant execute names a function defined earlier in the file', () {
+    final problems = <String>[];
+    for (final path in files) {
+      final f = File(path);
+      if (!f.existsSync()) continue;
+      final sql = _stripLineComments(f.readAsStringSync());
+
+      final defs = <String, List<int>>{};
+      for (final m in RegExp(r'create (?:or replace )?function (public\.\w+)\(')
+          .allMatches(sql)) {
+        defs.putIfAbsent(m.group(1)!, () => []).add(m.start);
+      }
+      for (final m
+          in RegExp(r'grant execute on function (public\.\w+)\(').allMatches(sql)) {
+        final name = m.group(1)!;
+        final line = '\n'.allMatches(sql.substring(0, m.start)).length + 1;
+        final where = defs[name];
+        if (where == null) {
+          // a delta may grant on a function defined in the canonical migration
+          if (path.contains('changes')) continue;
+          problems.add('$path:$line — grants $name, which is never defined');
+        } else if (m.start < where.reduce((a, b) => a < b ? a : b)) {
+          problems.add('$path:$line — grants $name before it is defined '
+              '(orphaned by a removed definition?)');
+        }
+      }
+    }
+    expect(problems, isEmpty, reason: '\n${problems.join('\n')}\n');
+  });
+
+  test('no NEW duplicate function definitions creep in', () {
+    // migration_player_app.sql has always grown by appending another
+    // `create or replace` when a feature changed a function, so the file
+    // carries a number of superseded bodies. They are dead — a later
+    // definition wins — right up until someone reorders the file or extracts
+    // the wrong copy, at which point a stale body silently becomes live.
+    //
+    // That bit four times during the V3-F5 work: _settle_rating (twice),
+    // apply_rating_decay, join_match, create_match, finalize_tournament and
+    // admin_set_rating all had stale copies, one of which still contained the
+    // rating decay that had supposedly been removed.
+    //
+    // Cleaning up all of the remaining ones is its own change. This is a
+    // RATCHET: the known set is pinned, so new duplicates fail. Shrinking this
+    // list is always welcome; growing it means adding a landmine.
+    const knownDuplicates = <String>{
+      'public._access_ids',
+      'public._finance_core',
+      'public.apply_rating_decay',
+      'public.cancel_match',
+      'public.community_channel_list',
+      'public.dm_inbox',
+      'public.get_or_create_conversation',
+      'public.leave_match',
+      'public.mark_community_read',
+      'public.mm_accept',
+      'public.mm_candidates',
+      'public.mm_player_sees_match',
+      'public.notify_match_join',
+      'public.tg_event_channel',
+      'public.ticket_roster'
+    };
+
+    final sql = _stripLineComments(
+        File('supabase/migration_player_app.sql').readAsStringSync());
+    final counts = <String, int>{};
+    for (final m in RegExp(r'create or replace function (public\.\w+)\(')
+        .allMatches(sql)) {
+      counts.update(m.group(1)!, (v) => v + 1, ifAbsent: () => 1);
+    }
+    final dupes = counts.entries
+        .where((e) => e.value > 1)
+        .map((e) => e.key)
+        .toSet();
+
+    expect(dupes.difference(knownDuplicates), isEmpty,
+        reason: 'new duplicate definition(s) — a later create-or-replace will '
+            'shadow the earlier body, which is how a stale copy goes live');
+    // and if one gets cleaned up, tighten the list rather than leaving it stale
+    expect(knownDuplicates.difference(dupes), isEmpty,
+        reason: 'these are no longer duplicated — remove them from '
+            'knownDuplicates so the ratchet keeps ratcheting');
+  });
 }

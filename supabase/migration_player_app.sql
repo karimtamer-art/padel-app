@@ -219,7 +219,6 @@ grant select, insert, update on public.tournament_entries to authenticated;
 grant select on public.tournament_entries to anon;
 grant select on public.tournament_matches  to authenticated, anon;
 
-grant execute on function public.join_match(uuid, text, uuid) to authenticated;
 grant execute on function public.leave_match(uuid) to authenticated;
 
 -- Atomic create: match + players (creator + optional partner) in one txn.
@@ -227,7 +226,6 @@ grant execute on function public.leave_match(uuid) to authenticated;
 -- client insert was being denied and leaving orphaned, player-less matches.
 -- NOTE: SUPERSEDED by the partner-invites block at the END of this file — the
 -- partner is now INVITED (match_invites), never inserted. Edit it there.
-grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
 
 -- Admin: soft-remove a match (e.g. a faulty/orphaned one) from the console.
 -- Marks it 'cancelled' so it disappears from every player-facing query (which
@@ -4024,7 +4022,6 @@ grant execute on function public.confirm_match_result(uuid, boolean) to authenti
 -- Admin rating controls (2026-07-03) — hand-set a 0..7 rating with an explicit
 -- sigma + anchor flag; logs to ranking_history + audit_log. Two console actions:
 -- Mark anchor (is_anchor, sigma 0.30) and Leveling session (sigma 0.50).
-grant execute on function public.admin_set_rating(uuid, numeric, numeric, boolean, text) to authenticated;
 
 -- Ban / unban / flag a player (RBAC, 2026-07-18). profiles.status is service-
 -- role-only (the profiles_update_own policy + column grant let a player touch
@@ -4420,13 +4417,11 @@ alter table public.profiles add column if not exists instapay_link   text;
 -- Organizer (or admin) sets their own payout username + link; applies to every
 -- event they own. Returns null on success, or an error string.
 drop function if exists public.set_my_instapay_handle(text);
-grant execute on function public.set_my_instapay(text, text) to authenticated;
 
 -- The InstaPay details a player transfers to for a given tournament: the owning
 -- organizer's handle/link if set, else the platform-wide app_settings handle,
 -- else a hard default. SECURITY DEFINER so it reads across profiles/app_settings.
 drop function if exists public.tournament_pay_handle(uuid);
-grant execute on function public.tournament_pay_info(uuid) to authenticated, anon;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Community — Phase 3 of Roles/Organizer/Community.
@@ -5789,7 +5784,6 @@ alter table public.matches
 create unique index if not exists matches_tournament_match_id_key
   on public.matches (tournament_match_id) where tournament_match_id is not null;
 
-grant execute on function public.finalize_tournament(uuid) to authenticated;
 
 -- Keep the placement counter in step with settled competitive matches (fixes
 -- players stuck at 0/5 before _settle_rating incremented placement_played).
@@ -8990,11 +8984,9 @@ grant execute on function public.match_pending_invites(uuid) to authenticated;
 
 -- ── create_match: partner becomes an invite ───────────────────────────────
 
-grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
 
 -- ── join_match: same treatment, and respect reserved slots ────────────────
 
-grant execute on function public.join_match(uuid, text, uuid) to authenticated;
 
 -- ── mm_accept: same treatment ─────────────────────────────────────────────
 
@@ -9744,6 +9736,41 @@ begin
 end $$;
 
 -- ── create_match: private is casual-only, and only private gets a code ────
+-- ---------------------------------------------------------------------------
+-- 2b. Retire stale create_match OVERLOADS before recreating it.
+--
+--    `create or replace function` only replaces a function with the SAME
+--    argument signature. create_match gains p_min_rating here, so a plain
+--    create-or-replace would leave the previous 6-argument version in place as
+--    an OVERLOAD instead of replacing it — and that old body still writes
+--    matches.min_elo.
+--
+--    Two things go wrong if it survives. The column drop below fails, because
+--    something still references min_elo. And worse: PostgREST would have two
+--    candidates for the same RPC name. A client posting the six original
+--    parameter names matches BOTH (the new one defaults p_min_rating), which
+--    resolves as "Could not choose the best candidate function" — match
+--    creation breaks for everyone, not just old builds.
+--
+--    Keeping exactly ONE function that still accepts p_min_elo is what
+--    actually delivers the old-client compatibility that parameter was kept
+--    for. Dropping loses the grant, so it is reissued after section 3.
+-- ---------------------------------------------------------------------------
+do $$
+declare r record; v_n int := 0;
+begin
+  for r in
+    select p.oid::regprocedure::text as sig
+      from pg_proc p
+     where p.pronamespace = 'public'::regnamespace
+       and p.proname = 'create_match'
+  loop
+    execute 'drop function ' || r.sig;
+    v_n := v_n + 1;
+  end loop;
+  raise notice 'create_match: dropped % old signature(s), recreating one', v_n;
+end $$;
+
 create or replace function public.create_match(
   p_competitive  boolean,
   p_scheduled_at timestamptz,
@@ -9788,7 +9815,7 @@ begin
 
   return v_id;
 end $$;
-grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
+grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean, numeric) to authenticated;
 
 -- ── may this caller join a private match? ─────────────────────────────────
 -- Either they were invited, or they redeemed the code THIS transaction.
