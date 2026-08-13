@@ -27,7 +27,7 @@ class AdminService {
   }
 
   static Future<List<Map<String, dynamic>>> fetchPlayers() async {
-    const base = 'id, name, phone, city, avatar_url, elo, tier, division_pts, '
+    const base = 'id, name, phone, city, avatar_url, tier, division_pts, '
         'level, placement_played, status, verified, is_admin, created_at';
     // Rating engine v2 columns; fall back for pre-migration databases.
     try {
@@ -36,14 +36,14 @@ class AdminService {
           .select('$base, rating, sigma, is_anchor, competitive_matches, '
               'is_provisional, reliability')
           .eq('is_admin', false)
-          .order('elo', ascending: false);
+          .order('rating', ascending: false, nullsFirst: false);
       return List<Map<String, dynamic>>.from(res as List);
     } catch (_) {
       final res = await _db
           .from('profiles')
           .select(base)
           .eq('is_admin', false)
-          .order('elo', ascending: false);
+          .order('rating', ascending: false, nullsFirst: false);
       return List<Map<String, dynamic>>.from(res as List);
     }
   }
@@ -56,21 +56,6 @@ class AdminService {
     try {
       final res = await _db.rpc('admin_set_status',
           params: {'p_player_id': id, 'p_status': status});
-      return res as String?;
-    } on PostgrestException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
-  /// Seeds/overrides a player's rating via the server RPC (keeps ELO writes in
-  /// Postgres, and derives level+tier + marks the player ranked). Returns an
-  /// error string or null.
-  static Future<String?> setPlayerRating(String id, int elo) async {
-    try {
-      final res = await _db.rpc('admin_set_player_rating',
-          params: {'p_player_id': id, 'p_elo': elo});
       return res as String?;
     } on PostgrestException catch (e) {
       return e.message;

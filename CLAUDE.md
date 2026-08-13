@@ -74,9 +74,22 @@ before changing anything.
      curve hits the 0.12 floor; neither is invented. Sigma is only ever raised,
      ratings and match counts are untouched, and hand-set sigmas (anchors,
      leveling sessions) are detected by fingerprint and skipped.
-   - `profiles.elo` + `level_from_elo` are the older **v1 ELO layer** —
-     legacy/backfill only, still read by the admin console and the profile
-     chart, and deliberately NOT removed with v2. Its own change when wanted.
+   - **The v1 ELO layer is gone** (2026-08-14,
+     `changes/2026-08-14_drop_elo_v1.sql`): `profiles.elo`, `level_from_elo()`,
+     `match_players.elo_before/elo_after`, `matches.min_elo`,
+     `tournaments.min_elo/max_elo`, `admin_set_player_rating(uuid,int)`. It had
+     been unwritten since rating v2 (2026-07-02) but was still GATING
+     `join_match` and `register_for_tournament`, so every player evaluated as
+     level 1.0 there. Eligibility is now `matches.min_rating` /
+     `tournaments.min_rating|max_rating` on the 0.00–7.00 scale.
+   - **`rating_prior()` (3.30) is what an unrated player counts as.** One
+     definition, used by every eligibility gate, equal to `_settle_rating`'s
+     `c_prior`; a parity test pins them together. This closed the old split
+     where settlement assumed 3.30 and discovery assumed 2.0. `profiles.rating`
+     is NULL until placement completes — never read that as 0.0.
+   - `create_match` still ACCEPTS `p_min_elo` and ignores it, same precedent as
+     `p_open`: an older client must not fail to create a match over a parameter
+     it doesn't know is dead. Use `p_min_rating`.
    - Casual matches are **unrated** — `_settle_rating` refuses anything whose
      `match_type` isn't `ranked`, on top of casual never reaching it. Full
      notes: `supabase/changes/2026-08-13_rating_engine_v3f5.sql`.

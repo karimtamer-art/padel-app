@@ -585,7 +585,8 @@ void main() {
           writers,
           {
             'public._settle_rating', // the engine, and the only one
-            'public.admin_set_player_rating', // explicit admin action
+            // admin_set_player_rating took an ELO int and went with the v1
+            // layer on 2026-08-14; admin_set_rating is the rating-native one
             'public.admin_set_rating', // explicit admin action
           },
           reason: 'unexpected writer of profiles.rating: $writers');
@@ -602,6 +603,29 @@ void main() {
         expect(body.contains('set rating'), isFalse,
             reason: 'a rating write survives at offset ${m.start}');
       }
+    });
+
+    test('the v1 ELO layer is gone and eligibility is rating-native', () {
+      // Removed 2026-08-14. profiles.elo had not been written by any
+      // settlement since rating v2, yet join_match and register_for_tournament
+      // still GATED on it — so every player evaluated as level 1.0.
+      expect(sql.contains('create or replace function public.level_from_elo'),
+          isFalse);
+      expect(
+          sql.contains(
+              'create or replace function public.admin_set_player_rating'),
+          isFalse);
+      // no function may read the dropped column or the dropped floors
+      for (final fn in ['join_match', 'register_for_tournament']) {
+        final body = bodyAt(
+            sql, sql.indexOf('create or replace function public.$fn('));
+        expect(body.contains('min_elo'), isFalse, reason: '$fn still gates on ELO');
+        expect(body.contains('rating_prior()'), isTrue,
+            reason: '$fn must judge unrated players at the engine prior');
+      }
+      // and the prior must agree with the engine's own constant
+      expect(sql, contains('select 3.30::numeric'));
+      expect(sql, contains('c_prior      constant numeric   := 3.30;'));
     });
 
     test('rating history records the engine that produced each row', () {

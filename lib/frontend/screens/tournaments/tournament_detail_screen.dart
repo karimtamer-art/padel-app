@@ -140,8 +140,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   bool get _isRegistrant =>
       TournamentService.isRegistrant(_t?['tournament_entries'] as List?, _uid);
   int get _cap => (_t?['capacity'] as num?)?.toInt() ?? 0;
-  int get _minElo => (_t?['min_elo'] as num?)?.toInt() ?? 0;
-  int? get _maxElo => (_t?['max_elo'] as num?)?.toInt();
+  double get _minRating => (_t?['min_rating'] as num?)?.toDouble() ?? 0;
+  double? get _maxRating => (_t?['max_rating'] as num?)?.toDouble();
   int get _fee => (_t?['entry_fee'] as num?)?.toInt() ?? 0;
   String get _derivedStatus => TournamentService.tournamentStatus(_t ?? {}, _entries.length);
   bool get _canRegister {
@@ -606,7 +606,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           const SizedBox(height: 12),
           _categoryCard(),
         ],
-        if (_minElo > 0 || _maxElo != null) ...[
+        if (_minRating > 0 || _maxRating != null) ...[
           const SizedBox(height: 22),
           Text('ELIGIBILITY', style: AppText.kicker(AppColors.primary)),
           const SizedBox(height: 4),
@@ -773,9 +773,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       );
 
   Widget _eligibilityCard() {
-    final minLv = _minElo > 0 ? RankingScale.levelFromElo(_minElo) : null;
-    final maxElo = _maxElo;
-    final maxLv = (maxElo != null && maxElo > 0) ? RankingScale.levelFromElo(maxElo) : null;
+    final minLv = _minRating > 0 ? _minRating : null;
+    final maxR = _maxRating;
+    final maxLv = (maxR != null && maxR > 0) ? maxR : null;
     final isRange = minLv != null && maxLv != null;
 
     String subtitle;
@@ -874,8 +874,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     final name = p['name'] as String? ?? 'Player';
     final username = p['username'] as String?;
     final ranked = p['level'] != null || p['elo'] != null;
-    final elo = (p['elo'] as num?)?.toInt() ?? 1000;
-    final lv = (p['level'] as num?)?.toDouble() ?? RankingScale.levelFromElo(elo);
+    final lv = (p['rating'] as num?)?.toDouble() ?? (p['level'] as num?)?.toDouble() ?? 0.0;
     final initials = name.trim().isEmpty
         ? 'P'
         : name.trim().split(RegExp(r'\s+')).take(2).map((w) => w[0]).join().toUpperCase();

@@ -4,7 +4,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
-import '../../widgets/elo_chart.dart';
+import '../../widgets/rating_chart.dart';
 import '../../widgets/padel_refresh.dart';
 import '../../widgets/auto_refresh.dart';
 import '../../../backend/models/ranking_scale.dart';
@@ -135,7 +135,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
                   ranking: _profile.ranking,
                   onPlayPlacement: widget.onFindMatch),
               _statsRow(),
-              _eloHistory(),
+              _ratingHistory(),
               _recent(context),
               _menu(context),
             ]),
@@ -250,14 +250,14 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
     );
   }
 
-  Widget _eloHistory() {
-    final data = _profile.eloHistory;
+  Widget _ratingHistory() {
+    final data = _profile.ratingHistory;
     if (data.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 14, AppSpacing.screen, 0),
         child: AppCard(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('ELO HISTORY', style: AppText.kicker()),
+            Text('RATING HISTORY', style: AppText.kicker()),
             const SizedBox(height: 12),
             Row(children: [
               Container(
@@ -274,7 +274,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
                   Text('No rating yet', style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
                   const SizedBox(height: 2),
                   Text(
-                      'Your ELO is seeded after placement — the chart fills in from your first rated match.',
+                      'Your rating is revealed after 5 placement matches — the chart fills in from there.',
                       style: AppText.small().copyWith(fontSize: 12, height: 1.45)),
                 ]),
               ),
@@ -285,13 +285,14 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
     }
     final delta = data.last - data.first;
     final up = delta >= 0;
+    final deltaLabel = delta.abs().toStringAsFixed(2);
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 14, AppSpacing.screen, 0),
       child: AppCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('ELO HISTORY', style: AppText.kicker()),
+              Text('RATING HISTORY', style: AppText.kicker()),
               const SizedBox(height: 1),
               Text('Last ${data.length} rated matches',
                   style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 11)),
@@ -300,12 +301,12 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
             Row(children: [
               Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
                   size: 14, color: up ? AppColors.success : AppColors.danger),
-              Text(' ${up ? '+' : ''}$delta pts',
+              Text(' ${up ? '+' : '−'}$deltaLabel',
                   style: AppText.bodyStrong(up ? AppColors.success : AppColors.danger)),
             ]),
           ]),
           const SizedBox(height: 8),
-          EloChart(data),
+          RatingChart(data),
           const SizedBox(height: 6),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             for (final m in ['Feb', 'Mar', 'Apr', 'May'])

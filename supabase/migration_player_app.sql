@@ -6,7 +6,11 @@
 
 -- ── matches: columns the player app needs ─────────────────────
 alter table public.matches add column if not exists court_id uuid references public.courts(id);
-alter table public.matches add column if not exists min_elo int not null default 0;
+-- Rating-native eligibility floor on the 0.00-7.00 scale (2026-08-14). Replaces
+-- min_elo, which stored `800 + level*200` and was compared against a
+-- profiles.elo column no settlement has written since rating v2 shipped.
+alter table public.matches
+  add column if not exists min_rating numeric(3,2) not null default 0;
 alter table public.matches add column if not exists is_private boolean not null default false;
 alter table public.matches add column if not exists invite_code text;
 alter table public.matches add column if not exists result_submitted_by uuid references public.profiles(id);
@@ -59,8 +63,6 @@ create table if not exists public.ranking_history (
   match_id uuid references public.matches(id),
   level_before numeric not null default 0,
   level_after numeric not null default 0,
-  elo_before int,
-  elo_after int,
   created_at timestamptz not null default now()
 );
 
@@ -74,88 +76,6 @@ create table if not exists public.ranking_history (
 -- Signature CHANGED (added p_partner_id) → drop the old 2-arg version first so
 -- the named-arg call isn't ambiguous.
 drop function if exists public.join_match(uuid, text);
-create or replace function public.join_match(
-  p_match_id uuid, p_team text default null, p_partner_id uuid default null)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_count int;
-  v_status text;
-  v_min_elo int;
-  v_my_elo int;
-  v_partner_elo int;
-  v_team text;
-  v_team_a int;
-  v_team_b int;
-  v_need int;
-begin
-  if v_uid is null then return 'Not signed in.'; end if;
-  if p_partner_id = v_uid then p_partner_id := null; end if;
-
-  select status, min_elo into v_status, v_min_elo
-    from matches where id = p_match_id for update;
-  if not found then return 'Match not found.'; end if;
-  if v_status <> 'open' then return 'This match is no longer open.'; end if;
-
-  select coalesce(elo, 1000) into v_my_elo from profiles where id = v_uid;
-  if v_my_elo < v_min_elo then
-    return 'This match requires ' || v_min_elo || '+ ELO.';
-  end if;
-
-  if exists (select 1 from match_players where match_id = p_match_id and player_id = v_uid) then
-    return null; -- already in: treat as success
-  end if;
-
-  -- Bringing a partner: validate them before we touch anything.
-  if p_partner_id is not null then
-    if exists (select 1 from match_players where match_id = p_match_id and player_id = p_partner_id) then
-      return 'That partner is already in this match.';
-    end if;
-    select coalesce(elo, 1000) into v_partner_elo from profiles where id = p_partner_id;
-    if not found then return 'Partner not found.'; end if;
-    if v_partner_elo < v_min_elo then
-      return 'Your partner needs ' || v_min_elo || '+ ELO for this match.';
-    end if;
-  end if;
-
-  v_need := case when p_partner_id is not null then 2 else 1 end;
-  select count(*) into v_count from match_players where match_id = p_match_id;
-  if v_count + v_need > 4 then
-    return case when v_need = 2
-      then 'Not enough room for you and a partner.'
-      else 'This match is already full.' end;
-  end if;
-
-  select count(*) filter (where team = 'a'), count(*) filter (where team = 'b')
-    into v_team_a, v_team_b from match_players where match_id = p_match_id;
-
-  if p_partner_id is not null then
-    -- A pair needs one side with two open slots.
-    if 2 - v_team_a >= 2 then v_team := 'a';
-    elsif 2 - v_team_b >= 2 then v_team := 'b';
-    else return 'No side has room for a pair — join solo instead.'; end if;
-  else
-    -- auto-balance teams unless caller asked for one
-    v_team := coalesce(p_team, case when v_team_a <= v_team_b then 'a' else 'b' end);
-    if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
-      v_team := case v_team when 'a' then 'b' else 'a' end;
-    end if;
-  end if;
-
-  insert into match_players (match_id, player_id, team) values (p_match_id, v_uid, v_team);
-  if p_partner_id is not null then
-    -- notify trigger pings the partner ("you were added"), not the host.
-    perform set_config('padel.partner_add', '1', true);
-    insert into match_players (match_id, player_id, team) values (p_match_id, p_partner_id, v_team);
-  end if;
-
-  if v_count + v_need >= 4 then
-    update matches set status = 'full' where id = p_match_id;
-  end if;
-  return null;
-end $$;
-
 -- ============================================================
 -- RPC: leave_match
 -- ============================================================
@@ -188,11 +108,6 @@ drop function if exists public._settle_elo(uuid, boolean);
 -- ============================================================
 -- Rating engine — ELO→Level mapping helpers (kept; used by v2), Level 0–7.
 --
---   elo 800  → level 0.0      Division D (Bronze)   0.0–1.9
---   elo 1200 → level 2.0      Division C (Silver)   2.0–3.4
---   elo 1500 → level 3.5      Division B (Gold)     3.5–4.9
---   elo 1800 → level 5.0      Division A (Elite)    5.0–7.0
---   elo 2200 → level 7.0 (cap)
 --
 -- Win/loss only (no margin-of-victory). K-factor schedule:
 --   first 5 ranked matches (placement)  K = 64   (find your level fast)
@@ -200,11 +115,14 @@ drop function if exists public._settle_elo(uuid, boolean);
 --   31+                                 K = 24   (established, stable)
 -- ============================================================
 
-create or replace function public.level_from_elo(p_elo int)
-returns numeric
-language sql immutable as $$
-  select least(7.0, greatest(0.0, round((p_elo - 800) / 200.0, 2)));
-$$;
+-- What we assume about a player who has no rating yet (2026-08-14).
+-- profiles.rating is NULL until placement completes, so every eligibility gate
+-- needs a stand-in. This is the engine's OWN prior -- the same value
+-- _settle_rating coalesces a NULL rating to -- so discovery and settlement
+-- cannot disagree about an unrated player. A parity test pins the two together.
+create or replace function public.rating_prior()
+returns numeric language sql immutable as $$ select 3.30::numeric $$;
+grant execute on function public.rating_prior() to authenticated;
 
 create or replace function public.tier_from_level(p_level numeric)
 returns text
@@ -309,43 +227,6 @@ grant execute on function public.leave_match(uuid) to authenticated;
 -- client insert was being denied and leaving orphaned, player-less matches.
 -- NOTE: SUPERSEDED by the partner-invites block at the END of this file — the
 -- partner is now INVITED (match_invites), never inserted. Edit it there.
-create or replace function public.create_match(
-  p_competitive  boolean,
-  p_scheduled_at timestamptz,
-  p_court_id     uuid default null,
-  p_partner_id   uuid default null,
-  p_min_elo      int default 0,
-  p_open         boolean default true
-) returns uuid
-language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_id  uuid;
-begin
-  if v_uid is null then raise exception 'Not signed in.'; end if;
-  if p_scheduled_at is null then raise exception 'Pick a time for the match.'; end if;
-
-  insert into public.matches
-    (status, match_type, scheduled_at, created_by, court_id, is_private, min_elo, invite_code)
-  values
-    ('open',
-     case when p_competitive then 'ranked' else 'casual' end,
-     p_scheduled_at, v_uid, p_court_id,
-     not coalesce(p_open, true),
-     coalesce(p_min_elo, 0),
-     'PDL-' || upper(substr(md5(gen_random_uuid()::text), 1, 5)))
-  returning id into v_id;
-
-  insert into public.match_players (match_id, player_id, team) values (v_id, v_uid, 'a');
-  if p_partner_id is not null and p_partner_id <> v_uid then
-    -- Flag this insert as a deliberate partner-add so the notify trigger pings
-    -- the PARTNER ("you were added") instead of the host. Transaction-local.
-    perform set_config('padel.partner_add', '1', true);
-    insert into public.match_players (match_id, player_id, team) values (v_id, p_partner_id, 'a');
-  end if;
-
-  return v_id;
-end $$;
 grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
 
 -- Admin: soft-remove a match (e.g. a faulty/orphaned one) from the console.
@@ -384,7 +265,7 @@ begin
     select coalesce(json_agg(x order by x.scheduled_at desc nulls last), '[]'::json)
     from (
       select
-        m.id, m.status, m.match_type, m.scheduled_at, m.min_elo, m.winner_team,
+        m.id, m.status, m.match_type, m.scheduled_at, m.min_rating, m.winner_team,
         m.score_team_a, m.score_team_b,
         c.venue_name, c.name as court_name,
         (select p.name from public.profiles p where p.id = m.created_by)            as host,
@@ -398,7 +279,7 @@ begin
                    'submitter', (select p2.name from public.profiles p2 where p2.id = s.submitter_id),
                    'score_a', s.score_team_a, 'score_b', s.score_team_b, 'winner', s.winner) order by s.team), '[]'::json)
            from public.match_result_submissions s where s.match_id = m.id)           as submissions,
-        (select max(rh.delta) from public.ranking_history rh where rh.match_id = m.id) as elo_delta
+        (select max(rh.delta) from public.ranking_history rh where rh.match_id = m.id) as rating_delta
       from public.matches m
       left join public.courts c on c.id = m.court_id
       order by m.scheduled_at desc nulls last
@@ -629,11 +510,12 @@ exception when duplicate_object then null; end $$;
 alter table public.tournaments add column if not exists description text;
 alter table public.tournaments add column if not exists end_date date;
 alter table public.tournaments add column if not exists prize_pool int;
-alter table public.tournaments add column if not exists min_elo int not null default 0;
+alter table public.tournaments
+  add column if not exists min_rating numeric(3,2) not null default 0;
 alter table public.tournaments add column if not exists format text not null default 'double_elim';
 alter table public.tournaments alter column status set default 'auto';
 alter table public.tournaments add column if not exists best_of int not null default 3;
-alter table public.tournaments add column if not exists max_elo int;
+alter table public.tournaments add column if not exists max_rating numeric(3,2);
 alter table public.tournaments add column if not exists start_time text;
 alter table public.tournaments add column if not exists format_note text;
 -- Organizer/admin marks an event "sponsored" → a ribbon on its card.
@@ -1731,15 +1613,16 @@ returns text
 language plpgsql security definer set search_path = public as $$
 declare
   v_uid    uuid := auth.uid();
-  v_status text; v_start date; v_cap int; v_min int; v_max int; v_fee int;
-  v_count  int; v_my_elo int; v_my_name text; v_new text;
+  v_status text; v_start date; v_cap int; v_fee int;
+  v_min numeric; v_max numeric; v_my_rating numeric;
+  v_count  int; v_my_name text; v_new text;
   v_mode   text; v_pay int; v_tname text; v_eid uuid; v_reg_opens date;
   v_category text; v_my_gender text; v_partner_gender text;
   v_start_time text; v_reg_closed boolean; v_deadline timestamptz;
 begin
   if v_uid is null then return 'Not signed in.'; end if;
 
-  select status, start_date, capacity, min_elo, max_elo, entry_fee, name, registration_opens, category,
+  select status, start_date, capacity, min_rating, max_rating, entry_fee, name, registration_opens, category,
          start_time, coalesce(registration_closed, false)
     into v_status, v_start, v_cap, v_min, v_max, v_fee, v_tname, v_reg_opens, v_category,
          v_start_time, v_reg_closed
@@ -1769,11 +1652,15 @@ begin
 
   -- eligibility
   if v_min > 0 or (v_max is not null and v_max > 0) then
-    select coalesce(elo, 1000) into v_my_elo from public.profiles where id = v_uid;
-    if v_min > 0 and v_my_elo < v_min then
+    -- An unrated player is judged at the engine's own prior, not at zero:
+    -- profiles.rating is NULL until placement completes, and treating that as
+    -- 0.0 would silently bar every new player from every levelled event.
+    select coalesce(rating, public.rating_prior()) into v_my_rating
+      from public.profiles where id = v_uid;
+    if v_min > 0 and v_my_rating < v_min then
       return 'This event has a minimum level you haven''t reached yet.';
     end if;
-    if v_max is not null and v_max > 0 and v_my_elo > v_max then
+    if v_max is not null and v_max > 0 and v_my_rating > v_max then
       return 'Your level is above the maximum for this event.';
     end if;
   end if;
@@ -2162,14 +2049,12 @@ alter table public.profiles add column if not exists date_of_birth date;
 alter table public.profiles add column if not exists gender text;
 alter table public.profiles add column if not exists preferred_hand text;
 alter table public.profiles add column if not exists preferred_court_side text;
-alter table public.profiles add column if not exists elo int;
 alter table public.profiles add column if not exists level numeric;
 alter table public.profiles add column if not exists tier text;
 alter table public.profiles add column if not exists division_pts int;
 alter table public.profiles add column if not exists placement_played int;
 -- Legacy/backfill columns (rating engine v2 uses `rating`): allow NULL so an
--- unranked player can have no elo/level/tier. Older DBs created elo NOT NULL.
-alter table public.profiles alter column elo   drop not null;
+-- unranked player can have no level/tier. Older DBs created them NOT NULL.
 alter table public.profiles alter column level drop not null;
 alter table public.profiles alter column tier  drop not null;
 alter table public.profiles add column if not exists username text;
@@ -2349,7 +2234,7 @@ begin
     insert into public.profiles
       (id, name, username, avatar_url, phone, bio,
        date_of_birth, gender, preferred_hand, preferred_court_side,
-       elo, level, tier, division_pts, placement_played)
+       level, tier, division_pts, placement_played)
     values
       (new.id, v_name, v_username,
        new.raw_user_meta_data->>'avatar_url',
@@ -2358,10 +2243,11 @@ begin
        v_dob, v_gender,
        coalesce(v_hand, 'right'),
        coalesce(v_side, 'both'),
-       -- Start UNRANKED: no seeded elo/level/tier. rating stays NULL, sigma
-       -- keeps its default (0.85). The player earns a rating over 5 placement
-       -- matches (or an admin sets it). placement_played 0 = in placement.
-       null, null, null, 0, 0)
+       -- Start UNRANKED: no seeded level/tier. rating stays NULL, sigma keeps
+       -- its default (0.95, the V3-F5 prior's uncertainty). The player earns a
+       -- rating over 5 placement matches (or an admin sets it).
+       -- placement_played 0 = in placement.
+       null, null, 0, 0)
     on conflict (id) do nothing;
   exception when others then
     raise warning 'handle_new_user: % — inserting minimal profile for %', sqlerrm, new.id;
@@ -3984,7 +3870,7 @@ begin
         select count(*) from public.ranking_history h
          where h.profile_id = p.id and h.match_id is not null), 0);
     update public.profiles p set
-      rating = round(coalesce(level, public.level_from_elo(coalesce(elo, 1000)))::numeric, 2),
+      rating = round(coalesce(level, 0)::numeric, 2),
       last_competitive_match_at = (
         select max(h.created_at) from public.ranking_history h
          where h.profile_id = p.id and h.match_id is not null);
@@ -4112,31 +3998,6 @@ begin
   return null;
 end $$;
 
-create or replace function public.admin_set_player_rating(p_player_id uuid, p_elo int)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_old_rating numeric; v_rating numeric;
-begin
-  if not public._can_edit('players') then return 'Not authorised.'; end if;
-  v_rating := public.level_from_elo(greatest(800, least(2200, p_elo)));
-  select coalesce(rating, coalesce(level, 0)) into v_old_rating
-    from public.profiles where id = p_player_id;
-  if not found then return 'Player not found.'; end if;
-  update public.profiles set
-    rating = v_rating, level = v_rating, tier = public.tier_from_level(v_rating),
-    elo = greatest(800, least(2200, p_elo)), sigma = 0.30,
-    competitive_matches = greatest(coalesce(competitive_matches, 0), 10),
-    placement_played = greatest(coalesce(placement_played, 0), 5)
-  where id = p_player_id;
-  insert into public.ranking_history
-    (profile_id, match_id, level_before, level_after,
-     rating_before, rating_after, sigma_before, sigma_after, delta)
-  values (p_player_id, null, v_old_rating, v_rating,
-     v_old_rating, v_rating, null, 0.30, round(v_rating - v_old_rating, 2));
-  return null;
-end $$;
-
 -- Superseded by the V3-F5 definition at the end of this file, and kept in sync
 -- with it rather than left as the v2 original: the old body decayed RATINGS on
 -- inactivity, and a full copy of that code sitting here — dead only because a
@@ -4159,50 +4020,10 @@ end $$;
 -- Grants for the rating-engine-v2 RPCs (their v1 defs + early grants were removed).
 grant execute on function public.submit_match_result(uuid, text, text, text) to authenticated;
 grant execute on function public.confirm_match_result(uuid, boolean) to authenticated;
-grant execute on function public.admin_set_player_rating(uuid, int) to authenticated;
 
 -- Admin rating controls (2026-07-03) — hand-set a 0..7 rating with an explicit
 -- sigma + anchor flag; logs to ranking_history + audit_log. Two console actions:
 -- Mark anchor (is_anchor, sigma 0.30) and Leveling session (sigma 0.50).
-create or replace function public.admin_set_rating(
-  p_player_id uuid, p_rating numeric, p_sigma numeric,
-  p_is_anchor boolean default false, p_notes text default null)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_rating numeric; v_sigma numeric;
-  v_old_rating numeric; v_old_sigma numeric; v_old_anchor boolean;
-begin
-  if not public._can_edit('players') then return 'Not authorised.'; end if;
-  v_rating := round(greatest(0.0, least(7.0, p_rating)), 2);
-  v_sigma  := round(greatest(0.12, least(1.0, p_sigma)), 4);
-  select coalesce(rating, coalesce(level, 0)), coalesce(sigma, 0.85), coalesce(is_anchor, false)
-    into v_old_rating, v_old_sigma, v_old_anchor
-    from public.profiles where id = p_player_id;
-  if not found then return 'Player not found.'; end if;
-  update public.profiles set
-    rating = v_rating, level = v_rating, tier = public.tier_from_level(v_rating),
-    elo = greatest(800, least(2200, (800 + v_rating * 200)::int)),
-    sigma = v_sigma, is_anchor = coalesce(p_is_anchor, false),
-    competitive_matches = greatest(coalesce(competitive_matches, 0), 10),
-    placement_played = greatest(coalesce(placement_played, 0), 5)
-  where id = p_player_id;
-  insert into public.ranking_history
-    (profile_id, match_id, level_before, level_after,
-     rating_before, rating_after, sigma_before, sigma_after, delta)
-  values (p_player_id, null, v_old_rating, v_rating,
-     v_old_rating, v_rating, v_old_sigma, v_sigma, round(v_rating - v_old_rating, 2));
-  insert into public.audit_log
-    (admin_id, action, target_type, target_id, old_value, new_value, notes)
-  values (v_uid,
-    case when coalesce(p_is_anchor, false) then 'set_anchor_rating' else 'leveling_session' end,
-    'profile', p_player_id,
-    jsonb_build_object('rating', v_old_rating, 'sigma', v_old_sigma, 'is_anchor', v_old_anchor),
-    jsonb_build_object('rating', v_rating,     'sigma', v_sigma,     'is_anchor', coalesce(p_is_anchor, false)),
-    p_notes);
-  return null;
-end $$;
 grant execute on function public.admin_set_rating(uuid, numeric, numeric, boolean, text) to authenticated;
 
 -- Ban / unban / flag a player (RBAC, 2026-07-18). profiles.status is service-
@@ -5610,7 +5431,7 @@ begin
 
   select jsonb_build_object(
     'id', p.id, 'name', p.name, 'avatar_url', p.avatar_url, 'tier', p.tier,
-    'elo', p.elo, 'level', p.level, 'city', p.city,
+    'level', p.level, 'city', p.city,
     'hand', p.preferred_hand, 'side', p.preferred_court_side,
     'joined', v_joined, 'played', coalesce(v_played, 0),
     'wins', coalesce(v_wins, 0), 'rank', v_rank)
@@ -5992,70 +5813,6 @@ alter table public.matches
 create unique index if not exists matches_tournament_match_id_key
   on public.matches (tournament_match_id) where tournament_match_id is not null;
 
-create or replace function public.finalize_tournament(p_tournament_id uuid)
-returns text language plpgsql security definer set search_path = public as $$
-declare
-  v_rated boolean; v_applied boolean; v_owner uuid;
-  m record; v_wteam text; v_mid uuid; v_n int := 0;
-begin
-  if not public.owns_tournament(p_tournament_id) then return 'Not authorised.'; end if;
-  select rated, coalesce(rating_applied, false), organizer_id
-    into v_rated, v_applied, v_owner
-    from public.tournaments where id = p_tournament_id;
-  if not found then return 'Tournament not found.'; end if;
-  if v_applied then return 'Ratings already applied for this tournament.'; end if;
-
-  if not v_rated then
-    update public.tournaments set status = 'completed' where id = p_tournament_id;
-    return 'Marked complete — this tournament is not rated.';
-  end if;
-
-  if exists (select 1 from public.tournament_matches
-              where tournament_id = p_tournament_id and winner_entry is null) then
-    return 'Finish all current matches before finalizing.';
-  end if;
-  if not exists (select 1 from public.tournament_matches
-                  where tournament_id = p_tournament_id and winner_entry is not null) then
-    return 'No completed matches to rate yet.';
-  end if;
-
-  for m in
-    select tm.id, tm.entry1, tm.entry2, tm.winner_entry, tm.score,
-           e1.player_id as a1, e1.partner_id as a2,
-           e2.player_id as b1, e2.partner_id as b2
-      from public.tournament_matches tm
-      join public.tournament_entries e1 on e1.id = tm.entry1
-      join public.tournament_entries e2 on e2.id = tm.entry2
-     where tm.tournament_id = p_tournament_id
-       and tm.winner_entry is not null
-  loop
-    -- Rate only clean 2v2s of four real profiles (skip guests — no profile).
-    if m.a1 is null or m.a2 is null or m.b1 is null or m.b2 is null then continue; end if;
-    if m.a1 = m.a2 or m.b1 = m.b2 then continue; end if;
-    if m.a1 in (m.b1, m.b2) or m.a2 in (m.b1, m.b2) then continue; end if;
-    if exists (select 1 from public.matches where tournament_match_id = m.id) then continue; end if;
-
-    v_wteam := case when m.winner_entry = m.entry1 then 'a' else 'b' end;
-    insert into public.matches
-      (status, match_type, scheduled_at, created_by, is_private, min_elo,
-       winner_team, score_team_a, rating_applied, invite_code, tournament_match_id)
-    values
-      ('completed', 'ranked', now(), coalesce(v_owner, m.a1), true, 0,
-       v_wteam, nullif(m.score, ''), false, 'TRN-' || replace(m.id::text, '-', ''), m.id)
-    returning id into v_mid;
-
-    insert into public.match_players (match_id, player_id, team) values
-      (v_mid, m.a1, 'a'), (v_mid, m.a2, 'a'),
-      (v_mid, m.b1, 'b'), (v_mid, m.b2, 'b');
-
-    perform public._settle_rating(v_mid);
-    v_n := v_n + 1;
-  end loop;
-
-  update public.tournaments set rating_applied = true, status = 'completed'
-   where id = p_tournament_id;
-  return v_n || ' match' || (case when v_n = 1 then '' else 'es' end) || ' rated.';
-end $$;
 grant execute on function public.finalize_tournament(uuid) to authenticated;
 
 -- Keep the placement counter in step with settled competitive matches (fixes
@@ -6865,7 +6622,7 @@ begin
 
     v_wteam := case when m.winner_entry = m.entry1 then 'a' else 'b' end;
     insert into public.matches
-      (status, match_type, scheduled_at, created_by, is_private, min_elo,
+      (status, match_type, scheduled_at, created_by, is_private, min_rating,
        winner_team, score_team_a, rating_applied, invite_code, tournament_match_id)
     values
       ('completed', 'ranked', now(), coalesce(v_owner, m.a1), true, 0,
@@ -9257,133 +9014,10 @@ grant execute on function public.match_pending_invites(uuid) to authenticated;
 
 -- ── create_match: partner becomes an invite ───────────────────────────────
 
-create or replace function public.create_match(
-  p_competitive  boolean,
-  p_scheduled_at timestamptz,
-  p_court_id     uuid default null,
-  p_partner_id   uuid default null,
-  p_min_elo      int default 0,
-  p_open         boolean default true
-) returns uuid
-language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_id  uuid;
-begin
-  if v_uid is null then raise exception 'Not signed in.'; end if;
-  if p_scheduled_at is null then raise exception 'Pick a time for the match.'; end if;
-
-  insert into public.matches
-    (status, match_type, scheduled_at, created_by, court_id, is_private, min_elo, invite_code)
-  values
-    ('open',
-     case when p_competitive then 'ranked' else 'casual' end,
-     p_scheduled_at, v_uid, p_court_id,
-     not coalesce(p_open, true),
-     coalesce(p_min_elo, 0),
-     'PDL-' || upper(substr(md5(gen_random_uuid()::text), 1, 5)))
-  returning id into v_id;
-
-  insert into public.match_players (match_id, player_id, team) values (v_id, v_uid, 'a');
-
-  -- The partner is ASKED, not added. They hold the second team-A slot while
-  -- they decide; nothing about them is exposed until they accept.
-  if p_partner_id is not null and p_partner_id <> v_uid then
-    perform public._invite_partner(v_id, p_partner_id, 'a');
-  end if;
-
-  return v_id;
-end $$;
 grant execute on function public.create_match(boolean, timestamptz, uuid, uuid, int, boolean) to authenticated;
 
 -- ── join_match: same treatment, and respect reserved slots ────────────────
 
-create or replace function public.join_match(
-  p_match_id uuid, p_team text default null, p_partner_id uuid default null)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_count int;
-  v_status text;
-  v_min_elo int;
-  v_my_elo int;
-  v_partner_elo int;
-  v_team text;
-  v_team_a int;
-  v_team_b int;
-  v_need int;
-begin
-  if v_uid is null then return 'Not signed in.'; end if;
-  if p_partner_id = v_uid then p_partner_id := null; end if;
-
-  select status, min_elo into v_status, v_min_elo
-    from matches where id = p_match_id for update;
-  if not found then return 'Match not found.'; end if;
-  if v_status <> 'open' then return 'This match is no longer open.'; end if;
-
-  select coalesce(elo, 1000) into v_my_elo from profiles where id = v_uid;
-  if v_my_elo < v_min_elo then
-    return 'This match requires ' || v_min_elo || '+ ELO.';
-  end if;
-
-  if exists (select 1 from match_players where match_id = p_match_id and player_id = v_uid) then
-    return null; -- already in: treat as success
-  end if;
-
-  -- Bringing a partner: validate them before we touch anything.
-  if p_partner_id is not null then
-    if exists (select 1 from match_players where match_id = p_match_id and player_id = p_partner_id) then
-      return 'That partner is already in this match.';
-    end if;
-    select coalesce(elo, 1000) into v_partner_elo from profiles where id = p_partner_id;
-    if not found then return 'Partner not found.'; end if;
-    if v_partner_elo < v_min_elo then
-      return 'Your partner needs ' || v_min_elo || '+ ELO for this match.';
-    end if;
-  end if;
-
-  -- Capacity now counts reserved slots, so a stranger can't take the seat a
-  -- host is holding for their invited partner.
-  v_need  := case when p_partner_id is not null then 2 else 1 end;
-  v_count := public._match_taken(p_match_id);
-  if v_count + v_need > 4 then
-    return case when v_need = 2
-      then 'Not enough room for you and a partner.'
-      else 'This match is already full.' end;
-  end if;
-
-  v_team_a := public._team_taken(p_match_id, 'a');
-  v_team_b := public._team_taken(p_match_id, 'b');
-
-  if p_partner_id is not null then
-    -- A pair needs one side with two open slots.
-    if 2 - v_team_a >= 2 then v_team := 'a';
-    elsif 2 - v_team_b >= 2 then v_team := 'b';
-    else return 'No side has room for a pair — join solo instead.'; end if;
-  else
-    -- auto-balance teams unless caller asked for one
-    v_team := coalesce(p_team, case when v_team_a <= v_team_b then 'a' else 'b' end);
-    if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
-      v_team := case v_team when 'a' then 'b' else 'a' end;
-    end if;
-    if (v_team = 'a' and v_team_a >= 2) or (v_team = 'b' and v_team_b >= 2) then
-      return 'This match is already full.';
-    end if;
-  end if;
-
-  insert into match_players (match_id, player_id, team) values (p_match_id, v_uid, v_team);
-  -- Raises (and rolls back this join) if the partner can't be invited.
-  if p_partner_id is not null then
-    perform public._invite_partner(p_match_id, p_partner_id, v_team);
-  end if;
-
-  -- Only real players fill a match; a held slot keeps it 'open'.
-  if (select count(*) from match_players where match_id = p_match_id) >= 4 then
-    update matches set status = 'full' where id = p_match_id;
-  end if;
-  return null;
-end $$;
 grant execute on function public.join_match(uuid, text, uuid) to authenticated;
 
 -- ── mm_accept: same treatment ─────────────────────────────────────────────
@@ -10139,8 +9773,9 @@ create or replace function public.create_match(
   p_scheduled_at timestamptz,
   p_court_id     uuid default null,
   p_partner_id   uuid default null,
-  p_min_elo      int default 0,
-  p_open         boolean default true
+  p_min_elo      int default 0,      -- LEGACY, ignored (see below)
+  p_open         boolean default true,
+  p_min_rating   numeric default 0
 ) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare
@@ -10157,13 +9792,13 @@ begin
   v_private := (not coalesce(p_open, true)) and not coalesce(p_competitive, false);
 
   insert into public.matches
-    (status, match_type, scheduled_at, created_by, court_id, is_private, min_elo, invite_code)
+    (status, match_type, scheduled_at, created_by, court_id, is_private, min_rating, invite_code)
   values
     ('open',
      case when p_competitive then 'ranked' else 'casual' end,
      p_scheduled_at, v_uid, p_court_id,
      v_private,
-     coalesce(p_min_elo, 0),
+     greatest(0, least(7, coalesce(p_min_rating, 0))),
      case when v_private then public._new_invite_code() else null end)
   returning id into v_id;
 
@@ -10204,9 +9839,9 @@ declare
   v_uid uuid := auth.uid();
   v_count int;
   v_status text;
-  v_min_elo int;
-  v_my_elo int;
-  v_partner_elo int;
+  v_min_rating numeric;
+  v_my_rating numeric;
+  v_partner_rating numeric;
   v_team text;
   v_team_a int;
   v_team_b int;
@@ -10216,7 +9851,7 @@ begin
   if v_uid is null then return 'Not signed in.'; end if;
   if p_partner_id = v_uid then p_partner_id := null; end if;
 
-  select status, min_elo, is_private into v_status, v_min_elo, v_private
+  select status, min_rating, is_private into v_status, v_min_rating, v_private
     from matches where id = p_match_id for update;
   if not found then return 'Match not found.'; end if;
   if v_status <> 'open' then return 'This match is no longer open.'; end if;
@@ -10225,9 +9860,13 @@ begin
     return 'This match is private — you need its invite code.';
   end if;
 
-  select coalesce(elo, 1000) into v_my_elo from profiles where id = v_uid;
-  if v_my_elo < v_min_elo then
-    return 'This match requires ' || v_min_elo || '+ ELO.';
+  -- Unrated players are judged at the engine's prior (see rating_prior()),
+  -- which is what settlement assumes about them too. Reading a stale ELO here
+  -- made every player evaluate as level 1.0 regardless of actual skill.
+  select coalesce(rating, public.rating_prior()) into v_my_rating
+    from profiles where id = v_uid;
+  if v_my_rating < v_min_rating then
+    return 'This match needs level ' || trim(to_char(v_min_rating, 'FM9.99')) || '+.';
   end if;
 
   if exists (select 1 from match_players where match_id = p_match_id and player_id = v_uid) then
@@ -10239,10 +9878,12 @@ begin
     if exists (select 1 from match_players where match_id = p_match_id and player_id = p_partner_id) then
       return 'That partner is already in this match.';
     end if;
-    select coalesce(elo, 1000) into v_partner_elo from profiles where id = p_partner_id;
+    select coalesce(rating, public.rating_prior()) into v_partner_rating
+      from profiles where id = p_partner_id;
     if not found then return 'Partner not found.'; end if;
-    if v_partner_elo < v_min_elo then
-      return 'Your partner needs ' || v_min_elo || '+ ELO for this match.';
+    if v_partner_rating < v_min_rating then
+      return 'Your partner needs level '
+             || trim(to_char(v_min_rating, 'FM9.99')) || '+ for this match.';
     end if;
   end if;
 
@@ -11251,32 +10892,6 @@ end $$;
 --     are not equivalent. Reproducing the lab's pool in production would be
 --     inventing data.
 -- ---------------------------------------------------------------------------
-create or replace function public.admin_set_player_rating(p_player_id uuid, p_elo int)
-returns text
-language plpgsql security definer set search_path = public as $$
-declare
-  v_old_rating numeric; v_rating numeric;
-begin
-  if not public._can_edit('players') then return 'Not authorised.'; end if;
-  v_rating := public.level_from_elo(greatest(800, least(2200, p_elo)));
-  select coalesce(rating, coalesce(level, 0)) into v_old_rating
-    from public.profiles where id = p_player_id;
-  if not found then return 'Player not found.'; end if;
-  update public.profiles set
-    rating = v_rating, level = round(v_rating, 2),
-    tier = public.tier_from_level(v_rating),
-    elo = greatest(800, least(2200, p_elo)), sigma = 0.30,
-    competitive_matches = greatest(coalesce(competitive_matches, 0), 20),
-    placement_played = greatest(coalesce(placement_played, 0), 5)
-  where id = p_player_id;
-  insert into public.ranking_history
-    (profile_id, match_id, level_before, level_after,
-     rating_before, rating_after, sigma_before, sigma_after, delta, engine_version)
-  values (p_player_id, null, round(v_old_rating, 2), round(v_rating, 2),
-     v_old_rating, v_rating, null, 0.30, round(v_rating - v_old_rating, 6), 'admin');
-  return null;
-end $$;
-
 create or replace function public.admin_set_rating(
   p_player_id uuid, p_rating numeric, p_sigma numeric,
   p_is_anchor boolean default false, p_notes text default null)
@@ -11298,7 +10913,6 @@ begin
   update public.profiles set
     rating = v_rating, level = round(v_rating, 2),
     tier = public.tier_from_level(v_rating),
-    elo = greatest(800, least(2200, (800 + v_rating * 200)::int)),
     sigma = v_sigma, is_anchor = coalesce(p_is_anchor, false),
     competitive_matches = greatest(coalesce(competitive_matches, 0), 20),
     placement_played = greatest(coalesce(placement_played, 0), 5)
@@ -11338,7 +10952,64 @@ end $$;
 -- ---------------------------------------------------------------------------
 
 grant execute on function public._settle_rating(uuid)       to authenticated;
-grant execute on function public.admin_set_player_rating(uuid, int) to authenticated;
 grant execute on function public.admin_set_rating(uuid, numeric, numeric, boolean, text) to authenticated;
+
+-- ── v1 ELO removal (2026-08-14) ──────────────────────────
+-- Standalone delta: supabase/changes/2026-08-14_drop_elo_v1.sql
+
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='matches' and column_name='min_elo') then
+    update public.matches
+       set min_rating = greatest(0, least(7, round((min_elo - 800) / 200.0, 2)))
+     where coalesce(min_elo, 0) > 0 and min_rating = 0;
+  end if;
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='tournaments' and column_name='min_elo') then
+    update public.tournaments
+       set min_rating = greatest(0, least(7, round((min_elo - 800) / 200.0, 2)))
+     where coalesce(min_elo, 0) > 0 and min_rating = 0;
+  end if;
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='tournaments' and column_name='max_elo') then
+    update public.tournaments
+       set max_rating = greatest(0, least(7, round((max_elo - 800) / 200.0, 2)))
+     where coalesce(max_elo, 0) > 0 and max_rating is null;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 4. Drop the v1 layer. Functions first -- a column cannot go while something
+--    still references it.
+-- ---------------------------------------------------------------------------
+drop function if exists public.admin_set_player_rating(uuid, int);
+drop function if exists public.level_from_elo(int);
+
+alter table public.profiles       drop column if exists elo;
+alter table public.match_players  drop column if exists elo_before;
+alter table public.match_players  drop column if exists elo_after;
+alter table public.matches        drop column if exists min_elo;
+alter table public.tournaments    drop column if exists min_elo;
+alter table public.tournaments    drop column if exists max_elo;
+
+-- ---------------------------------------------------------------------------
+-- 5. Prove nothing still reaches for it. A stale reference would otherwise
+--    surface only when somebody tried to join a levelled match.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_bad text;
+begin
+  select string_agg(p.proname, ', ') into v_bad
+    from pg_proc p
+   where p.pronamespace = 'public'::regnamespace
+     and (p.prosrc like '%level_from_elo%' or p.prosrc like '%min_elo%'
+          or p.prosrc like '%max_elo%');
+  if v_bad is not null then
+    raise exception 'still referencing the v1 ELO layer: %', v_bad;
+  end if;
+  raise notice 'v1 ELO layer removed. Eligibility is rating-native (prior %).',
+    public.rating_prior();
+end $$;
 
 notify pgrst, 'reload schema';

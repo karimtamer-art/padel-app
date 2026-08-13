@@ -141,8 +141,8 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
     final remaining = cap > 0 ? (cap - entries.length).clamp(0, cap) : null;
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
-    final minElo = (t['min_elo'] as num?)?.toInt() ?? 0;
-    final maxElo = (t['max_elo'] as num?)?.toInt();
+    final minRating = (t['min_rating'] as num?)?.toDouble() ?? 0;
+    final maxRating = (t['max_rating'] as num?)?.toDouble();
     final venue = (t['venue_name'] as String?) ?? '';
     final canRegister = !registered && (ds == 'open' || ds == 'postponed');
 
@@ -183,10 +183,10 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
             if (_catLabel(t['category'] as String?) != null)
               AppTag(_catLabel(t['category'] as String?)!, color: AppColors.accent),
             if (venue.isNotEmpty) AppTag(venue),
-            if (minElo > 0 && maxElo != null && maxElo > 0)
-              AppTag('Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo(minElo))}–${RankingScale.fmtLevel(RankingScale.levelFromElo(maxElo))}')
-            else if (minElo > 0)
-              AppTag('Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo(minElo))}+'),
+            if (minRating > 0 && maxRating != null && maxRating > 0)
+              AppTag('Lv ${RankingScale.fmtLevel(minRating)}–${RankingScale.fmtLevel(maxRating)}')
+            else if (minRating > 0)
+              AppTag('Lv ${RankingScale.fmtLevel(minRating)}+'),
             if (registered) const AppTag('Registered', color: AppColors.primary),
           ]),
           const SizedBox(height: 14),

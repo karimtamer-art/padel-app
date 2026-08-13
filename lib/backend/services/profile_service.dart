@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/onboarding_models.dart';
 import '../models/ranking_scale.dart';
+import '../models/rating_engine_v3f5.dart';
 import '../models/mock_data.dart';
 
 /// One completed match in the Recent Form strip / recap.
@@ -86,7 +87,7 @@ class ProfileService {
 
   static const _profileCols =
       'id, name, username, phone, bio, date_of_birth, gender, preferred_hand, preferred_court_side, city, avatar_url, '
-      'elo, tier, division_pts, level, placement_played, created_at';
+      'rating, tier, division_pts, level, placement_played, created_at';
 
   /// True when [username] is free (and validly formatted). Backed by the
   /// `username_available` RPC so it works pre-auth during signup. On a network
@@ -161,14 +162,14 @@ class ProfileService {
       try {
         profileRow = await _db
             .from('profiles')
-            .select('elo, tier, level, placement_played, '
+            .select('rating, tier, level, placement_played, '
                 'reliability, is_provisional, placement_revealed, competitive_matches')
             .eq('id', userId)
             .single();
       } catch (_) {
         profileRow = await _db
             .from('profiles')
-            .select('elo, tier, level, placement_played')
+            .select('rating, tier, level, placement_played')
             .eq('id', userId)
             .single();
       }
@@ -235,7 +236,7 @@ class ProfileService {
       // Rating history — built from ranking_history below (the rating-engine-v2
       // per-match trail). The legacy match_players.elo_after column is no longer
       // written by the v2 settle, so it can't feed the chart.
-      List<int> eloPoints = [];
+      List<double> ratingPoints = [];
 
       // Recent 5 completed matches
       final recent = <RecentMatch>[];
@@ -286,7 +287,8 @@ class ProfileService {
         }
 
         // Rating trail for the chart: rating_before of the first match, then
-        // each rating_after — mapped to ELO-style points (800 + rating*200).
+        // each rating_after. Plotted as-is now — this used to be mapped onto a
+        // fake ELO axis (800 + rating*200) purely to keep the old chart.
         final histRows = await _db
             .from('ranking_history')
             .select('rating_before, rating_after')
@@ -296,11 +298,11 @@ class ProfileService {
             .limit(20);
         final hist = histRows as List;
         if (hist.isNotEmpty) {
-          int toElo(num rt) => (800 + rt.toDouble() * 200).round();
-          eloPoints = [
-            toElo((hist.first['rating_before'] as num?) ?? 2.0),
+          ratingPoints = [
+            ((hist.first['rating_before'] as num?) ?? RatingEngineV3F5.prior)
+                .toDouble(),
             for (final r in hist)
-              if (r['rating_after'] != null) toElo(r['rating_after'] as num),
+              if (r['rating_after'] != null) (r['rating_after'] as num).toDouble(),
           ];
         }
         final lastRows = await _db
@@ -343,8 +345,7 @@ class ProfileService {
         losses: losses,
         streak: streak,
         winRate: winRate,
-        elo: (profileRow['elo'] as num?)?.toInt(),
-        eloHistory: eloPoints,
+        ratingHistory: ratingPoints,
         recent: recent,
         // Absent on pre-migration DBs → false (reveal simply won't fire).
         placementRevealed: profileRow['placement_revealed'] == true,

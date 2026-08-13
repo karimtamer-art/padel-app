@@ -109,10 +109,6 @@ class RankingScale {
   static String levelTag(double lv) =>
       'Lv ${fmtLevel(lv)} · ${divisionFor(lv).name}';
 
-  /// Level derived from raw ELO — mirrors `level_from_elo` in Postgres.
-  static double levelFromElo(int elo) =>
-      _clamp(((elo - 800) / 200.0), 0, maxLevel);
-
   static String fmtSigned(double n) {
     final sign = n > 0 ? '+' : (n < 0 ? '−' : '');
     return '$sign${n.abs().toStringAsFixed(2)}';
@@ -204,13 +200,14 @@ class PlayerProfile {
   final int played, wins, losses, streak;
   final String winRate; // pre-formatted ('60%' / '—')
 
-  // Leaderboard / ELO (null until placed)
-  final int? rank, elo, toNext;
-  final String? nextTier, eloDelta; // eloDelta pre-formatted ('+153')
-  final double progress; // 0..1 toward next ELO tier
+  // Leaderboard (null until placed)
+  final int? rank;
+  final String? nextTier;
+  final double progress; // 0..1 toward the next division
 
-  // History
-  final List<int> eloHistory;
+  /// The player's own rating after each of their last rated matches, on the
+  /// real 0.00-7.00 scale. Was `eloHistory`, a fake `800 + rating*200` series.
+  final List<double> ratingHistory;
   final List<RecentMatch> recent;
 
   /// Whether the one-time "placement complete" reveal has already been shown.
@@ -226,12 +223,9 @@ class PlayerProfile {
     required this.streak,
     required this.winRate,
     this.rank,
-    this.elo,
-    this.toNext,
     this.nextTier,
-    this.eloDelta,
     this.progress = 0,
-    this.eloHistory = const [],
+    this.ratingHistory = const [],
     this.recent = const [],
     this.placementRevealed = false,
   });
@@ -248,7 +242,7 @@ class PlayerProfile {
     winRate: '—',
     streak: 0,
     progress: 0,
-    eloHistory: [],
+    ratingHistory: [],
     recent: [],
   );
 }

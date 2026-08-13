@@ -338,7 +338,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
   // ── Disputes ──
   List<Widget> _disputesTab() {
     final items = List<Map<String, dynamic>>.from(_disputes)
-      ..sort((a, b) => ((b['min_elo'] as num?) ?? 0).compareTo((a['min_elo'] as num?) ?? 0));
+      ..sort((a, b) => ((b['min_rating'] as num?) ?? 0).compareTo((a['min_rating'] as num?) ?? 0));
     if (items.isEmpty) {
       return [_empty(Icons.verified_outlined, 'No open disputes', 'Contested results show up here for review.')];
     }
@@ -347,7 +347,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
 
   Widget _disputeCard(Map<String, dynamic> m) {
     final (teamA, teamB) = _teams(m);
-    final minElo = (m['min_elo'] as num?)?.toInt() ?? 0;
+    final minRating = (m['min_rating'] as num?)?.toDouble() ?? 0;
     final subs = (m['submissions'] as List?) ?? const [];
     Map<String, dynamic>? subA, subB;
     for (final s in subs) {
@@ -391,8 +391,8 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
         ],
         const SizedBox(height: 10),
         Row(children: [
-          if (minElo > 0) ...[
-            _tag('Min ELO $minElo'),
+          if (minRating > 0) ...[
+            _tag('Min Lv ${minRating.toStringAsFixed(2)}'),
             const SizedBox(width: 6),
           ],
           _tag(_isCompetitive(m) ? 'Competitive' : 'Casual'),
@@ -554,7 +554,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
     final players = (m['player_count'] as num?)?.toInt() ?? 0;
     final awaiting = _awaiting.contains(m['status']);
     final full = m['status'] == 'full' || players >= 4;
-    final minElo = (m['min_elo'] as num?)?.toInt() ?? 0;
+    final minRating = (m['min_rating'] as num?)?.toDouble() ?? 0;
     final host = m['host'] as String?;
     final faulty = players == 0;
     return _accentCard(
@@ -591,7 +591,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
         const SizedBox(height: 10),
         Row(children: [
           _tag(_isCompetitive(m) ? 'Competitive' : 'Casual'),
-          if (minElo > 0) ...[const SizedBox(width: 6), _tag('Min ELO $minElo')],
+          if (minRating > 0) ...[const SizedBox(width: 6), _tag('Min Lv ${minRating.toStringAsFixed(2)}')],
           const Spacer(),
           _removeBtn(m),
         ]),
@@ -617,7 +617,7 @@ class _AdminMatchesScreenState extends State<AdminMatchesScreen> {
   Widget _completedCard(Map<String, dynamic> m) {
     final (teamA, teamB) = _teams(m);
     final aWon = m['winner_team'] == 'a';
-    final delta = (m['elo_delta'] as num?)?.toDouble();
+    final delta = (m['rating_delta'] as num?)?.toDouble();
     final scoreA = m['score_team_a'] as String?;
     final scoreB = m['score_team_b'] as String?;
     final score = (scoreA != null && scoreB != null)

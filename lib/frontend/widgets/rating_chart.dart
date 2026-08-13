@@ -1,27 +1,29 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
-/// Smooth ELO sparkline (line + gradient area). Mirrors app/charts.jsx.
-class EloChart extends StatelessWidget {
-  final List<int> data;
+/// Smooth rating sparkline (line + gradient area). Plots the player's actual
+/// 0.00-7.00 rating; it used to plot a fake ELO series derived as
+/// `800 + rating*200`, which was invented purely to keep the old axis.
+class RatingChart extends StatelessWidget {
+  final List<double> data;
   final double height;
   final Color accent;
-  const EloChart(this.data,
+  const RatingChart(this.data,
       {super.key, this.height = 96, this.accent = AppColors.primary});
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: height,
       width: double.infinity,
-      child: CustomPaint(painter: _EloPainter(data, accent)),
+      child: CustomPaint(painter: _RatingPainter(data, accent)),
     );
   }
 }
 
-class _EloPainter extends CustomPainter {
-  final List<int> data;
+class _RatingPainter extends CustomPainter {
+  final List<double> data;
   final Color accent;
-  _EloPainter(this.data, this.accent);
+  _RatingPainter(this.data, this.accent);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -89,5 +91,5 @@ class _EloPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _EloPainter old) => old.data != data;
+  bool shouldRepaint(covariant _RatingPainter old) => old.data != data;
 }

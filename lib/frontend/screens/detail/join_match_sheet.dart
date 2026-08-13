@@ -238,9 +238,9 @@ class _JoinMatchSheetState extends State<_JoinMatchSheet> {
   Widget _playerTile(Map<String, dynamic> p, {bool selected = false}) {
     final name = p['name'] as String? ?? 'Player';
     final username = p['username'] as String?;
-    final ranked = p['level'] != null || p['elo'] != null;
-    final elo = (p['elo'] as num?)?.toInt() ?? 1000;
-    final lv = (p['level'] as num?)?.toDouble() ?? RankingScale.levelFromElo(elo);
+    final ranked = p['rating'] != null || p['level'] != null;
+    final lv = (p['rating'] as num?)?.toDouble()
+        ?? (p['level'] as num?)?.toDouble() ?? 0.0;
     final rankTag = ranked ? RankingScale.levelTag(lv) : 'Unranked';
     final initials = name.trim().isEmpty
         ? 'P'

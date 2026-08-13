@@ -14,15 +14,15 @@ class MatchService {
 
   static const matchCols =
       'id, status, match_type, scheduled_at, winner_team, score_team_a, '
-      'score_team_b, created_by, court_id, min_elo, is_private, invite_code, '
+      'score_team_b, created_by, court_id, min_rating, is_private, invite_code, '
       'result_submitted_by, '
       'courts(name, venue_name, lat, lng, address), '
-      'match_players(player_id, team, elo_before, elo_after, '
+      'match_players(player_id, team, '
       // No `phone` here on purpose. It used to ship a number to the client for
       // every co-player and leave the decision to Dart; the contact sheet now
       // asks `player_phone(uuid)`, which applies `_can_see_phone` in Postgres.
       // avatar_url IS fine to embed — it's a public bucket URL, unlike phone.
-      '  profiles(id, name, elo, level, tier, username, avatar_url))';
+      '  profiles(id, name, rating, level, tier, username, avatar_url))';
 
   // ── Matchmaking discovery (band-gatekept) ──────────────────────────────────
 
@@ -248,17 +248,18 @@ class MatchService {
   ///
   /// Matches on the unique @username handle only — free-text name is ambiguous
   /// (two "Karim"s) and email is intentionally not exposed. A leading '@' and
-  /// case are ignored. An empty query returns top players by ELO as suggestions.
+  /// case are ignored. An empty query returns the highest-rated players as
+  /// suggestions — unrated players sort last.
   static Future<List<Map<String, dynamic>>> searchPlayers(String query) async {
     try {
       var q = _db
           .from('profiles')
-          .select('id, name, username, elo, level, tier, gender, avatar_url')
+          .select('id, name, username, rating, level, tier, gender, avatar_url')
           .eq('is_admin', false)
           .neq('id', _uid ?? '');
       final term = query.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
       if (term.isNotEmpty) q = q.ilike('username', '%$term%');
-      final rows = await q.order('elo', ascending: false).limit(20);
+      final rows = await q.order('rating', ascending: false, nullsFirst: false).limit(20);
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (e) {
       debugPrint('[MatchService] searchPlayers: $e');
@@ -322,7 +323,7 @@ class MatchService {
     String? courtId,
     String? partnerId,
     required bool open,
-    int minElo = 0,
+    double minRating = 0,
   }) async {
     final uid = _uid;
     if (uid == null) return ('Not signed in.', null);
@@ -335,7 +336,7 @@ class MatchService {
         'p_scheduled_at': scheduledAt.toUtc().toIso8601String(),
         'p_court_id': courtId,
         'p_partner_id': partnerId,
-        'p_min_elo': minElo,
+        'p_min_rating': minRating,
         'p_open': open,
       });
       return (null, id as String?);

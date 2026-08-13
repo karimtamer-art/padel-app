@@ -122,15 +122,15 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     return 'EGP $v';
   }
 
-  static String _lvLabel(dynamic minElo, dynamic maxElo) {
-    double lvFmt(dynamic elo) {
-      final v = ((((elo as num?)?.toInt() ?? 800) - 800) / 200.0).clamp(0.0, 7.0);
+  static String _lvLabel(dynamic minRating, dynamic maxRating) {
+    double lvFmt(dynamic r) {
+      final v = ((r as num?)?.toDouble() ?? 0).clamp(0.0, 7.0);
       return (v / 0.5).round() * 0.5;
     }
-    final minLv = lvFmt(minElo);
-    final maxInt = (maxElo as num?)?.toInt() ?? 0;
+    final minLv = lvFmt(minRating);
+    final maxInt = (maxRating as num?)?.toDouble() ?? 0;
     if (maxInt > 0) {
-      return '${minLv.toStringAsFixed(1)}–${lvFmt(maxElo).toStringAsFixed(1)}';
+      return '${minLv.toStringAsFixed(1)}–${lvFmt(maxRating).toStringAsFixed(1)}';
     }
     return '${minLv.toStringAsFixed(1)}+';
   }
@@ -284,9 +284,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                     if (t['prize_pool'] != null)
                       _tag(Icons.military_tech_outlined,
                           _egpShort((t['prize_pool'] as num).toInt())),
-                    if (((t['min_elo'] as num?)?.toInt() ?? 0) > 0)
+                    if (((t['min_rating'] as num?)?.toDouble() ?? 0) > 0)
                       _tag(Icons.shield_outlined,
-                          'Lv ${_lvLabel(t['min_elo'], t['max_elo'])}'),
+                          'Lv ${_lvLabel(t['min_rating'], t['max_rating'])}'),
                   ]),
                 ]),
               ),
@@ -968,8 +968,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     String category = t?['category'] as String? ?? 'open';
 
     // Eligibility — derive mode from existing data
-    final existingMin = (t?['min_elo'] as num?)?.toInt() ?? 0;
-    final existingMax = (t?['max_elo'] as num?)?.toInt();
+    final existingMin = (t?['min_rating'] as num?)?.toDouble() ?? 0;
+    final existingMax = (t?['max_rating'] as num?)?.toDouble();
     String eligMode;
     double minLevel;
     double maxLevel;
@@ -1023,8 +1023,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'capacity': int.tryParse(capC.text),
             'description':
                 descC.text.trim().isEmpty ? null : descC.text.trim(),
-            'min_elo': eligMode == 'open' ? 0 : (800 + (minLevel * 200)).round(),
-            'max_elo': eligMode == 'range' ? (800 + (maxLevel * 200)).round() : null,
+            // stored as a level now; the fake-ELO round trip is gone
+            'min_rating': eligMode == 'open' ? 0 : minLevel,
+            'max_rating': eligMode == 'range' ? maxLevel : null,
             'format': format,
             'status': status,
             'rated': rated,

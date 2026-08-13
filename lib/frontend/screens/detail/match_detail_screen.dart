@@ -496,9 +496,9 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
     // prefixed with "Lv" — that produced the nonsense "Lv Unranked".
     final levels = team.map((p) {
       final prof = p['profiles'] as Map?;
-      if (prof?['level'] == null && prof?['elo'] == null) return null;
-      final lv = (prof?['level'] as num?)?.toDouble() ??
-          RankingScale.levelFromElo((prof?['elo'] as num?)?.toInt() ?? 1000);
+      if (prof?['rating'] == null && prof?['level'] == null) return null;
+      final lv = (prof?['rating'] as num?)?.toDouble() ??
+          (prof?['level'] as num?)?.toDouble() ?? 0.0;
       return RankingScale.fmtLevel(lv);
     }).toList();
 
@@ -614,10 +614,10 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
             const Divider(color: AppColors.line),
             _infoRow(Icons.emoji_events_outlined, 'Format',
                 '${_comp ? 'Competitive' : 'Casual'} · Doubles'),
-            if (_comp && ((_match?['min_elo'] as num?)?.toInt() ?? 0) > 0) ...[
+            if (_comp && ((_match?['min_rating'] as num?)?.toDouble() ?? 0) > 0) ...[
               const Divider(color: AppColors.line),
               _infoRow(Icons.shield_outlined, 'Minimum level',
-                  'Lv ${RankingScale.fmtLevel(RankingScale.levelFromElo((_match?['min_elo'] as num).toInt()))}+'),
+                  'Lv ${RankingScale.fmtLevel((_match?['min_rating'] as num).toDouble())}+'),
             ],
           ]),
         ),
@@ -654,10 +654,9 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
     final isMe = p['player_id'] == _uid;
     final isHost = p['player_id'] == _match?['created_by'];
     final prof = p['profiles'] as Map?;
-    final ranked = prof?['level'] != null || prof?['elo'] != null;
-    final elo = (prof?['elo'] as num?)?.toInt() ?? 1000;
-    final lv = (prof?['level'] as num?)?.toDouble() ??
-        RankingScale.levelFromElo(elo);
+    final ranked = prof?['rating'] != null || prof?['level'] != null;
+    final lv = (prof?['rating'] as num?)?.toDouble() ??
+        (prof?['level'] as num?)?.toDouble() ?? 0.0;
     final rankTag = ranked ? RankingScale.levelTag(lv) : 'Unranked';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 9),
@@ -1296,12 +1295,10 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
     final rAfter = (_myRating?['rating_after'] as num?)?.toDouble();
     final rDelta = (_myRating?['delta'] as num?)?.toDouble() ??
         ((rBefore != null && rAfter != null) ? rAfter - rBefore : null);
-    final eloBefore = (_me?['elo_before'] as num?)?.toInt();
-    final eloAfter = (_me?['elo_after'] as num?)?.toInt();
-    final lvBefore = rBefore ??
-        (eloBefore != null ? RankingScale.levelFromElo(eloBefore) : null);
-    final lvAfter = rAfter ??
-        (eloAfter != null ? RankingScale.levelFromElo(eloAfter) : null);
+    // ranking_history is the only source now; match_players.elo_before/after
+    // were dropped with the v1 layer (they stopped being written at rating v2).
+    final lvBefore = rBefore;
+    final lvAfter = rAfter;
     final lvDelta =
         rDelta ?? ((lvBefore != null && lvAfter != null) ? lvAfter - lvBefore : null);
     final delta = lvDelta;
