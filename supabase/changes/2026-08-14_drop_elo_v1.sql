@@ -653,10 +653,9 @@ begin
      and dependent.relkind = 'v'
      and dependent.relname <> 'v_user_ranking';
   if v_dep is not null then
-    raise exception
-      'unexpected view(s) depend on the v1 ELO columns: %. Inspect with '
-      '`select pg_get_viewdef(''%%'', true)` and handle them before re-running.',
-      v_dep, v_dep;
+    raise exception 'unexpected view(s) depend on the v1 ELO columns: %', v_dep
+      using hint = 'Inspect each with select pg_get_viewdef(''<name>'', true), '
+                   'then drop or port it before re-running this delta.';
   end if;
 end $$;
 

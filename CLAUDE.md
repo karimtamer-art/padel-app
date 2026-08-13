@@ -498,6 +498,13 @@ before changing anything.
   status and kept working, which hid the bug.
 - Every DB change also gets a standalone delta in `supabase/changes/` so only
   the new part needs running on live.
+- **There is no Postgres in the test environment**, so nothing compiles PL/pgSQL
+  before it is pasted into the SQL editor against live. `RAISE` arity is
+  therefore checked statically by `test/sql_raise_arity_test.dart` — a
+  placeholder/argument mismatch is a COMPILE error (`42601`), so it takes down
+  the whole delta mid-migration, not just the branch it sits in. `%%` is a
+  literal percent and consumes no argument. Adding SQL means running
+  `flutter test test/sql_raise_arity_test.dart`.
 - `profiles` RLS in the repo is read-own-row, but the live DB is looser
   (organizer/opponent names do resolve). Verify against live before assuming
   an embed returns other players' rows.
