@@ -708,6 +708,11 @@ alter table public.profiles       drop column if exists elo;
 alter table public.match_players  drop column if exists elo_before;
 alter table public.match_players  drop column if exists elo_after;
 alter table public.matches        drop column if exists min_elo;
+-- matches.max_elo comes from migrations/0003 and was NEVER used: the
+-- 2026-06-16 cleanup audited it as empty + unreferenced and kept it as
+-- "wired-but-empty, fills in once used". It never did, and only tournaments
+-- ever had an upper bound. It is dropped here with the rest of the layer.
+alter table public.matches        drop column if exists max_elo;
 alter table public.tournaments    drop column if exists min_elo;
 alter table public.tournaments    drop column if exists max_elo;
 
@@ -718,6 +723,7 @@ alter table public.tournaments    drop column if exists max_elo;
 do $$
 declare v_bad text;
 begin
+  -- functions
   select string_agg(p.proname, ', ') into v_bad
     from pg_proc p
    where p.pronamespace = 'public'::regnamespace
@@ -726,6 +732,22 @@ begin
   if v_bad is not null then
     raise exception 'still referencing the v1 ELO layer: %', v_bad;
   end if;
+
+  -- COLUMNS. Checked against information_schema rather than against a list of
+  -- tables this repo knows about, because it repeatedly did not know: profiles
+  -- predates migration_player_app.sql, and matches.max_elo (from
+  -- migrations/0003) survived the first pass simply because nothing in the
+  -- repo mentioned it. Ask the database what is there instead of assuming.
+  select string_agg(c.table_name || '.' || c.column_name, ', ') into v_bad
+    from information_schema.columns c
+   where c.table_schema = 'public'
+     and (c.column_name = 'elo' or c.column_name like '%\_elo'
+          or c.column_name like 'elo\_%');
+  if v_bad is not null then
+    raise exception 'v1 ELO column(s) still present: %', v_bad
+      using hint = 'Add them to the drop list in this delta and re-run.';
+  end if;
+
   raise notice 'v1 ELO layer removed. Eligibility is rating-native (prior %).',
     public.rating_prior();
 end $$;
