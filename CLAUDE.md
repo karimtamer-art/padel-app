@@ -460,7 +460,17 @@ before changing anything.
 - Court booking is out of scope — the create flow tells users to book courts
   themselves.
 - Losers-bracket pairing is arrival-order, not strict seeded DE crossing.
-- Decay job needs the pg_cron extension enabled in Supabase to auto-run.
+- **Inactivity widens uncertainty; it never lowers a rating** (2026-08-13, with
+  V3-F5). `apply_rating_decay()` is now a misnomer kept only because pg_cron
+  stores its name as a command string — all it does is raise `sigma` toward
+  0.60 for idle players, monotonically. The old −0.04/week rating decay is
+  gone: V3-F5 was selected with `ratingInactivityDecay = false`, and a job
+  moving ratings between matches meant production wasn't really running the
+  engine that was validated. Raising sigma is the correct response to absence
+  on its own terms — it widens K, so a returning player is re-measured by
+  playing. **Only `_settle_rating_v3f5` and the two admin RPCs may write
+  `profiles.rating`**; a test enumerates the writers and fails if that grows.
+  The job still needs pg_cron enabled to auto-run.
 - Notifications screen reads admin `broadcasts`. Push IS live: FCM on Android +
   APNs on iOS via `PushService`, driven off `notifications` inserts and honouring
   `profiles.notify_*` prefs.

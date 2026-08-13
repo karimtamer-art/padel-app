@@ -511,60 +511,56 @@ end $$;
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
--- 10. Inactivity. NOT part of V3-F5 parity — deliberately so.
+-- 10. Inactivity widens UNCERTAINTY only. It no longer touches the rating.
 --
---     The Ranking Lab's idle() helper is known-broken: `min(cap, sigma + ...)`
---     LOWERS sigma for anyone already above the cap, i.e. every V3-F5 player
---     before ~match 12. It is not ported.
+--     Absence is lost information, not lost skill. V3-F5 was selected with
+--     `ratingInactivityDecay = false`, so a job that quietly subtracted
+--     0.04/week from the skill estimate meant production was not really
+--     running the engine that was validated — it was running V3-F5 during
+--     matches and something else between them. The rating decay is REMOVED.
+--     Nothing outside match settlement may move a rating now, except an
+--     explicit admin action.
 --
---     Production had the identical bug, dormant: `least(0.60, sigma + 0.01)`
---     never bit under v2 because sigma fell below 0.60 within a few matches.
---     Under V3-F5, sigma stays above 0.60 until ~match 17, so going quiet
---     would have made the app MORE confident about a player it had just
---     stopped learning about. Fixed to be monotone — inactivity may raise
---     uncertainty, never lower it — while keeping v2's 0.60 target and 0.01/wk
---     rate, so nothing else about the job changes.
+--     What that deleted, for the record: −0.04/week after 60 days idle,
+--     floored at the division boundary (5.0 / 3.5 / 2.0) and never below 1.0,
+--     for players with 5+ competitive matches. It wrote `engine_version =
+--     'decay'` rows to ranking_history. Existing rows from the v2 era stay —
+--     history is not rewritten, and those ratings are not restored, because
+--     re-inflating people on the basis of a rule we just retired would be its
+--     own unreviewed rating change. They will simply re-converge by playing.
 --
---     STILL PRESENT AND FLAGGED, NOT CHANGED HERE: this job also decays RATING
---     by 0.04/week after 60 days idle. V3-F5's own config has rating
---     inactivity decay OFF ("absence is lost information, not lost skill").
---     Removing it is a product decision, so it stays until that call is made.
---     Note the job needs pg_cron to run at all.
+--     WHAT REMAINS is the sigma half, kept and corrected. The Ranking Lab's
+--     idle() helper is known-broken — `min(cap, sigma + ...)` LOWERS sigma for
+--     anyone already above the cap — and is NOT ported. Production had the
+--     identical bug, dormant: `least(0.60, sigma + 0.01)` never bit under v2
+--     because sigma fell below 0.60 within a few matches. Under V3-F5 sigma
+--     stays above 0.60 until ~match 17, so going quiet would have made the app
+--     MORE confident about a player it had just stopped learning about. It is
+--     monotone now — inactivity may raise uncertainty, never lower it — at v2's
+--     unchanged 0.60 target and 0.01/week rate.
+--
+--     Raising sigma is the right response to absence on its own terms: it
+--     widens K, so a returning player is re-measured quickly by playing rather
+--     than being pre-emptively marked down for not playing.
+--
+--     The NAME is now a misnomer and is kept deliberately: the pg_cron
+--     schedule stores `select public.apply_rating_decay()` as a command
+--     STRING, so renaming would silently orphan the job. Note it needs pg_cron
+--     enabled to run at all.
 -- ---------------------------------------------------------------------------
 create or replace function public.apply_rating_decay()
 returns int
 language plpgsql security definer set search_path = public as $$
-declare
-  v_count int := 0; r record; v_floor numeric; v_new numeric;
+declare v_count int := 0;
 begin
   update public.profiles p
      set sigma = greatest(p.sigma, least(0.60, p.sigma + 0.01))
   where coalesce(p.is_admin, false) = false and p.sigma < 0.60
     and (p.last_competitive_match_at is null
          or p.last_competitive_match_at < now() - interval '14 days');
-  for r in
-    select p.id, coalesce(p.rating, coalesce(p.level, 0))::numeric as rating
-      from profiles p
-     where coalesce(p.is_admin, false) = false
-       and coalesce(p.competitive_matches, 0) >= 5
-       and coalesce(p.rating, coalesce(p.level, 0)) > 1.0
-       and (p.last_competitive_match_at is null
-            or p.last_competitive_match_at < now() - interval '60 days')
-  loop
-    v_floor := case when r.rating >= 5.0 then 5.0 when r.rating >= 3.5 then 3.5
-                    when r.rating >= 2.0 then 2.0 else 0.0 end;
-    v_new := greatest(1.0, greatest(v_floor, round(r.rating - 0.04, 6)));
-    if v_new < r.rating then
-      update profiles set rating = v_new, level = round(v_new, 2),
-        tier = public.tier_from_level(v_new) where id = r.id;
-      insert into ranking_history
-        (profile_id, match_id, level_before, level_after,
-         rating_before, rating_after, delta, engine_version)
-      values (r.id, null, round(r.rating, 2), round(v_new, 2),
-              r.rating, v_new, round(v_new - r.rating, 6), 'decay');
-      v_count := v_count + 1;
-    end if;
-  end loop;
+  get diagnostics v_count = row_count;
+  -- returns players whose uncertainty was widened (it used to return players
+  -- whose rating was cut, which is now always zero by construction)
   return v_count;
 end $$;
 

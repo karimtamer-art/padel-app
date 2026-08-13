@@ -210,6 +210,18 @@ List<double> sqlArray(Map<String, String> c, String key) {
   return inner.split(',').map((s) => double.parse(s.trim())).toList();
 }
 
+/// The dollar-quoted body of the function definition starting at [start].
+///
+/// Not `indexOf('end $$;')` — `language sql` functions close with a bare `$$;`
+/// and that scan runs straight past them into the next function, attributing
+/// its statements to the wrong name.
+String bodyAt(String sql, int start) {
+  final open = sql.indexOf(r'$$', start);
+  if (open < 0) return '';
+  final close = sql.indexOf(r'$$', open + 2);
+  return sql.substring(open, close < 0 ? sql.length : close);
+}
+
 void main() {
   // ═══════════════════════════════════════════════════════════════════════
   // 1. The lab config really is V3-F5
@@ -503,6 +515,71 @@ void main() {
           reason: 'inactivity must be monotone in sigma');
       expect(body.contains('set sigma = least(0.60, sigma + 0.01)'), isFalse,
           reason: 'the sigma-lowering form must be gone');
+    });
+
+    test('inactivity NEVER moves a rating — V3-F5 has decay off', () {
+      // V3-F5 was selected with ratingInactivityDecay = false. If the sweep
+      // subtracts from a rating, production is running V3-F5 during matches
+      // and something else between them, which is not V3-F5.
+      expect(kV3F5.ratingInactivityDecay, isFalse);
+
+      final i = sql.lastIndexOf('function public.apply_rating_decay');
+      final body = sql.substring(i, sql.indexOf('end \$\$;', i));
+      // the job may only touch sigma
+      expect(body.contains('set rating'), isFalse,
+          reason: 'the inactivity sweep must not write a rating');
+      expect(body.contains('tier_from_level'), isFalse,
+          reason: 'writing a tier implies it moved a rating');
+      expect(body.contains('ranking_history'), isFalse,
+          reason: 'the sweep has no rating movement to record');
+      expect(body.contains('0.04'), isFalse,
+          reason: 'the -0.04/week rating decay must be gone');
+      expect(body, contains('set sigma'));
+    });
+
+    test('only match settlement and explicit admin action move a rating', () {
+      // Every function that writes profiles.rating, enumerated.
+      //
+      // The migration re-defines several functions as it goes (the file is
+      // re-run whole, so a later create-or-replace wins), so only the LAST
+      // definition of each name is what actually exists in the database —
+      // that is what gets scanned. Earlier bodies are dead by construction.
+      final lastDef = <String, int>{};
+      for (final m in RegExp(r'create or replace function (public\.\w+)')
+          .allMatches(sql)) {
+        lastDef[m.group(1)!] = m.start;
+      }
+
+      final writers = <String>{};
+      lastDef.forEach((name, start) {
+        if (RegExp(r'update (?:public\.)?profiles\s+set[\s\S]{0,240}?rating\s*=')
+            .hasMatch(bodyAt(sql, start))) {
+          writers.add(name);
+        }
+      });
+
+      expect(
+          writers,
+          {
+            'public._settle_rating_v2', // rollback path, deliberately kept
+            'public._settle_rating_v3f5', // the engine
+            'public.admin_set_player_rating', // explicit admin action
+            'public.admin_set_rating', // explicit admin action
+          },
+          reason: 'unexpected writer of profiles.rating: $writers');
+    });
+
+    test('no definition of the inactivity sweep decays a rating, live or dead', () {
+      // Stricter than the test above: a superseded copy of the old decaying
+      // body left in the file is dead only until someone reorders the file.
+      for (final m in RegExp(r'create or replace function public\.apply_rating_decay')
+          .allMatches(sql)) {
+        final body = bodyAt(sql, m.start);
+        expect(body.contains('0.04'), isFalse,
+            reason: 'a rating decay survives at offset ${m.start}');
+        expect(body.contains('set rating'), isFalse,
+            reason: 'a rating write survives at offset ${m.start}');
+      }
     });
 
     test('rating history records the engine that produced each row', () {
