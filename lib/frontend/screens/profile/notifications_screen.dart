@@ -71,10 +71,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     });
   }
 
-  /// Flip a toggle locally and persist it (fire-and-forget).
-  void _setPref(String key, bool value, void Function(bool) apply) {
+  /// Flip a toggle optimistically, then persist. If the write is refused the
+  /// toggle goes back — a switch that stays on while the preference did not
+  /// save is how a "push won't turn off" bug hides for six weeks.
+  Future<void> _setPref(
+      String key, bool value, void Function(bool) apply) async {
     setState(() => apply(value));
-    NotificationService.setPref(key, value);
+    final err = await NotificationService.setPref(key, value);
+    if (err == null || !mounted) return;
+    setState(() => apply(!value));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Couldn't save that setting — try again.")),
+    );
   }
 
   /// Personal notifications, newest first. Broadcasts now arrive here too: a DB

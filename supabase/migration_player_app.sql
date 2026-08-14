@@ -2113,6 +2113,21 @@ alter table public.profiles drop constraint if exists profiles_side_chk;
 alter table public.profiles add constraint profiles_side_chk
   check (preferred_court_side is null or preferred_court_side in ('left','right','both'));
 
+-- The user-editable column set. migrations/0004 revoked blanket UPDATE on
+-- profiles and granted back only these — which is why a client cannot write
+-- rating, sigma, is_admin or status. That grant lived ONLY in 0004, which is
+-- never re-run, so this file was not self-contained: a database built from it
+-- alone had profile editing broken (name/avatar_url/bio/city/phone/gender
+-- unwritable). Restated here to match live. 0004's dob/hand/court_side were
+-- legacy duplicates and have since been dropped, so they are not repeated.
+--
+-- Adding a column the client writes? It must join this list, or go through a
+-- SECURITY DEFINER RPC. Forgetting is invisible: the write is refused and a
+-- fire-and-forget call swallows it, which is how notify_* went six weeks
+-- unable to save. test/sql_raise_arity_test.dart checks this now.
+grant update (name, phone, bio, avatar_url, city, gender)
+  on public.profiles to authenticated;
+
 -- also grant update on these columns that were added by cleanup
 grant update (preferred_hand, preferred_court_side, date_of_birth)
   on public.profiles to authenticated;
@@ -11323,6 +11338,74 @@ begin
   raise notice 'profiles is down to % columns.',
     (select count(*) from information_schema.columns
       where table_schema='public' and table_name='profiles');
+end $$;
+
+-- ── notification-preference grant fix (2026-08-14) ────────────
+-- Standalone delta: supabase/changes/2026-08-14_notify_prefs_grant.sql
+
+-- ---------------------------------------------------------------------------
+-- 1. The four preference columns join the user-editable list.
+--
+--    The row policy (profiles_update_own: auth.uid() = id) already restricts
+--    WHICH row; this grant restricts WHICH columns. Both must pass, so this
+--    lets a player edit their own preferences and nobody else's.
+-- ---------------------------------------------------------------------------
+grant update (notify_push, notify_match, notify_tournament, notify_order)
+  on public.profiles to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 2. placement_revealed gets an RPC instead, keeping the ranking columns
+--    server-only without exception.
+--
+--    Display-only: it records that the one-time "placement complete" reveal
+--    has been shown, so it does not fire on every launch. It never touches
+--    rating math. Set-only-to-true so it cannot be used to replay the reveal.
+-- ---------------------------------------------------------------------------
+create or replace function public.mark_placement_revealed()
+returns void
+language sql security definer set search_path = public as $$
+  update public.profiles
+     set placement_revealed = true
+   where id = auth.uid() and coalesce(placement_revealed, false) = false;
+$$;
+grant execute on function public.mark_placement_revealed() to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 3. Report what a client may now write, so the list is visible rather than
+--    something you have to reconstruct from three migrations.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_cols text; v_missing text;
+begin
+  select string_agg(column_name, ', ' order by column_name) into v_cols
+    from information_schema.column_privileges
+   where table_schema = 'public' and table_name = 'profiles'
+     and grantee = 'authenticated' and privilege_type = 'UPDATE';
+  raise notice 'profiles columns writable by authenticated: %', v_cols;
+
+  select string_agg(c, ', ') into v_missing
+    from unnest(array['notify_push','notify_match','notify_tournament','notify_order']) c
+   where not exists (
+     select 1 from information_schema.column_privileges p
+      where p.table_schema='public' and p.table_name='profiles'
+        and p.grantee='authenticated' and p.privilege_type='UPDATE'
+        and p.column_name = c);
+  if v_missing is not null then
+    raise exception 'notify grant did not take for: %', v_missing;
+  end if;
+
+  -- and the ranking block must stay closed
+  select string_agg(p.column_name, ', ') into v_missing
+    from information_schema.column_privileges p
+   where p.table_schema='public' and p.table_name='profiles'
+     and p.grantee='authenticated' and p.privilege_type='UPDATE'
+     and p.column_name in ('rating','sigma','level','tier','is_anchor',
+                           'competitive_matches','placement_played',
+                           'placement_revealed','is_admin','status');
+  if v_missing is not null then
+    raise exception 'a client can write ranking/privilege column(s): %', v_missing
+      using hint = 'Rating changes happen only in Postgres. Revoke these.';
+  end if;
 end $$;
 
 notify pgrst, 'reload schema';

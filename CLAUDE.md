@@ -498,6 +498,16 @@ before changing anything.
   status and kept working, which hid the bug.
 - Every DB change also gets a standalone delta in `supabase/changes/` so only
   the new part needs running on live.
+- **`profiles` uses COLUMN-LEVEL grants.** `migrations/0004` revoked blanket
+  UPDATE and granted back only the user-editable columns — that is why a client
+  cannot write `rating`, `sigma`, `is_admin` or `status`. **A new column the
+  client writes must join that grant list, or go through a SECURITY DEFINER
+  RPC** (the right answer for anything in the ranking block). Forgetting is
+  INVISIBLE: Postgres refuses the write and a fire-and-forget call swallows it.
+  That is how `notify_*` spent six weeks unable to save, i.e. players could not
+  turn push off. `test/sql_raise_arity_test.dart` now checks both directions —
+  every literal `profiles` write is granted, and the ranking/privilege columns
+  never are.
 - **There is no Postgres in the test environment**, so nothing compiles PL/pgSQL
   before it is pasted into the SQL editor against live. `RAISE` arity is
   therefore checked statically by `test/sql_raise_arity_test.dart` — a

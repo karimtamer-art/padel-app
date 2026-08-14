@@ -129,16 +129,20 @@ class ProfileService {
   }
 
   /// Marks the one-time "placement complete" reveal as shown for the signed-in
-  /// user, so it never fires again. Best-effort — a failure just means the
-  /// player may see it once more next launch. Display-only (never rating math).
+  /// user, so it never fires again. Display-only (never rating math).
+  ///
+  /// Goes through an RPC rather than a direct write: placement_revealed lives
+  /// in the ranking block, and no client may write ANY ranking column — a
+  /// far easier invariant to hold than "none except this one". The direct
+  /// write it replaced had no column grant and always failed, so the reveal
+  /// re-fired on every launch instead of once.
   static Future<void> markPlacementRevealed() async {
-    final uid = _db.auth.currentUser?.id;
-    if (uid == null) return;
+    if (_db.auth.currentUser?.id == null) return;
     try {
-      await _db
-          .from('profiles')
-          .update({'placement_revealed': true}).eq('id', uid);
-    } catch (_) {/* non-fatal */}
+      await _db.rpc('mark_placement_revealed');
+    } catch (e) {
+      debugPrint('[ProfileService] markPlacementRevealed: $e');
+    }
   }
 
   static Future<String?> updateProfile(String uid, Map<String, dynamic> fields) async {

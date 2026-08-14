@@ -356,4 +356,94 @@ void main() {
         reason: 'these are no longer duplicated — remove them from '
             'knownDuplicates so the ratchet keeps ratcheting');
   });
+
+  // ── every column the client writes must be granted ───────────────────────
+  //
+  // migrations/0004 revoked blanket UPDATE on profiles and granted back an
+  // explicit list of user-editable columns. That is a good design — it is why
+  // a client cannot write `rating` or `is_admin`. Its failure mode is that a
+  // column added LATER never joins the list, and the write then fails with a
+  // permission error that a fire-and-forget call swallows.
+  //
+  // That is exactly what happened to notify_push / notify_match /
+  // notify_tournament / notify_order, added 2026-07-02: for six weeks a
+  // player could not turn push notifications off, and nothing surfaced it.
+  //
+  // So: find every literal column the Dart writes straight to `profiles`, and
+  // require a matching grant.
+  test('columns the app writes to profiles are granted to authenticated', () {
+    final sql = _stripLineComments(
+        File('supabase/migration_player_app.sql').readAsStringSync());
+
+    final granted = <String>{};
+    for (final m in RegExp(
+            r'grant\s+update\s*\(([^)]*)\)\s*\n?\s*on public\.profiles\s+to\s+authenticated',
+            caseSensitive: false)
+        .allMatches(sql)) {
+      for (final c in m.group(1)!.split(',')) {
+        granted.add(c.trim());
+      }
+    }
+    expect(granted, isNotEmpty,
+        reason: 'found no column grants at all — the scanner is broken, which '
+            'would make this test pass vacuously');
+
+    // Literal `.from('profiles') … .update({'col': …})` writes in lib/.
+    final written = <String, String>{}; // column -> where
+    for (final f in Directory('lib')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.dart'))) {
+      final src = f.readAsStringSync();
+      for (final m
+          in RegExp(r"from\('profiles'\)([\s\S]{0,400}?);").allMatches(src)) {
+        final chunk = m.group(1)!;
+        if (!chunk.contains('.update(')) continue;
+        final upd = chunk.substring(chunk.indexOf('.update('));
+        for (final k in RegExp(r"'(\w+)'\s*:").allMatches(upd)) {
+          written[k.group(1)!] = f.path;
+        }
+      }
+    }
+
+    final ungranted = written.entries
+        .where((e) => !granted.contains(e.key))
+        .map((e) => '${e.key} (written in ${e.value})')
+        .toList();
+
+    expect(ungranted, isEmpty,
+        reason: 'these writes will be REFUSED by Postgres, and a '
+            'fire-and-forget call will hide it. Either grant the column, or '
+            'route the write through a SECURITY DEFINER RPC (which is the '
+            'right answer for anything in the ranking block):\n'
+            '  ${ungranted.join('\n  ')}\n');
+  });
+
+  test('the ranking and privilege columns stay closed to clients', () {
+    // The anti-cheat boundary, as a test. Rating changes happen only in
+    // Postgres; if one of these ever appears in a client grant, that is the
+    // bug — no matter how convenient it looked at the time.
+    const mustNeverBeGranted = <String>[
+      'rating', 'sigma', 'level', 'tier', 'is_anchor', 'competitive_matches',
+      'placement_played', 'placement_revealed', 'is_provisional', 'reliability',
+      'is_admin', 'admin_role', 'admin_access', 'admin_scope', 'is_owner',
+      'status',
+    ];
+    final sql = _stripLineComments(
+        File('supabase/migration_player_app.sql').readAsStringSync());
+    final granted = <String>{};
+    for (final m in RegExp(
+            r'grant\s+update\s*\(([^)]*)\)\s*\n?\s*on public\.profiles\s+to\s+authenticated',
+            caseSensitive: false)
+        .allMatches(sql)) {
+      for (final c in m.group(1)!.split(',')) {
+        granted.add(c.trim());
+      }
+    }
+    for (final c in mustNeverBeGranted) {
+      expect(granted.contains(c), isFalse,
+          reason: '$c is writable by a client — that is the anti-cheat '
+              'boundary in CLAUDE.md rule #2');
+    }
+  });
 }

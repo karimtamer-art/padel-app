@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Per-user notification inbox. Rows are produced server-side (the orders
@@ -102,13 +103,27 @@ class NotificationService {
   }
 
   /// Persist one push preference. [key] is one of the [_prefColumns] keys.
-  static Future<void> setPref(String key, bool value) async {
+  /// Returns null on success, else an error string.
+  ///
+  /// This used to swallow every failure, which hid a real one for six weeks:
+  /// `authenticated` had no UPDATE grant on the notify_* columns, so every
+  /// write was refused and players could not turn push off. A preference that
+  /// silently fails to save is worse than one that reports it — the caller
+  /// reverts the toggle on a non-null return.
+  static Future<String?> setPref(String key, bool value) async {
     final uid = _db.auth.currentUser?.id;
     final col = _prefColumns[key];
-    if (uid == null || col == null) return;
+    if (uid == null || col == null) return 'Not signed in.';
     try {
       await _db.from('profiles').update({col: value}).eq('id', uid);
-    } catch (_) {}
+      return null;
+    } on PostgrestException catch (e) {
+      debugPrint('[NotificationService] setPref($col): ${e.message}');
+      return e.message;
+    } catch (e) {
+      debugPrint('[NotificationService] setPref($col): $e');
+      return e.toString();
+    }
   }
 
   /// Clears the unread 'message' notification(s) for one conversation — called
