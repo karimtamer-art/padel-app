@@ -11,7 +11,7 @@ const String kAppVersion = '1.3.0';
 /// This must only ever go UP — Play rejects a versionCode it has already seen,
 /// and the App Store rejects a duplicate build for a version. Never reset it
 /// to 1 when bumping the version name.
-const String kAppBuild = '9';
+const String kAppBuild = '10';
 
-/// "1.3.0 (9)" — version with its build, for support and bug reports.
+/// "1.3.0 (10)" — version with its build, for support and bug reports.
 String get appVersionLong => '$kAppVersion ($kAppBuild)';

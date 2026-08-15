@@ -41,6 +41,13 @@ class AvatarCropSheet extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       isDismissible: false,
+      // The sheet's own drag-to-dismiss competes with dragging the PHOTO, and
+      // wins: swiping up or down inside the circle pulled the whole sheet
+      // instead of moving the picture. (Horizontal drags were unaffected,
+      // which is what made it look like the crop was half-broken rather than
+      // being taken by the parent.) Nothing is lost by turning it off — the
+      // sheet is already isDismissible: false and has an explicit Cancel.
+      enableDrag: false,
       backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
