@@ -307,22 +307,22 @@ begin
         u.email,
         u.last_sign_in_at,
         p.created_at                                          as joined,
-        coalesce(p.rating, p.level, 0)::numeric               as rating,
-        coalesce(p.level, p.rating, 0)::numeric               as level,
-        p.sigma::numeric                                      as sigma,
-        p.reliability::numeric                                as reliability,
+        coalesce((select rating from public.player_ratings where player_id = p.id), (select level from public.player_ratings where player_id = p.id), 0)::numeric               as rating,
+        coalesce((select level from public.player_ratings where player_id = p.id), (select rating from public.player_ratings where player_id = p.id), 0)::numeric               as level,
+        (select sigma from public.player_ratings where player_id = p.id)::numeric                                      as sigma,
+        (select reliability from public.player_ratings where player_id = p.id)::numeric                                as reliability,
         -- fallback only fires on a DB without the generated column; the
         -- threshold matches it (V3-F5 confidence gate, 2026-08-13)
-        coalesce(p.is_provisional,
-                 coalesce(p.competitive_matches, 0) < 20)     as is_provisional,
-        coalesce(p.competitive_matches, 0)                    as competitive_matches,
-        coalesce(p.placement_played, 0)                       as placement_played,
-        coalesce(p.is_anchor, false)                          as is_anchor,
+        coalesce((select is_provisional from public.player_ratings where player_id = p.id),
+                 coalesce((select competitive_matches from public.player_ratings where player_id = p.id), 0) < 20)     as is_provisional,
+        coalesce((select competitive_matches from public.player_ratings where player_id = p.id), 0)                    as competitive_matches,
+        coalesce((select placement_played from public.player_ratings where player_id = p.id), 0)                       as placement_played,
+        coalesce((select is_anchor from public.player_ratings where player_id = p.id), false)                          as is_anchor,
         coalesce(p.status, 'active')                          as status,
         coalesce(agg.played, 0)                               as played,
         coalesce(agg.wins, 0)                                 as wins,
         coalesce(agg.played, 0) - coalesce(agg.wins, 0)       as losses,
-        rank() over (order by coalesce(p.rating, p.level, 0) desc) as rank
+        rank() over (order by coalesce((select rating from public.player_ratings where player_id = p.id), (select level from public.player_ratings where player_id = p.id), 0) desc) as rank
       from public.profiles p
       left join auth.users u on u.id = p.id
       left join lateral (
@@ -810,9 +810,10 @@ begin
     'courts',      (select count(*) from public.courts),
     'tournaments', (select count(*) from public.tournaments),
     'divisions',   (select coalesce(json_object_agg(tier, c), '{}'::json) from (
-                      select coalesce(tier, 'bronze') as tier, count(*) as c
-                        from public.profiles
-                       where coalesce(is_admin, false) = false
+                      select coalesce(r.tier, 'bronze') as tier, count(*) as c
+                        from public.profiles p
+                        join public.player_ratings r on r.player_id = p.id
+                       where coalesce(p.is_admin, false) = false
                        group by 1) t),
     -- Store money. The app takes cash on delivery and InstaPay transfers, so
     -- this is real revenue today — it never depended on a payment gateway.
@@ -1240,7 +1241,7 @@ begin
   -- (player_id NULL) are kept — they seed at level 0, drawn but unrated.
   select array_agg(id order by lvl desc) into v_entries from (
     select te.id,
-           ( coalesce(p1.level, 0) + coalesce(p2.level, p1.level, 0) ) / 2.0 as lvl
+           ( coalesce((select level from public.player_ratings where player_id = p1.id), 0) + coalesce((select level from public.player_ratings where player_id = p2.id), (select level from public.player_ratings where player_id = p1.id), 0) ) / 2.0 as lvl
       from tournament_entries te
       left join profiles p1 on p1.id = te.player_id
       left join profiles p2 on p2.id = te.partner_id
@@ -1654,7 +1655,7 @@ begin
     -- profiles.rating is NULL until placement completes, and treating that as
     -- 0.0 would silently bar every new player from every levelled event.
     select coalesce(rating, public.rating_prior()) into v_my_rating
-      from public.profiles where id = v_uid;
+      from public.player_ratings where player_id = v_uid;
     if v_min > 0 and v_my_rating < v_min then
       return 'This event has a minimum level you haven''t reached yet.';
     end if;
@@ -2245,8 +2246,7 @@ begin
   begin
     insert into public.profiles
       (id, name, username, avatar_url, phone, bio,
-       date_of_birth, gender, preferred_hand, preferred_court_side,
-       level, tier, placement_played)
+       date_of_birth, gender, preferred_hand, preferred_court_side)
     values
       (new.id, v_name, v_username,
        new.raw_user_meta_data->>'avatar_url',
@@ -2254,12 +2254,11 @@ begin
        nullif(new.raw_user_meta_data->>'bio', ''),
        v_dob, v_gender,
        coalesce(v_hand, 'right'),
-       coalesce(v_side, 'both'),
-       -- Start UNRANKED: no seeded level/tier. rating stays NULL, sigma keeps
-       -- its default (0.95, the V3-F5 prior's uncertainty). The player earns a
-       -- rating over 5 placement matches (or an admin sets it).
-       -- placement_played 0 = in placement.
-       null, null, 0)
+       coalesce(v_side, 'both'))
+    -- Ranking state is NOT set here. trg_player_ratings_row creates the
+    -- player_ratings row from its defaults: rating NULL (unranked), sigma
+    -- 0.95 (the V3-F5 prior's uncertainty), placement_played 0. The player
+    -- earns a rating over 5 placement matches, or an admin sets one.
     on conflict (id) do nothing;
   exception when others then
     raise warning 'handle_new_user: % — inserting minimal profile for %', sqlerrm, new.id;
@@ -2550,7 +2549,7 @@ returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if new.mm_center_rating is null and new.created_by is not null then
     select coalesce(rating, level, 2.0) into new.mm_center_rating
-      from public.profiles where id = new.created_by;
+      from public.player_ratings where player_id = new.created_by;
   end if;
   return new;
 end $$;
@@ -2561,7 +2560,8 @@ create trigger trg_mm_center_rating before insert on public.matches
 
 update public.matches m
    set mm_center_rating = coalesce(
-         (select coalesce(p.rating, p.level, 2.0) from public.profiles p where p.id = m.created_by),
+         (select coalesce(r.rating, r.level, 2.0)
+            from public.player_ratings r where r.player_id = m.created_by),
          2.0)
  where m.mm_center_rating is null
    and m.created_by is not null;
@@ -2694,7 +2694,7 @@ begin
 
   -- Qualify with the table alias: the RETURNS TABLE column `city` shadows an
   -- unqualified `city` here (42702 ambiguous reference otherwise).
-  select coalesce(p.rating, p.level, 2.0)::numeric, p.city, (coalesce(p.placement_played, 0) < 5)
+  select coalesce((select rating from public.player_ratings where player_id = p.id), (select level from public.player_ratings where player_id = p.id), 2.0)::numeric, p.city, (coalesce((select placement_played from public.player_ratings where player_id = p.id), 0) < 5)
     into v_rating, v_city, v_placement
     from public.profiles p where p.id = v_uid;
 
@@ -2707,10 +2707,10 @@ begin
   select m.id, m.scheduled_at, m.match_type,
          c.name, c.venue_name, coalesce(c.city, cp.city),
          m.created_by, cp.name,
-         coalesce(cp.rating, cp.level, 2.0)::numeric, coalesce(cp.level, cp.rating, 2.0)::numeric,
+         coalesce((select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0)::numeric, coalesce((select level from public.player_ratings where player_id = cp.id), (select rating from public.player_ratings where player_id = cp.id), 2.0)::numeric,
          (select count(*)::int from public.match_players mp where mp.match_id = m.id),
-         coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)::numeric,
-         greatest(0, round((1 - abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) / 3.5) * 100))::int
+         coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0)::numeric,
+         greatest(0, round((1 - abs(v_rating - coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0)) / 3.5) * 100))::int
     from public.matches m
     join public.profiles cp on cp.id = m.created_by
     left join public.courts c on c.id = m.court_id
@@ -2734,14 +2734,14 @@ begin
      and (
        m.match_type = 'casual'
        or case when v_placement
-         then coalesce(cp.placement_played, 0) < 5
-         else coalesce(cp.placement_played, 0) >= 5
-              and abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0))
+         then coalesce((select placement_played from public.player_ratings where player_id = cp.id), 0) < 5
+         else coalesce((select placement_played from public.player_ratings where player_id = cp.id), 0) >= 5
+              and abs(v_rating - coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0))
                   <= public.mm_band_halfwidth(extract(epoch from (now() - m.created_at)) / 60.0)
        end
      )
      and (v_city is null or coalesce(c.city, cp.city) is null or coalesce(c.city, cp.city) = v_city)
-   order by abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) asc,
+   order by abs(v_rating - coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0)) asc,
             m.scheduled_at asc
    limit p_limit;
 end $$;
@@ -2820,9 +2820,9 @@ begin
   end if;
 
   select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
-    into v_my_rating, v_my_plac from profiles where id = v_uid;
+    into v_my_rating, v_my_plac from player_ratings where player_id = v_uid;
   select (coalesce(placement_played, 0) < 5) into v_cr_plac
-    from profiles where id = v_created_by;
+    from player_ratings where player_id = v_created_by;
 
   if v_my_plac or v_cr_plac then
     if not (v_my_plac and v_cr_plac) then
@@ -2837,7 +2837,7 @@ begin
     -- a very different rating can't be dragged in to skew the settled average.
     if p_partner_id is not null then
       select coalesce(rating, level, 2.0) into v_partner_rating
-        from profiles where id = p_partner_id;
+        from player_ratings where player_id = p_partner_id;
       if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
         return 'Your partner is outside this match''s rating band.';
       end if;
@@ -2965,7 +2965,7 @@ declare
   v_court uuid; v_ccity text; v_courtcity text; v_cplac boolean; v_count int;
   v_type text;
 begin
-  select coalesce(p.rating, p.level, 2.0), p.city, (coalesce(p.placement_played, 0) < 5)
+  select coalesce((select rating from public.player_ratings where player_id = p.id), (select level from public.player_ratings where player_id = p.id), 2.0), p.city, (coalesce((select placement_played from public.player_ratings where player_id = p.id), 0) < 5)
     into v_rating, v_city, v_plac from public.profiles p where p.id = p_player;
   if not found then return false; end if;
 
@@ -2985,8 +2985,10 @@ begin
     return false;
   end if;
 
-  select (coalesce(placement_played, 0) < 5), city into v_cplac, v_ccity
-    from public.profiles where id = v_cby;
+  select (coalesce(pr.placement_played, 0) < 5), p.city into v_cplac, v_ccity
+    from public.profiles p
+    join public.player_ratings pr on pr.player_id = p.id
+   where p.id = v_cby;
   select city into v_courtcity from public.courts where id = v_court;
 
   -- Casual is unrated: no band, no placement/placed split (see mm_candidates).
@@ -3450,8 +3452,8 @@ begin
   where p.is_admin = false
     and case coalesce(new.segment, 'all')
           when 'all'      then true
-          when 'ranked'   then coalesce(p.placement_played, 0) >= 5
-          when 'unranked' then coalesce(p.placement_played, 0) < 5
+          when 'ranked'   then coalesce((select placement_played from public.player_ratings where player_id = p.id), 0) >= 5
+          when 'unranked' then coalesce((select placement_played from public.player_ratings where player_id = p.id), 0) < 5
           when 'specific' then p.id = any(coalesce(new.player_ids, '{}'::uuid[]))
           else true
         end;
@@ -4020,11 +4022,14 @@ returns int
 language plpgsql security definer set search_path = public as $$
 declare v_count int := 0;
 begin
-  update public.profiles p
-     set sigma = greatest(p.sigma, least(0.60, p.sigma + 0.01))
-  where coalesce(p.is_admin, false) = false and p.sigma < 0.60
-    and (p.last_competitive_match_at is null
-         or p.last_competitive_match_at < now() - interval '14 days');
+  update public.player_ratings r
+     set sigma = greatest(r.sigma, least(0.60, r.sigma + 0.01)),
+         updated_at = now()
+  where r.sigma < 0.60
+    and (r.last_competitive_match_at is null
+         or r.last_competitive_match_at < now() - interval '14 days')
+    and not exists (select 1 from public.profiles p
+                     where p.id = r.player_id and coalesce(p.is_admin, false));
   get diagnostics v_count = row_count;
   return v_count;
 end $$;
@@ -4200,7 +4205,7 @@ begin
   return query
     select p.id, p.name, u.email::text, p.username,
            p.admin_role, p.admin_access, p.admin_scope,
-           coalesce(p.is_owner, false), p.avatar_url, p.level::numeric
+           coalesce(p.is_owner, false), p.avatar_url, (select level from public.player_ratings where player_id = p.id)::numeric
       from public.profiles p
       join auth.users u on u.id = p.id
      where p.admin_role is not null
@@ -4215,7 +4220,7 @@ begin
   if not public._has_access('team') then return; end if;
   if length(btrim(coalesce(p_term, ''))) < 2 then return; end if;
   return query
-    select p.id, p.name, u.email::text, p.level::numeric, p.avatar_url
+    select p.id, p.name, u.email::text, (select level from public.player_ratings where player_id = p.id)::numeric, p.avatar_url
       from public.profiles p
       join auth.users u on u.id = p.id
      where p.admin_role is null
@@ -5357,15 +5362,15 @@ begin
     'tier_bronze', (
       select count(*) from public.community_members cmb
        join public.profiles p on p.id = cmb.player_id
-       where cmb.community_id = v_cid and coalesce(p.level, 0) < 3.5),
+       where cmb.community_id = v_cid and coalesce((select level from public.player_ratings where player_id = p.id), 0) < 3.5),
     'tier_gold', (
       select count(*) from public.community_members cmb
        join public.profiles p on p.id = cmb.player_id
-       where cmb.community_id = v_cid and coalesce(p.level, 0) >= 3.5 and coalesce(p.level, 0) < 5.0),
+       where cmb.community_id = v_cid and coalesce((select level from public.player_ratings where player_id = p.id), 0) >= 3.5 and coalesce((select level from public.player_ratings where player_id = p.id), 0) < 5.0),
     'tier_elite', (
       select count(*) from public.community_members cmb
        join public.profiles p on p.id = cmb.player_id
-       where cmb.community_id = v_cid and coalesce(p.level, 0) >= 5.0)
+       where cmb.community_id = v_cid and coalesce((select level from public.player_ratings where player_id = p.id), 0) >= 5.0)
   ) into v_res;
   return v_res;
 end $$;
@@ -5405,7 +5410,7 @@ begin
 
   select rnk into v_rank from (
     select cm.player_id,
-           row_number() over (order by coalesce(pr.rating, pr.level, 0) desc) rnk
+           row_number() over (order by coalesce((select rating from public.player_ratings where player_id = pr.id), (select level from public.player_ratings where player_id = pr.id), 0) desc) rnk
       from public.community_members cm
       join public.profiles pr on pr.id = cm.player_id
      where cm.community_id = p_community_id
@@ -5415,8 +5420,8 @@ begin
    where community_id = p_community_id and player_id = p_player_id;
 
   select jsonb_build_object(
-    'id', p.id, 'name', p.name, 'avatar_url', p.avatar_url, 'tier', p.tier,
-    'level', p.level, 'city', p.city,
+    'id', p.id, 'name', p.name, 'avatar_url', p.avatar_url, 'tier', (select tier from public.player_ratings where player_id = p.id),
+    'level', (select level from public.player_ratings where player_id = p.id), 'city', p.city,
     'hand', p.preferred_hand, 'side', p.preferred_court_side,
     'joined', v_joined, 'played', coalesce(v_played, 0),
     'wins', coalesce(v_wins, 0), 'rank', v_rank)
@@ -5655,7 +5660,7 @@ begin
   select array_agg(id order by (case when p_random then random() else lvl end) desc)
     into v_entries from (
     select te.id,
-           ((coalesce(p1.level, 0) + coalesce(p2.level, p1.level, 0)) / 2.0)::float8 as lvl
+           ((coalesce((select level from public.player_ratings where player_id = p1.id), 0) + coalesce((select level from public.player_ratings where player_id = p2.id), (select level from public.player_ratings where player_id = p1.id), 0)) / 2.0)::float8 as lvl
       from public.tournament_entries te
       left join public.profiles p1 on p1.id = te.player_id
       left join public.profiles p2 on p2.id = te.partner_id
@@ -6073,7 +6078,7 @@ begin
     p.username,
     p.avatar_url,
     mp.team,
-    p.level,
+    (select level from public.player_ratings where player_id = p.id),
     (m.created_by = p.id),
     (p.id = auth.uid()),
     case when v_open then p.phone else null end
@@ -6431,8 +6436,8 @@ begin
          coalesce((select pts from public.season_rules where season_id = v_sid and code = 'upset'), 0)
     into v_win, v_loss, v_streak, v_upset;
 
-  select avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'a'),
-         avg(coalesce(p.rating, 2.0)) filter (where mp.team = 'b')
+  select avg(coalesce((select rating from public.player_ratings where player_id = p.id), 2.0)) filter (where mp.team = 'a'),
+         avg(coalesce((select rating from public.player_ratings where player_id = p.id), 2.0)) filter (where mp.team = 'b')
     into v_avg_a, v_avg_b
     from public.match_players mp join public.profiles p on p.id = mp.player_id
    where mp.match_id = p_match_id;
@@ -6654,7 +6659,7 @@ language sql stable security definer set search_path = public as $$
   ranked as (
     select row_number() over (order by a.pts desc, p.name nulls last, a.player_id)::int as rank,
            a.player_id, coalesce(p.name, 'Player') as name, p.avatar_url,
-           coalesce(p.tier, 'bronze') as tier, a.pts, a.played
+           coalesce((select tier from public.player_ratings where player_id = p.id), 'bronze') as tier, a.pts, a.played
       from agg a join public.profiles p on p.id = a.player_id
   ),
   base as (
@@ -7029,9 +7034,9 @@ begin
   end if;
 
   select p.name, p.username, p.avatar_url, p.city, p.phone,
-         coalesce(p.rating, p.level, 0), coalesce(p.tier, 'bronze'),
-         coalesce(p.sigma, 0.85), coalesce(p.competitive_matches, 0),
-         coalesce(p.is_anchor, false), coalesce(p.status, 'active'), p.created_at
+         coalesce((select rating from public.player_ratings where player_id = p.id), (select level from public.player_ratings where player_id = p.id), 0), coalesce((select tier from public.player_ratings where player_id = p.id), 'bronze'),
+         coalesce((select sigma from public.player_ratings where player_id = p.id), 0.85), coalesce((select competitive_matches from public.player_ratings where player_id = p.id), 0),
+         coalesce((select is_anchor from public.player_ratings where player_id = p.id), false), coalesce(p.status, 'active'), p.created_at
     into v_name, v_username, v_avatar, v_city, v_phone,
          v_rating, v_tier, v_sigma, v_cm, v_anchor, v_status, v_joined
     from public.profiles p where p.id = p_player_id;
@@ -7195,7 +7200,7 @@ begin
     select p.id,
            coalesce(p.name, 'Player'),
            p.avatar_url,
-           coalesce(p.tier, 'bronze'),
+           coalesce((select tier from public.player_ratings where player_id = p.id), 'bronze'),
            coalesce(st.pts, 0)::int,
            st.rank,
            (st.player_id is not null)
@@ -9059,9 +9064,9 @@ begin
   end if;
 
   select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
-    into v_my_rating, v_my_plac from profiles where id = v_uid;
+    into v_my_rating, v_my_plac from player_ratings where player_id = v_uid;
   select (coalesce(placement_played, 0) < 5) into v_cr_plac
-    from profiles where id = v_created_by;
+    from player_ratings where player_id = v_created_by;
 
   if v_my_plac or v_cr_plac then
     if not (v_my_plac and v_cr_plac) then
@@ -9074,7 +9079,7 @@ begin
     end if;
     if p_partner_id is not null then
       select coalesce(rating, level, 2.0) into v_partner_rating
-        from profiles where id = p_partner_id;
+        from player_ratings where player_id = p_partner_id;
       if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
         return 'Your partner is outside this match''s rating band.';
       end if;
@@ -9509,7 +9514,7 @@ begin
     p.username,
     p.avatar_url,
     mp.team,
-    p.level,
+    (select level from public.player_ratings where player_id = p.id),
     (m.created_by = p.id),
     (p.id = v_uid),
     -- A closed ticket hides numbers again, exactly as before; a swap that
@@ -9881,7 +9886,7 @@ begin
   -- which is what settlement assumes about them too. Reading a stale ELO here
   -- made every player evaluate as level 1.0 regardless of actual skill.
   select coalesce(rating, public.rating_prior()) into v_my_rating
-    from profiles where id = v_uid;
+    from player_ratings where player_id = v_uid;
   if v_my_rating < v_min_rating then
     return 'This match needs level ' || trim(to_char(v_min_rating, 'FM9.99')) || '+.';
   end if;
@@ -9896,7 +9901,7 @@ begin
       return 'That partner is already in this match.';
     end if;
     select coalesce(rating, public.rating_prior()) into v_partner_rating
-      from profiles where id = p_partner_id;
+      from player_ratings where player_id = p_partner_id;
     if not found then return 'Partner not found.'; end if;
     if v_partner_rating < v_min_rating then
       return 'Your partner needs level '
@@ -10067,9 +10072,9 @@ begin
   end if;
 
   select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
-    into v_my_rating, v_my_plac from profiles where id = v_uid;
+    into v_my_rating, v_my_plac from player_ratings where player_id = v_uid;
   select (coalesce(placement_played, 0) < 5) into v_cr_plac
-    from profiles where id = v_created_by;
+    from player_ratings where player_id = v_created_by;
 
   if v_my_plac or v_cr_plac then
     if not (v_my_plac and v_cr_plac) then
@@ -10082,7 +10087,7 @@ begin
     end if;
     if p_partner_id is not null then
       select coalesce(rating, level, 2.0) into v_partner_rating
-        from profiles where id = p_partner_id;
+        from player_ratings where player_id = p_partner_id;
       if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
         return 'Your partner is outside this match''s rating band.';
       end if;
@@ -10144,7 +10149,7 @@ returns table (
 declare
   v_rating numeric; v_city text; v_plac boolean; v_window numeric; v_uid uuid := auth.uid();
 begin
-  select coalesce(p.rating, p.level, 2.0), p.city, (coalesce(p.placement_played, 0) < 5)
+  select coalesce((select rating from public.player_ratings where player_id = p.id), (select level from public.player_ratings where player_id = p.id), 2.0), p.city, (coalesce((select placement_played from public.player_ratings where player_id = p.id), 0) < 5)
     into v_rating, v_city, v_plac from public.profiles p where p.id = v_uid;
   v_window := coalesce((select value::numeric from public.app_settings
                          where key = 'mm_time_window_hours'), 12);
@@ -10152,10 +10157,10 @@ begin
   return query
   select m.id, m.scheduled_at, m.match_type,
          c.name, c.venue_name, coalesce(c.city, cp.city),
-         cp.id, cp.name, cp.rating, cp.level,
+         cp.id, cp.name, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id),
          (select count(*)::int from public.match_players mp where mp.match_id = m.id),
-         coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0),
-         greatest(0, 100 - round(abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) * 40))::int
+         coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0),
+         greatest(0, 100 - round(abs(v_rating - coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0)) * 40))::int
     from public.matches m
     join public.profiles cp on cp.id = m.created_by
     left join public.courts c on c.id = m.court_id
@@ -10176,14 +10181,14 @@ begin
      and (
        m.match_type = 'casual'
        or case when v_plac
-         then coalesce(cp.placement_played, 0) < 5
-         else coalesce(cp.placement_played, 0) >= 5
-              and abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0))
+         then coalesce((select placement_played from public.player_ratings where player_id = cp.id), 0) < 5
+         else coalesce((select placement_played from public.player_ratings where player_id = cp.id), 0) >= 5
+              and abs(v_rating - coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0))
                   <= public.mm_band_halfwidth(extract(epoch from (now() - m.created_at)) / 60.0)
        end
      )
      and (v_city is null or coalesce(c.city, cp.city) is null or coalesce(c.city, cp.city) = v_city)
-   order by abs(v_rating - coalesce(m.mm_center_rating, cp.rating, cp.level, 2.0)) asc,
+   order by abs(v_rating - coalesce(m.mm_center_rating, (select rating from public.player_ratings where player_id = cp.id), (select level from public.player_ratings where player_id = cp.id), 2.0)) asc,
             m.scheduled_at asc
    limit p_limit;
 end $$;
@@ -10202,7 +10207,7 @@ declare
   v_court uuid; v_ccity text; v_courtcity text; v_cplac boolean; v_count int;
   v_type text; v_private boolean;
 begin
-  select coalesce(p.rating, p.level, 2.0), p.city, (coalesce(p.placement_played, 0) < 5)
+  select coalesce((select rating from public.player_ratings where player_id = p.id), (select level from public.player_ratings where player_id = p.id), 2.0), p.city, (coalesce((select placement_played from public.player_ratings where player_id = p.id), 0) < 5)
     into v_rating, v_city, v_plac from public.profiles p where p.id = p_player;
   if not found then return false; end if;
 
@@ -10223,8 +10228,10 @@ begin
     return false;
   end if;
 
-  select (coalesce(placement_played, 0) < 5), city into v_cplac, v_ccity
-    from public.profiles where id = v_cby;
+  select (coalesce(pr.placement_played, 0) < 5), p.city into v_cplac, v_ccity
+    from public.profiles p
+    join public.player_ratings pr on pr.player_id = p.id
+   where p.id = v_cby;
   select city into v_courtcity from public.courts where id = v_court;
 
   -- Casual is unrated: no band, no placement/placed split (see mm_candidates).
@@ -10339,7 +10346,7 @@ begin
       end if;
       if p_partner_id is not null then
         select coalesce(rating, level, 2.0) into v_partner_rating
-          from profiles where id = p_partner_id;
+          from player_ratings where player_id = p_partner_id;
         if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
           return 'Your partner is outside this match''s rating band.';
         end if;
@@ -10649,12 +10656,12 @@ begin
   -- Team strength is the plain average of the pair. lambda (team imbalance) is
   -- 0 and stays 0 until it can be fitted on real match history: 5.0 + 2.0 and
   -- 3.5 + 3.5 are the same team to this engine, knowingly.
-  select avg(coalesce(p.rating, c_prior))  filter (where mp.team = 'a'),
-         avg(coalesce(p.rating, c_prior))  filter (where mp.team = 'b'),
-         avg(coalesce(p.sigma,  c_sigma0)) filter (where mp.team = 'a'),
-         avg(coalesce(p.sigma,  c_sigma0)) filter (where mp.team = 'b')
+  select avg(coalesce(pr.rating, c_prior))  filter (where mp.team = 'a'),
+         avg(coalesce(pr.rating, c_prior))  filter (where mp.team = 'b'),
+         avg(coalesce(pr.sigma,  c_sigma0)) filter (where mp.team = 'a'),
+         avg(coalesce(pr.sigma,  c_sigma0)) filter (where mp.team = 'b')
     into v_avg_a, v_avg_b, v_sig_a, v_sig_b
-    from match_players mp join profiles p on p.id = mp.player_id
+    from match_players mp join player_ratings pr on pr.player_id = mp.player_id
    where mp.match_id = p_match_id;
   v_avg_a := coalesce(v_avg_a, c_prior);  v_avg_b := coalesce(v_avg_b, c_prior);
   v_sig_a := coalesce(v_sig_a, c_sigma0); v_sig_b := coalesce(v_sig_b, c_sigma0);
@@ -10682,11 +10689,12 @@ begin
 
   for r in
     select mp.player_id, mp.team,
-           coalesce(p.rating, c_prior)  as rating,
-           coalesce(p.sigma,  c_sigma0) as sigma,
-           coalesce(p.competitive_matches, 0) as cm,
-           coalesce(p.is_anchor, false) as anchor
-      from match_players mp join profiles p on p.id = mp.player_id
+           coalesce(r0.rating, c_prior)  as rating,
+           coalesce(r0.sigma,  c_sigma0) as sigma,
+           coalesce(r0.competitive_matches, 0) as cm,
+           coalesce(r0.is_anchor, false) as anchor
+      from match_players mp
+      join player_ratings r0 on r0.player_id = mp.player_id
      where mp.match_id = p_match_id
   loop
     if r.team = 'a' then v_s := v_s_a; v_e := v_e_a; v_w := v_raw_w_a;
@@ -10734,7 +10742,9 @@ begin
     end if;
     v_sig_after := round(greatest(c_sig_min, least(c_sig_max, r.sigma * v_decay)), c_dp);
 
-    update profiles set
+    -- player_ratings is the engine's table; a trigger mirrors it back onto
+    -- profiles for the readers not yet migrated (phase 1 of the split).
+    update player_ratings set
       rating = v_after,
       -- level is the 2dp DISPLAY mirror of rating; it is never read back into
       -- the math, so display rounding cannot feed the engine.
@@ -10744,8 +10754,9 @@ begin
       competitive_matches = r.cm + 1,
       -- the placement counter, and with it the public reveal, at match 5
       placement_played = least(coalesce(placement_played, 0) + 1, c_placement),
-      last_competitive_match_at = now()
-    where id = r.player_id;
+      last_competitive_match_at = now(),
+      updated_at = now()
+    where player_id = r.player_id;
 
     insert into ranking_history
       (profile_id, match_id, level_before, level_after,
@@ -10884,11 +10895,14 @@ returns int
 language plpgsql security definer set search_path = public as $$
 declare v_count int := 0;
 begin
-  update public.profiles p
-     set sigma = greatest(p.sigma, least(0.60, p.sigma + 0.01))
-  where coalesce(p.is_admin, false) = false and p.sigma < 0.60
-    and (p.last_competitive_match_at is null
-         or p.last_competitive_match_at < now() - interval '14 days');
+  update public.player_ratings r
+     set sigma = greatest(r.sigma, least(0.60, r.sigma + 0.01)),
+         updated_at = now()
+  where r.sigma < 0.60
+    and (r.last_competitive_match_at is null
+         or r.last_competitive_match_at < now() - interval '14 days')
+    and not exists (select 1 from public.profiles p
+                     where p.id = r.player_id and coalesce(p.is_admin, false));
   get diagnostics v_count = row_count;
   -- returns players whose uncertainty was widened (it used to return players
   -- whose rating was cut, which is now always zero by construction)
@@ -10925,15 +10939,16 @@ begin
   v_sigma  := round(greatest(0.12, least(1.0, p_sigma)), 6);
   select coalesce(rating, coalesce(level, 0)), coalesce(sigma, 0.95), coalesce(is_anchor, false)
     into v_old_rating, v_old_sigma, v_old_anchor
-    from public.profiles where id = p_player_id;
+    from public.player_ratings where player_id = p_player_id;
   if not found then return 'Player not found.'; end if;
-  update public.profiles set
+  update public.player_ratings set
     rating = v_rating, level = round(v_rating, 2),
     tier = public.tier_from_level(v_rating),
     sigma = v_sigma, is_anchor = coalesce(p_is_anchor, false),
     competitive_matches = greatest(coalesce(competitive_matches, 0), 20),
-    placement_played = greatest(coalesce(placement_played, 0), 5)
-  where id = p_player_id;
+    placement_played = greatest(coalesce(placement_played, 0), 5),
+    updated_at = now()
+  where player_id = p_player_id;
   insert into public.ranking_history
     (profile_id, match_id, level_before, level_after,
      rating_before, rating_after, sigma_before, sigma_after, delta, engine_version)
@@ -11364,9 +11379,9 @@ grant update (notify_push, notify_match, notify_tournament, notify_order)
 create or replace function public.mark_placement_revealed()
 returns void
 language sql security definer set search_path = public as $$
-  update public.profiles
-     set placement_revealed = true
-   where id = auth.uid() and coalesce(placement_revealed, false) = false;
+  update public.player_ratings
+     set placement_revealed = true, updated_at = now()
+   where player_id = auth.uid() and coalesce(placement_revealed, false) = false;
 $$;
 grant execute on function public.mark_placement_revealed() to authenticated;
 
@@ -11406,6 +11421,212 @@ begin
     raise exception 'a client can write ranking/privilege column(s): %', v_missing
       using hint = 'Rating changes happen only in Postgres. Revoke these.';
   end if;
+end $$;
+
+-- ── player_ratings (2026-08-15) ───────────────────────────
+-- Standalone delta: supabase/changes/2026-08-15_player_ratings_p1.sql
+-- The ranking columns now live ONLY here. profiles has none of them.
+
+-- ---------------------------------------------------------------------------
+-- 1. The table. Same types, same defaults, same generated expressions as the
+--    profiles columns it replaces, so the backfill is a straight copy.
+-- ---------------------------------------------------------------------------
+create table if not exists public.player_ratings (
+  player_id uuid primary key references public.profiles(id) on delete cascade,
+
+  -- ── engine state (V3-F5) ──
+  -- Full internal precision; the engine does no rounding of its own.
+  rating      numeric(9,6),
+  sigma       numeric not null default 0.95,
+  is_anchor   boolean not null default false,
+  competitive_matches int not null default 0,
+  last_competitive_match_at timestamptz,
+
+  -- ── display mirrors of rating, never read back into the math ──
+  level       numeric,
+  tier        text,
+
+  -- ── placement / reveal ──
+  placement_played   int     not null default 0,
+  placement_revealed boolean not null default false,
+
+  updated_at timestamptz not null default now()
+);
+
+do $$ begin
+  alter table public.player_ratings
+    add constraint player_ratings_sigma_range check (sigma >= 0.12 and sigma <= 1.0);
+exception when duplicate_object then null; end $$;
+
+alter table public.player_ratings
+  add column if not exists reliability numeric
+    generated always as (round((1 - sigma / 1.0) * 100, 0)) stored;
+alter table public.player_ratings
+  add column if not exists is_provisional boolean
+    generated always as (sigma > 0.58 or competitive_matches < 20) stored;
+
+comment on table public.player_ratings is
+  'V3-F5 engine state, one row per player. Server-written only: no column '
+  'grants to authenticated exist, so the anti-cheat boundary is structural '
+  'rather than a rule someone has to remember. The equivalent profiles '
+  'columns were dropped in the same change; there is no mirror.';
+
+create index if not exists player_ratings_rating_idx
+  on public.player_ratings (rating desc nulls last);
+
+-- ---------------------------------------------------------------------------
+-- 2. Backfill. Every profile gets a row, so readers never need to care about
+--    a missing one.
+-- ---------------------------------------------------------------------------
+-- Guarded: section 5 drops the source columns, so on any RE-RUN this copy
+-- must not be attempted. The second branch still gives every profile a row.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='profiles'
+                and column_name='rating') then
+    execute $q$
+      insert into public.player_ratings (
+        player_id, rating, sigma, is_anchor, competitive_matches,
+        last_competitive_match_at, level, tier, placement_played,
+        placement_revealed)
+      select p.id, p.rating, coalesce(p.sigma, 0.95),
+             coalesce(p.is_anchor, false), coalesce(p.competitive_matches, 0),
+             p.last_competitive_match_at, p.level, p.tier,
+             coalesce(p.placement_played, 0), coalesce(p.placement_revealed, false)
+        from public.profiles p
+      on conflict (player_id) do nothing
+    $q$;
+  else
+    insert into public.player_ratings (player_id)
+    select p.id from public.profiles p
+    on conflict (player_id) do nothing;
+  end if;
+end $$;
+
+-- New signups get their row automatically, so handle_new_user does not have to
+-- remember (and neither does any future path that creates a profile).
+create or replace function public._player_ratings_row()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.player_ratings (player_id) values (new.id)
+  on conflict (player_id) do nothing;
+  return new;
+end $$;
+
+drop trigger if exists trg_player_ratings_row on public.profiles;
+create trigger trg_player_ratings_row
+  after insert on public.profiles
+  for each row execute function public._player_ratings_row();
+
+-- ---------------------------------------------------------------------------
+-- 3. RLS. Ratings are not secret — they are on every player card, lobby row
+--    and leaderboard — so any signed-in user may READ. Nobody may write:
+--    there is no insert/update/delete policy and no column grant, so the only
+--    writers are SECURITY DEFINER functions (the engine and the admin RPC).
+-- ---------------------------------------------------------------------------
+alter table public.player_ratings enable row level security;
+
+do $$ begin
+  create policy "player_ratings: read all" on public.player_ratings
+    for select using (auth.uid() is not null);
+exception when duplicate_object then null; end $$;
+
+grant select on public.player_ratings to authenticated;
+revoke insert, update, delete on public.player_ratings from authenticated, anon;
+
+-- ---------------------------------------------------------------------------
+-- 4. Every reader and writer now uses player_ratings. Before the old columns
+--    go, prove nothing still reaches for them.
+--
+--    This is the check that makes a one-shot move safe: ~22 functions were
+--    rewritten by hand against a database this environment cannot compile
+--    against, so the catalog gets the last word.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_bad text;
+begin
+  select string_agg(p.proname, ', ') into v_bad
+    from pg_proc p
+   where p.pronamespace = 'public'::regnamespace
+     and p.proname not in ('_player_ratings_row')
+     and p.prosrc ~ 'profiles'
+     and p.prosrc ~ '\m(rating|sigma|is_anchor|competitive_matches|placement_played|placement_revealed|last_competitive_match_at|is_provisional|reliability)\M'
+     and p.prosrc !~ 'player_ratings';
+  if v_bad is not null then
+    raise exception 'function(s) still read a ranking column off profiles: %', v_bad
+      using hint = 'Point them at player_ratings before dropping the columns.';
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 5. Drop the old columns. Views first, if anything grew on them.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_dep text;
+begin
+  select string_agg(distinct dep.relname, ', ') into v_dep
+    from pg_depend d
+    join pg_rewrite rw on rw.oid = d.objid
+    join pg_class dep  on dep.oid = rw.ev_class
+    join pg_class src  on src.oid = d.refobjid
+    join pg_attribute a on a.attrelid = d.refobjid and a.attnum = d.refobjsubid
+   where src.relname = 'profiles'
+     and a.attname in ('rating','sigma','level','tier','is_anchor',
+                       'competitive_matches','last_competitive_match_at',
+                       'placement_played','placement_revealed',
+                       'is_provisional','reliability')
+     and dep.relkind = 'v';
+  if v_dep is not null then
+    raise exception 'view(s) depend on the ranking columns: %', v_dep;
+  end if;
+end $$;
+
+alter table public.profiles drop column if exists is_provisional;
+alter table public.profiles drop column if exists reliability;
+alter table public.profiles drop column if exists rating;
+alter table public.profiles drop column if exists sigma;
+alter table public.profiles drop column if exists level;
+alter table public.profiles drop column if exists tier;
+alter table public.profiles drop column if exists is_anchor;
+alter table public.profiles drop column if exists competitive_matches;
+alter table public.profiles drop column if exists last_competitive_match_at;
+alter table public.profiles drop column if exists placement_played;
+alter table public.profiles drop column if exists placement_revealed;
+
+-- ---------------------------------------------------------------------------
+-- 6. Verify before anyone relies on it.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_p bigint; v_r bigint; v_bad bigint;
+begin
+  select count(*) into v_p from public.profiles;
+  select count(*) into v_r from public.player_ratings;
+  if v_p <> v_r then
+    raise exception 'player_ratings has % row(s) for % profile(s)', v_r, v_p
+      using hint = 'the backfill missed someone — investigate before phase 2';
+  end if;
+
+  select count(*) into v_bad
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'profiles'
+     and column_name in ('rating','sigma','level','tier','is_anchor',
+                         'competitive_matches','last_competitive_match_at',
+                         'placement_played','placement_revealed',
+                         'is_provisional','reliability');
+  if v_bad > 0 then
+    raise exception '% ranking column(s) still on profiles', v_bad;
+  end if;
+
+  -- the boundary this whole table exists to make structural
+  if exists (select 1 from information_schema.column_privileges
+              where table_schema='public' and table_name='player_ratings'
+                and grantee in ('authenticated','anon')
+                and privilege_type in ('UPDATE','INSERT','DELETE')) then
+    raise exception 'a client can write player_ratings — that is the anti-cheat boundary';
+  end if;
+
+  raise notice 'player_ratings: % row(s) backfilled and mirrored.', v_r;
 end $$;
 
 notify pgrst, 'reload schema';

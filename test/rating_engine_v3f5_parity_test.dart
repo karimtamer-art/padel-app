@@ -534,7 +534,7 @@ void main() {
       // must never contain that shape: sigma may rise on inactivity, not fall.
       final i = sql.lastIndexOf('function public.apply_rating_decay');
       final body = sql.substring(i, sql.indexOf('end \$\$;', i));
-      expect(body, contains('greatest(p.sigma'),
+      expect(body, contains('greatest(r.sigma'),
           reason: 'inactivity must be monotone in sigma');
       expect(body.contains('set sigma = least(0.60, sigma + 0.01)'), isFalse,
           reason: 'the sigma-lowering form must be gone');
@@ -561,6 +561,9 @@ void main() {
     });
 
     test('only match settlement and explicit admin action move a rating', () {
+      // Ranking state moved to player_ratings on 2026-08-15, so this now
+      // enumerates writers of THAT table. profiles no longer has the columns,
+      // which a separate assertion below pins.
       // Every function that writes profiles.rating, enumerated.
       //
       // The migration re-defines several functions as it goes (the file is
@@ -575,7 +578,7 @@ void main() {
 
       final writers = <String>{};
       lastDef.forEach((name, start) {
-        if (RegExp(r'update (?:public\.)?profiles\s+set[\s\S]{0,240}?rating\s*=')
+        if (RegExp(r'update (?:public\.)?player_ratings\b[\s\S]{0,300}?rating\s*=')
             .hasMatch(bodyAt(sql, start))) {
           writers.add(name);
         }
@@ -590,6 +593,25 @@ void main() {
             'public.admin_set_rating', // explicit admin action
           },
           reason: 'unexpected writer of profiles.rating: $writers');
+    });
+
+    test('the ranking columns are gone from profiles', () {
+      // The whole point of the split: profiles carries none of them, so there
+      // is no second copy to drift, and no column to forget to revoke.
+      for (final c in const [
+        'rating', 'sigma', 'level', 'tier', 'is_anchor', 'competitive_matches',
+        'last_competitive_match_at', 'placement_played', 'placement_revealed',
+        'is_provisional', 'reliability'
+      ]) {
+        expect(sql.contains('alter table public.profiles drop column if exists $c;'),
+            isTrue, reason: 'profiles.$c is not dropped by the migration');
+      }
+      // and nothing may write them back
+      expect(
+          RegExp(r'update (?:public\.)?profiles\s+set[\s\S]{0,200}?rating\s*=')
+              .hasMatch(sql),
+          isFalse,
+          reason: 'something still writes profiles.rating');
     });
 
     test('no definition of the inactivity sweep decays a rating, live or dead', () {

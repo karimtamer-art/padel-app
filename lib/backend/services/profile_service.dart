@@ -86,8 +86,11 @@ class ProfileService {
   static SupabaseClient get _db => Supabase.instance.client;
 
   static const _profileCols =
-      'id, name, username, phone, bio, date_of_birth, gender, preferred_hand, preferred_court_side, city, avatar_url, '
-      'rating, tier, level, placement_played, created_at';
+      'id, name, username, phone, bio, date_of_birth, gender, preferred_hand, '
+      'preferred_court_side, city, avatar_url, created_at, '
+      // ranking state moved to player_ratings (2026-08-15); flattenRatings
+      // folds it back up so callers keep reading row['rating'] etc.
+      'player_ratings(rating, tier, level, placement_played)';
 
   /// True when [username] is free (and validly formatted). Backed by the
   /// `username_available` RPC so it works pre-auth during signup. On a network
@@ -164,18 +167,19 @@ class ProfileService {
       // pre-migration databases that don't have those columns yet.
       dynamic profileRow;
       try {
-        profileRow = await _db
+        profileRow = flattenRatings(Map<String, dynamic>.from(await _db
             .from('profiles')
-            .select('rating, tier, level, placement_played, '
-                'reliability, is_provisional, placement_revealed, competitive_matches')
+            .select('player_ratings(rating, tier, level, placement_played, '
+                'reliability, is_provisional, placement_revealed, '
+                'competitive_matches)')
             .eq('id', userId)
-            .single();
+            .single() as Map));
       } catch (_) {
-        profileRow = await _db
+        profileRow = flattenRatings(Map<String, dynamic>.from(await _db
             .from('profiles')
-            .select('rating, tier, level, placement_played')
+            .select('player_ratings(rating, tier, level, placement_played)')
             .eq('id', userId)
-            .single();
+            .single() as Map));
       }
 
       // Try with creator profile join; fall back without it if FK hint missing.

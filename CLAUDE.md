@@ -47,6 +47,18 @@ before changing anything.
    - **Precision:** `profiles.rating` is `numeric(9,6)` and the engine does no
      rounding; `profiles.level` is the 2dp **display mirror** and is never read
      back into the math. Display rounds to 0.25 (`RankingScale.fmtQuarter`).
+   - **Ranking state lives in `player_ratings`, NOT on `profiles`** (2026-08-15,
+     `changes/2026-08-15_player_ratings_p1.sql`). One row per player, created
+     by `trg_player_ratings_row` on profile insert. `profiles` has none of the
+     11 ranking columns any more — a test asserts each one is dropped.
+     - **No client grants exist on it at all**, so the anti-cheat boundary is
+       structural rather than a rule someone has to remember. That matters:
+       forgetting to grant is exactly what broke `notify_*` for six weeks, and
+       forgetting to *revoke* is the mirror-image risk this removes.
+     - PostgREST returns it nested (`profiles → player_ratings`). Services
+       flatten it at the boundary with `flattenRatings` (and `_flattenMatch`
+       for the three-deep `matchCols` embed) so every screen keeps reading
+       `row['rating']` flat. Don't push the nesting into the UI.
    - **Placement ≠ confidence.** `placement_played >= 5` reveals the rating;
      `is_provisional` (`sigma > 0.58 or competitive_matches < 20`) is the
      separate confidence flag. Don't conflate them on a new surface.

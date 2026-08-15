@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../backend/models/ranking_scale.dart' show flattenRatings;
 import '../../backend/models/format_model.dart';
 import '../../main.dart' show kSupabaseUrl;
 import 'finance_model.dart' show LedgerKind, LedgerKindX;
@@ -27,17 +28,21 @@ class AdminService {
   }
 
   static Future<List<Map<String, dynamic>>> fetchPlayers() async {
-    const base = 'id, name, phone, city, avatar_url, tier, '
-        'level, placement_played, status, is_admin, created_at';
-    // Rating engine v2 columns; fall back for pre-migration databases.
+    // Ranking state lives in player_ratings since 2026-08-15; it comes back
+    // embedded and is flattened so callers keep reading row['rating'].
+    const base = 'id, name, phone, city, avatar_url, status, is_admin, '
+        'created_at, player_ratings(rating, sigma, level, tier, is_anchor, '
+        'competitive_matches, placement_played, is_provisional, reliability)';
     try {
       final res = await _db
           .from('profiles')
-          .select('$base, rating, sigma, is_anchor, competitive_matches, '
-              'is_provisional, reliability')
-          .eq('is_admin', false)
-          .order('rating', ascending: false, nullsFirst: false);
-      return List<Map<String, dynamic>>.from(res as List);
+          .select(base)
+          .eq('is_admin', false);
+      return [
+        for (final r in (res as List))
+          flattenRatings(Map<String, dynamic>.from(r as Map))
+      ]..sort((a, b) => ((b['rating'] as num?) ?? -1)
+          .compareTo((a['rating'] as num?) ?? -1));
     } catch (_) {
       final res = await _db
           .from('profiles')

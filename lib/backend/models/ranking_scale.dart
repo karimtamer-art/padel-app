@@ -115,6 +115,31 @@ class RankingScale {
   }
 }
 
+
+/// Folds an embedded `player_ratings` row up into its parent map.
+///
+/// The ranking columns moved off `profiles` into `player_ratings` on
+/// 2026-08-15, so PostgREST returns them nested:
+/// `{id, name, player_ratings: {rating, level, tier, …}}`. Every screen and
+/// service reads them flat (`row['rating']`), and rewriting ~60 read sites to
+/// reach through a sub-map would be churn for no gain — so the nesting is
+/// undone once, here, at the service boundary.
+///
+/// A null or missing embed is left alone: an unranked player still has a row
+/// (the table is backfilled and trigger-maintained), but a select that did not
+/// ask for the embed should not silently gain empty keys.
+Map<String, dynamic> flattenRatings(Map<String, dynamic> row) {
+  final r = row['player_ratings'];
+  if (r is Map) {
+    row = Map<String, dynamic>.from(row)..remove('player_ratings');
+    r.forEach((k, v) => row[k as String] = v);
+  } else if (r is List && r.isNotEmpty && r.first is Map) {
+    row = Map<String, dynamic>.from(row)..remove('player_ratings');
+    (r.first as Map).forEach((k, v) => row[k as String] = v);
+  }
+  return row;
+}
+
 /// How a player's level changed this period — drives the card's status banner.
 enum RankMovement { promoted, dropped, steady }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../models/ranking_scale.dart' show flattenRatings;
 
 /// All match I/O for the player app: browse, create, join, leave,
 /// detail, and the result flow (submit → confirm/dispute → ELO settle).
@@ -22,7 +23,8 @@ class MatchService {
       // every co-player and leave the decision to Dart; the contact sheet now
       // asks `player_phone(uuid)`, which applies `_can_see_phone` in Postgres.
       // avatar_url IS fine to embed — it's a public bucket URL, unlike phone.
-      '  profiles(id, name, rating, level, tier, username, avatar_url))';
+      '  profiles(id, name, username, avatar_url, '
+      '           player_ratings(rating, level, tier)))';
 
   // ── Matchmaking discovery (band-gatekept) ──────────────────────────────────
 
@@ -144,11 +146,31 @@ class MatchService {
     try {
       final row =
           await _db.from('matches').select(matchCols).eq('id', id).maybeSingle();
-      return row == null ? null : Map<String, dynamic>.from(row);
+      return row == null ? null : _flattenMatch(Map<String, dynamic>.from(row));
     } catch (e) {
       debugPrint('[MatchService] fetchMatch: $e');
       return null;
     }
+  }
+
+  /// Folds each embedded `player_ratings` row up into its player's profile.
+  ///
+  /// `matchCols` nests three deep — match → match_players[] → profiles →
+  /// player_ratings — because the ranking columns moved off `profiles` on
+  /// 2026-08-15. Every lobby and detail screen reads `prof['rating']` and
+  /// `prof['level']` flat, so the nesting is undone once, here.
+  static Map<String, dynamic> _flattenMatch(Map<String, dynamic> m) {
+    final players = m['match_players'];
+    if (players is! List) return m;
+    for (var i = 0; i < players.length; i++) {
+      final mp = players[i];
+      if (mp is! Map) continue;
+      final prof = mp['profiles'];
+      if (prof is Map) {
+        mp['profiles'] = flattenRatings(Map<String, dynamic>.from(prof));
+      }
+    }
+    return m;
   }
 
   // ── Partner invites ────────────────────────────────────────────────────────
@@ -254,13 +276,19 @@ class MatchService {
     try {
       var q = _db
           .from('profiles')
-          .select('id, name, username, rating, level, tier, gender, avatar_url')
+          .select('id, name, username, gender, avatar_url, '
+              'player_ratings(rating, level, tier)')
           .eq('is_admin', false)
           .neq('id', _uid ?? '');
       final term = query.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
       if (term.isNotEmpty) q = q.ilike('username', '%$term%');
-      final rows = await q.order('rating', ascending: false, nullsFirst: false).limit(20);
-      return List<Map<String, dynamic>>.from(rows as List);
+      final rows = await q.limit(50);
+      final flat = [
+        for (final r in (rows as List))
+          flattenRatings(Map<String, dynamic>.from(r as Map))
+      ]..sort((a, b) =>
+          ((b['rating'] as num?) ?? -1).compareTo((a['rating'] as num?) ?? -1));
+      return flat.take(20).toList();
     } catch (e) {
       debugPrint('[MatchService] searchPlayers: $e');
       return [];
