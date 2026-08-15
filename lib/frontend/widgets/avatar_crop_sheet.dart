@@ -213,13 +213,9 @@ class _AvatarCropSheetState extends State<AvatarCropSheet> {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-                color: AppColors.line, borderRadius: BorderRadius.circular(2)),
-          ),
-          const SizedBox(height: 16),
+          // No grab handle: the sheet is not draggable (enableDrag: false, so
+          // a vertical drag reaches the photo instead), and a handle invites
+          // exactly the gesture that now does nothing.
           Text('Position your photo', style: AppText.cardTitle()),
           const SizedBox(height: 4),
           Text('Drag to move · pinch to zoom',

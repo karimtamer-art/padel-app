@@ -248,35 +248,6 @@ class AuthService {
     await _db.auth.getSessionFromUrl(Uri.parse(callbackUrl));
   }
 
-  static String formatPhone(String phone) =>
-      phone.startsWith('+') ? phone : '+20${phone.replaceAll(RegExp(r'[^0-9]'), '')}';
-
-  static Future<String?> sendPhoneOtp(String phone) async {
-    try {
-      await _db.auth.updateUser(UserAttributes(phone: formatPhone(phone)));
-      return null;
-    } on AuthException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
-  static Future<String?> verifyPhoneOtp(String phone, String token) async {
-    try {
-      await _db.auth.verifyOTP(
-        phone: formatPhone(phone),
-        token: token,
-        type: OtpType.phoneChange,
-      );
-      return null;
-    } on AuthException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
   /// Domain appended to a bare username so it becomes a valid Supabase email.
   /// e.g. typing `admin` signs in as `admin@padelegypt.app`. An admin/staff
   /// auth account must be created with this exact email (see signIn).

@@ -5425,28 +5425,6 @@ begin
 end $$;
 grant execute on function public.community_member_card(uuid, uuid) to authenticated;
 
-create or replace function public.community_inbox()
-returns table (member_id uuid, member_name text, avatar_url text,
-               last_body text, last_at timestamptz, last_role text, unanswered boolean)
-language plpgsql stable security definer set search_path = public as $$
-declare v_cid uuid;
-begin
-  if public.current_admin_role() <> 'organizer' and not public._is_admin() then return; end if;
-  select id into v_cid from public.communities where organizer_id = auth.uid();
-  if v_cid is null then return; end if;
-  return query
-    select m.member_id, p.name, p.avatar_url, last.body, last.created_at, last.sender_role,
-           (last.sender_role = 'member')
-      from (select distinct member_id from public.community_messages where community_id = v_cid) m
-      join public.profiles p on p.id = m.member_id
-      join lateral (
-        select body, created_at, sender_role from public.community_messages cm
-         where cm.community_id = v_cid and cm.member_id = m.member_id
-         order by cm.created_at desc limit 1
-      ) last on true
-     order by last.created_at desc;
-end $$;
-grant execute on function public.community_inbox() to authenticated;
 
 -- ── Organizer provisioning + court ownership (2026-07-11) ───────────────────
 -- Admin-provisioned organizers must reset their temp password on first login.
