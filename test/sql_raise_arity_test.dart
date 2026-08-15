@@ -185,6 +185,17 @@ List<_Raise> _findRaises(String file, String sql) {
   return (placeholders, args);
 }
 
+/// The dollar-quoted body of the function definition starting at [start].
+///
+/// Not `indexOf('end $$;')` — `language sql` functions close with a bare `$$;`
+/// and that scan runs past them into the next function.
+String bodyAt(String sql, int start) {
+  final open = sql.indexOf(r'$$', start);
+  if (open < 0) return '';
+  final close = sql.indexOf(r'$$', open + 2);
+  return sql.substring(start, close < 0 ? sql.length : close);
+}
+
 void main() {
   final files = <String>[
     'supabase/migration_player_app.sql',
@@ -445,5 +456,61 @@ void main() {
           reason: '$c is writable by a client — that is the anti-cheat '
               'boundary in CLAUDE.md rule #2');
     }
+  });
+
+  // ── a delta that verifies must also ship what it verifies ────────────────
+  //
+  // The player_ratings delta ends by sweeping pg_proc for functions still
+  // reading a ranking column off profiles, and aborting if it finds one. On
+  // first run it aborted listing 16 functions — correctly, because the
+  // rewritten bodies existed only in migration_player_app.sql. The delta
+  // created the table, then refused to finish the job it had not shipped.
+  //
+  // So: every function the canonical migration shows as player_ratings-aware
+  // must also be defined in that delta, byte-identical.
+  test('the player_ratings delta ships every function it then checks for', () {
+    final deltaFile =
+        File('supabase/changes/2026-08-15_player_ratings_p1.sql');
+    if (!deltaFile.existsSync()) return;
+    final delta = deltaFile.readAsStringSync();
+    final mig = File('supabase/migration_player_app.sql').readAsStringSync();
+
+    String? bodyOfLast(String sql, String name) {
+      // plain lastIndexOf, not a RegExp — the function name contains a dot and
+      // the trailing paren needs escaping, and getting that wrong silently
+      // changes what is being searched for
+      final needle = 'create or replace function ' + name + '(';
+      final at = sql.lastIndexOf(needle);
+      return at < 0 ? null : bodyAt(sql, at);
+    }
+
+    final expected = <String>{};
+    for (final m
+        in RegExp(r'create or replace function (public\.\w+)\(').allMatches(mig)) {
+      final b = bodyAt(mig, m.start);
+      if (b.contains('player_ratings') &&
+          m.group(1) != 'public._player_ratings_row') {
+        expected.add(m.group(1)!);
+      }
+    }
+    expect(expected.length, greaterThan(10),
+        reason: 'scanner found almost nothing — it is probably broken');
+
+    final missing = <String>[];
+    final drifted = <String>[];
+    for (final name in expected) {
+      final inDelta = bodyOfLast(delta, name);
+      if (inDelta == null) {
+        missing.add(name);
+        continue;
+      }
+      if (inDelta != bodyOfLast(mig, name)) drifted.add(name);
+    }
+
+    expect(missing, isEmpty,
+        reason: 'the delta checks for these but never redefines them, so it '
+            'will abort on a real database:\n  ${missing.join('\n  ')}\n');
+    expect(drifted, isEmpty,
+        reason: 'delta and migration bodies disagree:\n  ${drifted.join('\n  ')}\n');
   });
 }
