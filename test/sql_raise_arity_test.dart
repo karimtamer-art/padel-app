@@ -477,7 +477,7 @@ void main() {
   // created the table, then refused to finish the job it had not shipped.
   //
   // So: every function the canonical migration shows as player_ratings-aware
-  // must also be defined in that delta, byte-identical.
+  // must also be defined in that delta.
   test('the player_ratings delta ships every function it then checks for', () {
     final deltaFile =
         File('supabase/changes/2026-08-15_player_ratings_p1.sql');
@@ -506,21 +506,20 @@ void main() {
     expect(expected.length, greaterThan(10),
         reason: 'scanner found almost nothing — it is probably broken');
 
+    // COMPLETENESS only, not byte-identity. A delta is a point-in-time
+    // artefact: once it has run, later changes legitimately edit the same
+    // functions and ship their own copies, so requiring it to stay identical
+    // to the migration forever would fail on the next unrelated change. (It
+    // did, within the hour — the unranked-prior cleanup touched four of these
+    // functions.) What must stay true is that a delta ships definitions for
+    // everything its own verification block then asserts.
     final missing = <String>[];
-    final drifted = <String>[];
     for (final name in expected) {
-      final inDelta = bodyOfLast(delta, name);
-      if (inDelta == null) {
-        missing.add(name);
-        continue;
-      }
-      if (inDelta != bodyOfLast(mig, name)) drifted.add(name);
+      if (bodyOfLast(delta, name) == null) missing.add(name);
     }
 
     expect(missing, isEmpty,
         reason: 'the delta checks for these but never redefines them, so it '
-            'will abort on a real database:\n  ${missing.join('\n  ')}\n');
-    expect(drifted, isEmpty,
-        reason: 'delta and migration bodies disagree:\n  ${drifted.join('\n  ')}\n');
+            'will abort on a real database: ${missing.join(", ")}');
   });
 }

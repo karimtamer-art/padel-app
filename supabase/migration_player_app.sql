@@ -2548,7 +2548,7 @@ create or replace function public.mm_set_center_rating()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if new.mm_center_rating is null and new.created_by is not null then
-    select coalesce(rating, level, 2.0) into new.mm_center_rating
+    select coalesce(rating, level, public.rating_prior()) into new.mm_center_rating
       from public.player_ratings where player_id = new.created_by;
   end if;
   return new;
@@ -2819,7 +2819,7 @@ begin
       else 'This match just filled up.' end;
   end if;
 
-  select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
+  select coalesce(rating, level, public.rating_prior()), (coalesce(placement_played, 0) < 5)
     into v_my_rating, v_my_plac from player_ratings where player_id = v_uid;
   select (coalesce(placement_played, 0) < 5) into v_cr_plac
     from player_ratings where player_id = v_created_by;
@@ -2836,7 +2836,7 @@ begin
     -- Keep the pair fair: a brought partner must be in-band too, so a friend of
     -- a very different rating can't be dragged in to skew the settled average.
     if p_partner_id is not null then
-      select coalesce(rating, level, 2.0) into v_partner_rating
+      select coalesce(rating, level, public.rating_prior()) into v_partner_rating
         from player_ratings where player_id = p_partner_id;
       if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
         return 'Your partner is outside this match''s rating band.';
@@ -4427,11 +4427,6 @@ grant execute on function public.organizer_broadcast(text, text, uuid, text) to 
 -- console; players registering for a PAID tournament transfer to the *owning
 -- organizer's* details (falling back to the platform app_settings handle, then
 -- a hard default). Full notes: supabase/changes/2026-07-29_organizer_instapay.sql
--- RETIRED 2026-08-14 — payout details moved to public.payout_accounts (see the
--- payout block near the end of this file). The columns are kept for one release
--- so an older client keeps working; nothing writes them any more.
-alter table public.profiles add column if not exists instapay_handle text;
-alter table public.profiles add column if not exists instapay_link   text;
 
 -- Organizer (or admin) sets their own payout username + link; applies to every
 -- event they own. Returns null on success, or an error string.
@@ -9063,7 +9058,7 @@ begin
       else 'This match just filled up.' end;
   end if;
 
-  select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
+  select coalesce(rating, level, public.rating_prior()), (coalesce(placement_played, 0) < 5)
     into v_my_rating, v_my_plac from player_ratings where player_id = v_uid;
   select (coalesce(placement_played, 0) < 5) into v_cr_plac
     from player_ratings where player_id = v_created_by;
@@ -9078,7 +9073,7 @@ begin
       return 'This match is outside your rating band.';
     end if;
     if p_partner_id is not null then
-      select coalesce(rating, level, 2.0) into v_partner_rating
+      select coalesce(rating, level, public.rating_prior()) into v_partner_rating
         from player_ratings where player_id = p_partner_id;
       if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
         return 'Your partner is outside this match''s rating band.';
@@ -10071,7 +10066,7 @@ begin
       else 'This match just filled up.' end;
   end if;
 
-  select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
+  select coalesce(rating, level, public.rating_prior()), (coalesce(placement_played, 0) < 5)
     into v_my_rating, v_my_plac from player_ratings where player_id = v_uid;
   select (coalesce(placement_played, 0) < 5) into v_cr_plac
     from player_ratings where player_id = v_created_by;
@@ -10086,7 +10081,7 @@ begin
       return 'This match is outside your rating band.';
     end if;
     if p_partner_id is not null then
-      select coalesce(rating, level, 2.0) into v_partner_rating
+      select coalesce(rating, level, public.rating_prior()) into v_partner_rating
         from player_ratings where player_id = p_partner_id;
       if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
         return 'Your partner is outside this match''s rating band.';
@@ -10330,7 +10325,7 @@ begin
   -- refuse a casual match on rating distance instead, which is the same bug
   -- wearing a different error message.
   if v_type is distinct from 'casual' then
-    select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
+    select coalesce(rating, level, public.rating_prior()), (coalesce(placement_played, 0) < 5)
       into v_my_rating, v_my_plac from profiles where id = v_uid;
     select (coalesce(placement_played, 0) < 5) into v_cr_plac
       from profiles where id = v_created_by;
@@ -10345,7 +10340,7 @@ begin
         return 'This match is outside your rating band.';
       end if;
       if p_partner_id is not null then
-        select coalesce(rating, level, 2.0) into v_partner_rating
+        select coalesce(rating, level, public.rating_prior()) into v_partner_rating
           from player_ratings where player_id = p_partner_id;
         if abs(coalesce(v_partner_rating, 2.0) - v_center) > v_hw then
           return 'Your partner is outside this match''s rating band.';
@@ -11627,6 +11622,90 @@ begin
   end if;
 
   raise notice 'player_ratings: % row(s) backfilled and mirrored.', v_r;
+end $$;
+
+-- ── stale-column cleanup (2026-08-15) ─────────────────────
+-- Standalone delta: supabase/changes/2026-08-15_cleanup_stale_columns.sql
+
+-- ---------------------------------------------------------------------------
+-- 1. Drop the retired payout columns.
+--
+--    Verified first rather than assumed: the delta refuses if any function
+--    still reads them, or if a row still holds something payout_accounts does
+--    not already have. The second check matters because these columns were
+--    deliberately left stale — if a client wrote one after 2026-08-14, that
+--    edit never reached payout_accounts and dropping would lose it.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_bad text; v_lost bigint;
+begin
+  select string_agg(p.proname, ', ') into v_bad
+    from pg_proc p
+   where p.pronamespace = 'public'::regnamespace
+     and p.prosrc like '%profiles%'
+     and (p.prosrc like '%instapay_handle%' or p.prosrc like '%instapay_link%')
+     and p.prosrc not like '%payout_accounts%'
+     and p.prosrc not like '%information_schema%';
+  if v_bad is not null then
+    raise exception 'function(s) still read profiles.instapay_*: %', v_bad;
+  end if;
+
+  if exists (select 1 from information_schema.columns
+              where table_schema='public' and table_name='profiles'
+                and column_name='instapay_handle') then
+    execute $q$
+      select count(*) from public.profiles p
+       where (nullif(btrim(p.instapay_handle), '') is not null
+              or nullif(btrim(p.instapay_link), '') is not null)
+         and not exists (select 1 from public.payout_accounts a
+                          where a.player_id = p.id and a.provider = 'instapay')
+    $q$ into v_lost;
+    if v_lost > 0 then
+      raise exception
+        '% profile(s) hold payout details that never reached payout_accounts', v_lost
+        using hint = 'Re-run 2026-08-14_payout_accounts.sql first, then this.';
+    end if;
+  end if;
+end $$;
+
+alter table public.profiles drop column if exists instapay_handle;
+alter table public.profiles drop column if exists instapay_link;
+
+-- ---------------------------------------------------------------------------
+-- 2. One prior for an unrated player, everywhere.
+--
+--    profiles.rating is NULL until placement completes, so every path that
+--    needs a number for an unrated player picks a stand-in. Settlement uses
+--    3.30 (the engine's own prior) and, since 2026-08-14, so do join_match and
+--    register_for_tournament via rating_prior(). The matchmaking and discovery
+--    RPCs were left on the old 2.0 because changing them moves who sees which
+--    matches and there was no test coverage. Finishing it now.
+--
+--    THIS CHANGES BEHAVIOUR, deliberately: an unrated player is currently
+--    SURFACED as a 2.0 while being RATED as a 3.30, so they get shown weaker
+--    opponents than the engine will judge them against — and then take a
+--    larger rating hit than the matchmaking implied. After this they are
+--    treated as 3.30 throughout.
+--
+--    The affected functions are re-created by the migration; this section only
+--    asserts the result, because the substitution is mechanical
+--    (`coalesce(rating, level, 2.0)` -> `coalesce(rating, level,
+--    public.rating_prior())`) and lives in migration_player_app.sql.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_bad text;
+begin
+  select string_agg(p.proname, ', ') into v_bad
+    from pg_proc p
+   where p.pronamespace = 'public'::regnamespace
+     and p.prosrc like '%coalesce(rating, level, 2.0)%';
+  if v_bad is not null then
+    raise exception 'function(s) still assume an unranked player is 2.0: %', v_bad
+      using hint = 'They should call public.rating_prior() like everything else.';
+  end if;
+
+  raise notice 'unranked prior is now rating_prior() = % everywhere.',
+    public.rating_prior();
 end $$;
 
 notify pgrst, 'reload schema';
