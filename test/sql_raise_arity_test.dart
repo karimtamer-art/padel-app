@@ -479,7 +479,7 @@ void main() {
       // plain lastIndexOf, not a RegExp — the function name contains a dot and
       // the trailing paren needs escaping, and getting that wrong silently
       // changes what is being searched for
-      final needle = 'create or replace function ' + name + '(';
+      final needle = 'create or replace function $name(';
       final at = sql.lastIndexOf(needle);
       return at < 0 ? null : bodyAt(sql, at);
     }
