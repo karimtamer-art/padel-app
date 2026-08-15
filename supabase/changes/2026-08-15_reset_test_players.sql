@@ -27,14 +27,21 @@
 --   sigma  0.95 -> 0.9215 -> 0.8939 -> 0.8670 -> 0.8410 -> 0.8158 at reveal
 --   the rating becomes public after match 5, still openly low-confidence
 --
--- HOW TO RUN. It refuses unless you arm it in the same session:
+-- HOW TO RUN. Uncomment the single `select set_config(...)` line directly
+-- below, run the whole file, then comment it back out.
 --
---   select set_config('padel.reset_players', 'yes-wipe-all-ratings', false);
---   -- then run this file
+-- It has to be IN THIS FILE rather than run as a separate query first: the
+-- Supabase SQL editor pools connections, so a session setting made in one Run
+-- is gone by the next — the guard would fire even though you had armed it.
+-- (It did. That is why this is written the way it is.)
 --
--- The arming string is required so that pasting this file by mistake, or
--- re-running it out of habit, does nothing at all.
+-- Uncommenting one line is still a deliberate act, which is the whole point:
+-- pasting this file by mistake, or re-running it out of habit, does nothing.
 -- ===========================================================================
+
+-- ↓↓↓ UNCOMMENT THIS ONE LINE TO ARM, THEN RE-COMMENT IT AFTERWARDS ↓↓↓
+-- select set_config('padel.reset_players', 'yes-wipe-all-ratings', false);
+-- ↑↑↑ ------------------------------------------------------------- ↑↑↑
 
 -- ---------------------------------------------------------------------------
 -- 1. Refuse unless deliberately armed, and refuse if this looks like a real
@@ -47,8 +54,10 @@ begin
   if coalesce(current_setting('padel.reset_players', true), '')
        <> 'yes-wipe-all-ratings' then
     raise exception 'refusing to wipe ratings: this session is not armed'
-      using hint = 'Run: select set_config(''padel.reset_players'', '
-                   '''yes-wipe-all-ratings'', false);  then re-run this file.';
+      using hint = 'Uncomment the set_config line near the top of this file '
+                   'and run the WHOLE file. Arming it as a separate query '
+                   'does not work — the SQL editor pools connections, so the '
+                   'setting is gone by the next Run.';
   end if;
 
   select count(*) into v_players from public.player_ratings;
@@ -74,8 +83,12 @@ end $$;
 --    table directly — the same way _settle_rating does. Values match exactly
 --    what a brand-new profile gets from the column defaults, so a reset player
 --    is indistinguishable from one who signed up this morning.
+--
+--    No explicit BEGIN/COMMIT: the Supabase SQL editor may already wrap the
+--    script in a transaction, and a nested begin would either warn or end its
+--    transaction early at the commit. Letting the editor own the transaction
+--    keeps this all-or-nothing either way.
 -- ---------------------------------------------------------------------------
-begin;
 
 -- History first: none of it came from a real match, and leaving it would make
 -- the next settlement's "matches before" count disagree with the counters.
@@ -96,8 +109,6 @@ update public.player_ratings set
 -- Any match already marked settled would otherwise be skipped forever by the
 -- rating_applied guard, so a replay could never produce a rating.
 update public.matches set rating_applied = false where rating_applied;
-
-commit;
 
 -- ---------------------------------------------------------------------------
 -- 3. Confirm the cold start is actually cold.
