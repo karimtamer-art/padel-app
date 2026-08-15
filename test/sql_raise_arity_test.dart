@@ -185,6 +185,16 @@ List<_Raise> _findRaises(String file, String sql) {
   return (placeholders, args);
 }
 
+/// Reads a file with line endings normalised.
+///
+/// git's autocrlf rewrites checked-out files with CRLF on Windows, and it does
+/// not do so uniformly — a file just restored by `git checkout` gets CRLF
+/// while one written by the tooling still has LF. Comparing two SQL bodies
+/// byte-for-byte then reports a difference that is not there. Everything here
+/// compares CONTENT, so line endings are stripped on the way in.
+String readSql(String path) =>
+    File(path).readAsStringSync().replaceAll('\r\n', '\n');
+
 /// The dollar-quoted body of the function definition starting at [start].
 ///
 /// Not `indexOf('end $$;')` — `language sql` functions close with a bare `$$;`
@@ -213,7 +223,7 @@ void main() {
     for (final path in files) {
       final f = File(path);
       if (!f.existsSync()) continue;
-      final sql = _stripLineComments(f.readAsStringSync());
+      final sql = _stripLineComments(readSql(f.path));
       for (final r in _findRaises(path, sql)) {
         final a = _arity(r.text);
         if (a == null) continue;
@@ -289,7 +299,7 @@ void main() {
     for (final path in files) {
       final f = File(path);
       if (!f.existsSync()) continue;
-      final sql = _stripLineComments(f.readAsStringSync());
+      final sql = _stripLineComments(readSql(f.path));
 
       final defs = <String, List<int>>{};
       for (final m in RegExp(r'create (?:or replace )?function (public\.\w+)\(')
@@ -348,7 +358,7 @@ void main() {
     };
 
     final sql = _stripLineComments(
-        File('supabase/migration_player_app.sql').readAsStringSync());
+        readSql('supabase/migration_player_app.sql'));
     final counts = <String, int>{};
     for (final m in RegExp(r'create or replace function (public\.\w+)\(')
         .allMatches(sql)) {
@@ -384,7 +394,7 @@ void main() {
   // require a matching grant.
   test('columns the app writes to profiles are granted to authenticated', () {
     final sql = _stripLineComments(
-        File('supabase/migration_player_app.sql').readAsStringSync());
+        readSql('supabase/migration_player_app.sql'));
 
     final granted = <String>{};
     for (final m in RegExp(
@@ -405,7 +415,7 @@ void main() {
         .listSync(recursive: true)
         .whereType<File>()
         .where((f) => f.path.endsWith('.dart'))) {
-      final src = f.readAsStringSync();
+      final src = readSql(f.path);
       for (final m
           in RegExp(r"from\('profiles'\)([\s\S]{0,400}?);").allMatches(src)) {
         final chunk = m.group(1)!;
@@ -441,7 +451,7 @@ void main() {
       'status',
     ];
     final sql = _stripLineComments(
-        File('supabase/migration_player_app.sql').readAsStringSync());
+        readSql('supabase/migration_player_app.sql'));
     final granted = <String>{};
     for (final m in RegExp(
             r'grant\s+update\s*\(([^)]*)\)\s*\n?\s*on public\.profiles\s+to\s+authenticated',
@@ -472,8 +482,8 @@ void main() {
     final deltaFile =
         File('supabase/changes/2026-08-15_player_ratings_p1.sql');
     if (!deltaFile.existsSync()) return;
-    final delta = deltaFile.readAsStringSync();
-    final mig = File('supabase/migration_player_app.sql').readAsStringSync();
+    final delta = readSql(deltaFile.path);
+    final mig = readSql('supabase/migration_player_app.sql');
 
     String? bodyOfLast(String sql, String name) {
       // plain lastIndexOf, not a RegExp — the function name contains a dot and
