@@ -510,6 +510,12 @@ before changing anything.
   status and kept working, which hid the bug.
 - Every DB change also gets a standalone delta in `supabase/changes/` so only
   the new part needs running on live.
+- **`changes/2026-08-15_reset_test_players.sql` is DEV-ONLY and destroys rating
+  data.** It is deliberately NOT folded into `migration_player_app.sql`, which
+  is re-run on live as a matter of course — a wipe living in there would go off
+  by accident, once, silently. It refuses unless the session is armed
+  (`set_config('padel.reset_players', 'yes-wipe-all-ratings', false)`) and
+  refuses again if there are more than 200 players. Never fold it in.
 - **`profiles` uses COLUMN-LEVEL grants.** `migrations/0004` revoked blanket
   UPDATE and granted back only the user-editable columns — that is why a client
   cannot write `rating`, `sigma`, `is_admin` or `status`. **A new column the
