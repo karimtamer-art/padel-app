@@ -62,6 +62,10 @@ class AppColors {
         return platinum;
       case 'diamond':
         return diamond;
+      // A player still in placement has no division; the old default painted
+      // them gold, i.e. as the second-highest one.
+      case 'unranked':
+        return inkSoft;
       default:
         return gold;
     }

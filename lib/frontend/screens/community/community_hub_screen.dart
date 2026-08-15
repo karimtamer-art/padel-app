@@ -9,6 +9,7 @@ import '../../widgets/common.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import '../chat/dm_chat_screen.dart';
 import 'message_organizer_screen.dart';
+import '../../../backend/models/ranking_scale.dart';
 
 /// A member's view of an organizer's community — hero, Events / Feed / Members,
 /// join/leave, RSVP, and a message-organizer entry. Opened as a full overlay.
@@ -1693,7 +1694,8 @@ class _MemberProfileSheetState extends State<_MemberProfileSheet> {
     final played = (_card?['played'] as num?)?.toInt() ?? 0;
     final wins = (_card?['wins'] as num?)?.toInt() ?? 0;
     final winRate = played > 0 ? '${(wins / played * 100).round()}%' : '—';
-    final elo = (_card?['elo'] as num?)?.toInt();
+    final unranked = m.tier == 'Unranked';
+    final level = (_card?['level'] as num?)?.toDouble();
     final rank = (_card?['rank'] as num?)?.toInt();
     final city = (_card?['city'] as String?)?.trim();
     final hand = (_card?['hand'] as String?)?.trim();
@@ -1766,7 +1768,9 @@ class _MemberProfileSheetState extends State<_MemberProfileSheet> {
                     padding: EdgeInsets.symmetric(vertical: 18),
                     child: CircularProgressIndicator(strokeWidth: 2))
                 : Row(children: [
-                    _stat(elo != null ? '$elo' : '—', 'Elo'),
+                    _stat(unranked || level == null
+                        ? '—'
+                        : RankingScale.fmtQuarter(level), 'Level'),
                     _divider(),
                     _stat('$played', 'Played'),
                     _divider(),

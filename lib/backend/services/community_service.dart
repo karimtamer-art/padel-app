@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../models/ranking_scale.dart';
+
 /// One organizer-run community + everything the hub / console need.
 /// Reads use RLS-public selects; mutations + fan-out go through RPCs.
 class CommunityService {
@@ -81,17 +83,26 @@ class CommunityService {
       final res = await _db
           .from('community_members')
           .select('player_id, joined_at, '
-              'profiles!community_members_player_id_fkey(name, avatar_url, tier, level)')
+              // tier/level live in player_ratings since 2026-08-15, and
+              // placement_played is what says whether they may be shown at all
+              'profiles!community_members_player_id_fkey(name, avatar_url, '
+              '  player_ratings(tier, level, placement_played))')
           .eq('community_id', communityId)
           .order('joined_at')
           .limit(limit);
       return (res as List).map((r) {
         final p = r['profiles'] as Map?;
+        final pr = p?['player_ratings'];
+        final rank = pr is Map ? pr : (pr is List && pr.isNotEmpty ? pr.first as Map : null);
         return MemberLite(
           id: r['player_id'] as String,
           name: (p?['name'] as String?) ?? 'Player',
           avatarUrl: p?['avatar_url'] as String?,
-          tier: _tierOf(p?['tier'] as String?, (p?['level'] as num?)?.toDouble()),
+          tier: _tierOf(
+            rank?['tier'] as String?,
+            (rank?['level'] as num?)?.toDouble(),
+            (rank?['placement_played'] as num?)?.toInt() ?? 0,
+          ),
         );
       }).toList();
     } catch (e) {
@@ -100,17 +111,20 @@ class CommunityService {
     }
   }
 
-  /// Tier label from the profile's tier column, else derived from level.
-  static String? _tierOf(String? tier, double? level) {
+  /// Tier label for a member, or 'Unranked' until placement is complete.
+  ///
+  /// A player in placement HAS a stored tier — it is derived from a rating
+  /// that is not public yet — so showing it would leak the hidden estimate and
+  /// contradict every other surface, which says Unranked. The placement count
+  /// is the authority, exactly as it is on the profile and in the lobby.
+  static String? _tierOf(String? tier, double? level, int placementPlayed) {
+    if (placementPlayed < RankingScale.placementTotal) return 'Unranked';
     final t = tier?.trim();
     if (t != null && t.isNotEmpty) {
       return t[0].toUpperCase() + t.substring(1).toLowerCase();
     }
     if (level == null) return null;
-    if (level < 2.0) return 'Bronze';
-    if (level < 3.5) return 'Silver';
-    if (level < 5.0) return 'Gold';
-    return 'Elite';
+    return RankingScale.divisionFor(level).metalName;
   }
 
   /// Full mini-profile for one member (stats + community rank), or null.
