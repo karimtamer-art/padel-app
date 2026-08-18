@@ -120,8 +120,25 @@ class _AuthGateState extends State<AuthGate> {
       _existing = profile ?? const OnboardingProfile();
       _isStaff = profile?.isStaff ?? false;
       final meta = user.userMetadata ?? {};
-      final rawName = (meta['full_name'] ?? meta['name'] ?? user.email ?? 'Player') as String;
-      _displayName = rawName.trim();
+      // profiles.name FIRST. Auth metadata is fixed at signup and never changes,
+      // so preferring it meant an edited name never appeared anywhere — the
+      // header kept the old one and the save looked broken.
+      //
+      // user.email is deliberately NOT a fallback any more. Apple puts the name
+      // in the credential rather than the ID token, and only on the very first
+      // authorization, so an Apple account usually arrives with none — falling
+      // back to the address listed Hide-My-Email players as
+      // x7k2m9@privaterelay.appleid.com. Onboarding asks for a real one instead.
+      final candidates = [
+        profile?.name,
+        meta['full_name'] as String?,
+        meta['name'] as String?,
+      ];
+      _displayName = candidates
+              .firstWhere(OnboardingProfile.isUsableName, orElse: () => null)
+              ?.trim() ??
+          'Player';
+      ProfileService.currentName.value = _displayName;
       _initials = _buildInitials(_displayName);
       _memberSince = _buildMemberSince(DateTime.tryParse(user.createdAt) ?? DateTime.now());
       // A provisioned organizer signed in with a temp password must set a real

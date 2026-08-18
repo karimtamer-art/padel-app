@@ -72,6 +72,15 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
   @override
   Future<void> onAutoRefresh() => _refresh();
 
+  /// Initials from the name actually on screen, so they change with it.
+  static String _initialsOf(String name) {
+    final parts =
+        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return 'P';
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+
   Future<void> _refresh() async {
     final uid = Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) return;
@@ -157,17 +166,30 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
           // Prefers the live notifier over this screen's fetched copy, so a new
           // photo appears the moment it finishes uploading rather than on the
           // next refresh. Falls back to _avatarUrl before the notifier is set.
+          // Name and initials come from the notifier, not from widget.*, for
+          // the same reason the avatar does: displayName is plumbed down from
+          // AuthGate and _refresh() can't reach it, so an edited name stayed
+          // stale here and the save looked like it had failed.
           ValueListenableBuilder<String?>(
-            valueListenable: ProfileService.currentAvatar,
-            builder: (_, url, __) => AppAvatar(
-                widget.initials.isNotEmpty ? widget.initials : 'P',
-                size: 88,
-                ring: 2.5,
-                imageUrl: url ?? _avatarUrl),
+            valueListenable: ProfileService.currentName,
+            builder: (_, live, __) {
+              final name = (live?.trim().isNotEmpty ?? false)
+                  ? live!.trim()
+                  : (widget.displayName.isNotEmpty ? widget.displayName : 'Player');
+              return Column(children: [
+                ValueListenableBuilder<String?>(
+                  valueListenable: ProfileService.currentAvatar,
+                  builder: (_, url, __) => AppAvatar(
+                      _initialsOf(name),
+                      size: 88,
+                      ring: 2.5,
+                      imageUrl: url ?? _avatarUrl),
+                ),
+                const SizedBox(height: 10),
+                Text(name, style: AppText.stat(22)),
+              ]);
+            },
           ),
-          const SizedBox(height: 10),
-          Text(widget.displayName.isNotEmpty ? widget.displayName : 'Player',
-              style: AppText.stat(22)),
           // Written in Edit Profile and, until now, never shown back anywhere.
           if ((_bio ?? '').isNotEmpty) ...[
             const SizedBox(height: 6),

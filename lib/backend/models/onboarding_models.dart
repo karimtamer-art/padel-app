@@ -68,6 +68,15 @@ enum CourtSidePref {
 /// Immutable snapshot of the five onboarding answers. Round-trips to/from the
 /// `profiles` row and knows whether onboarding is complete.
 class OnboardingProfile {
+  /// Stored `profiles.name` / `profiles.username`.
+  ///
+  /// Not part of [isComplete] — the server's generated `onboarding_completed`
+  /// doesn't include them, and this getter has to keep mirroring it. They are
+  /// here so the flow can tell whether it still needs to ASK, which is a
+  /// different question: an Apple signup arrives with no name at all (Apple
+  /// puts it in the credential, not the ID token) and an auto-generated handle.
+  final String? name;
+  final String? username;
   final DateTime? dateOfBirth;
   final Gender? gender;
   final Hand? hand;
@@ -78,6 +87,8 @@ class OnboardingProfile {
   final bool mustChangePassword; // provisioned organizer on a temp password
 
   const OnboardingProfile({
+    this.name,
+    this.username,
     this.dateOfBirth,
     this.gender,
     this.hand,
@@ -87,6 +98,21 @@ class OnboardingProfile {
     this.adminRole,
     this.mustChangePassword = false,
   });
+
+  /// A name we can actually show. An email is not one — `AuthGate` used to fall
+  /// back to `user.email`, which for a Hide-My-Email Apple account meant people
+  /// were listed as `x7k2m9@privaterelay.appleid.com`.
+  static bool isUsableName(String? v) {
+    final t = (v ?? '').trim();
+    return t.isNotEmpty && !t.contains('@');
+  }
+
+  /// True when the handle was minted by SQL `_unique_username`'s fallback
+  /// (`player` + 6 hex of the uuid), i.e. there was nothing to derive one from.
+  /// Those are the accounts worth re-asking; a Google signup's name-derived
+  /// handle is left alone, which is why that flow is unchanged.
+  static bool isGeneratedUsername(String? v) =>
+      RegExp(r'^player[0-9a-f]{6}$').hasMatch((v ?? '').trim().toLowerCase());
 
   /// Any console access — a super admin (is_admin) or a granted staff role.
   bool get isStaff => isAdmin || adminRole != null;
@@ -100,6 +126,8 @@ class OnboardingProfile {
       OnboardingValidation.phone(phone) == null;
 
   OnboardingProfile copyWith({
+    String? name,
+    String? username,
     DateTime? dateOfBirth,
     Gender? gender,
     Hand? hand,
@@ -110,6 +138,8 @@ class OnboardingProfile {
     bool? mustChangePassword,
   }) =>
       OnboardingProfile(
+        name: name ?? this.name,
+        username: username ?? this.username,
         dateOfBirth: dateOfBirth ?? this.dateOfBirth,
         gender: gender ?? this.gender,
         hand: hand ?? this.hand,
@@ -126,6 +156,8 @@ class OnboardingProfile {
     if (raw is String && raw.isNotEmpty) dob = DateTime.tryParse(raw);
     if (raw is DateTime) dob = raw;
     return OnboardingProfile(
+      name: j['name'] as String?,
+      username: j['username'] as String?,
       dateOfBirth: dob,
       gender: Gender.fromId(j['gender'] as String?),
       hand: Hand.fromId(j['preferred_hand'] as String?),
@@ -137,15 +169,28 @@ class OnboardingProfile {
     );
   }
 
-  Map<String, dynamic> toUpsert(String userId, {String? name}) => {
-        'id': userId,
-        'name': (name != null && name.trim().isNotEmpty) ? name.trim() : 'Player',
-        'date_of_birth': dateOfBirth == null ? null : _ymd(dateOfBirth!),
-        'gender': gender?.id,
-        'preferred_hand': hand?.id,
-        'preferred_court_side': side?.id,
-        'phone': phone,
-      };
+  /// [fallbackName] is the caller's best guess (auth metadata). The typed
+  /// answer wins over it, and an email-shaped value is refused from either —
+  /// that is how a private-relay address became someone's display name.
+  Map<String, dynamic> toUpsert(String userId, {String? fallbackName}) {
+    final resolvedName = isUsableName(name)
+        ? name!.trim()
+        : (isUsableName(fallbackName) ? fallbackName!.trim() : null);
+    final handle = (username ?? '').trim().toLowerCase();
+    return {
+      'id': userId,
+      // Omitted, not defaulted, when there is nothing usable. The upsert only
+      // writes the keys present, so leaving it out preserves whatever the
+      // signup trigger stored rather than stamping 'Player' over a real name.
+      if (resolvedName != null) 'name': resolvedName,
+      if (handle.isNotEmpty) 'username': handle,
+      'date_of_birth': dateOfBirth == null ? null : _ymd(dateOfBirth!),
+      'gender': gender?.id,
+      'preferred_hand': hand?.id,
+      'preferred_court_side': side?.id,
+      'phone': phone,
+    };
+  }
 
   static String _ymd(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-'

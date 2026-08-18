@@ -43,10 +43,20 @@ class ProfileService {
   /// picture appears the instant it uploads.
   static final ValueNotifier<String?> currentAvatar = ValueNotifier<String?>(null);
 
+  /// The signed-in player's display name, for exactly the same reason as
+  /// [currentAvatar]: it is plumbed AuthGate → RootScaffold → ProfileScreen, so
+  /// editing it left every one of those showing the old value until the app was
+  /// restarted. That read as "Save didn't work" — the write had in fact
+  /// succeeded. Written by whoever reads or changes the name.
+  static final ValueNotifier<String?> currentName = ValueNotifier<String?>(null);
+
   // avatar_url rides along on the startup fetch below so the header has a photo
   // from the first frame without a second round trip. fromJson ignores it.
+  // name/username ride along so AuthGate can use the STORED name rather than
+  // auth metadata, and so onboarding can tell whether it still has to ask.
   static const _onbCols =
-      'date_of_birth, gender, preferred_hand, preferred_court_side, phone, is_admin, avatar_url';
+      'name, username, date_of_birth, gender, preferred_hand, '
+      'preferred_court_side, phone, is_admin, avatar_url';
 
   /// Current user's profile, or `null` if the row doesn't exist yet.
   /// Selects the RBAC `admin_role` too, falling back for pre-migration DBs that
@@ -69,16 +79,18 @@ class ProfileService {
     if (row == null) return null;
     final url = (row['avatar_url'] as String?)?.trim();
     currentAvatar.value = (url == null || url.isEmpty) ? null : url;
+    final stored = row['name'] as String?;
+    if (OnboardingProfile.isUsableName(stored)) currentName.value = stored!.trim();
     return OnboardingProfile.fromJson(row);
   }
 
   /// Persists the four onboarding answers. Upsert is safe even if the
   /// signup trigger hasn't created the row yet.
   Future<void> saveOnboarding(String userId, OnboardingProfile profile, {String? name}) async {
-    await _sb.from('profiles').upsert(
-          profile.toUpsert(userId, name: name),
-          onConflict: 'id',
-        );
+    final payload = profile.toUpsert(userId, fallbackName: name);
+    await _sb.from('profiles').upsert(payload, onConflict: 'id');
+    final saved = payload['name'] as String?;
+    if (saved != null) currentName.value = saved;
   }
 
   // ── Static interface — legacy screens ────────────────────────────────────
@@ -151,6 +163,9 @@ class ProfileService {
   static Future<String?> updateProfile(String uid, Map<String, dynamic> fields) async {
     try {
       await _db.from('profiles').update(fields).eq('id', uid);
+      // Keep the plumbed-down copies honest — see [currentName].
+      final name = fields['name'] as String?;
+      if (OnboardingProfile.isUsableName(name)) currentName.value = name!.trim();
       return null;
     } on PostgrestException catch (e) {
       return e.message;
@@ -188,7 +203,7 @@ class ProfileService {
         rawMatches = await _db
             .from('match_players')
             .select('''
-              team, elo_before, elo_after,
+              team,
               matches!inner(
                 id, status, match_type, scheduled_at, winner_team,
                 score_team_a, score_team_b, created_by,
@@ -202,7 +217,7 @@ class ProfileService {
         rawMatches = await _db
             .from('match_players')
             .select('''
-              team, elo_before, elo_after,
+              team,
               matches!inner(
                 id, status, match_type, scheduled_at, winner_team,
                 score_team_a, score_team_b, created_by

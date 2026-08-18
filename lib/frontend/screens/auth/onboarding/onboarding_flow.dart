@@ -8,7 +8,7 @@ import '../../../theme/app_spacing.dart';
 import '../../../theme/app_text.dart';
 import '../../../../backend/models/onboarding_models.dart';
 import '../../../../backend/services/profile_service.dart';
-import '../auth_widgets.dart' show PhotoPicker, BioField;
+import '../auth_widgets.dart' show PhotoPicker, BioField, AuthField;
 import '../../../widgets/avatar_crop_sheet.dart';
 import 'onboarding_widgets.dart';
 
@@ -47,12 +47,40 @@ class OnboardingFlow extends StatefulWidget {
   State<OnboardingFlow> createState() => _OnboardingFlowState();
 }
 
+/// The steps this flow can show, in order. Which ones actually appear is
+/// decided once in [_OnboardingFlowState._steps].
+enum _Step { name, username, dob, gender, style, phone, extras }
+
 class _OnboardingFlowState extends State<OnboardingFlow> {
-  static const _total = 5;
+  /// The steps THIS player sees.
+  ///
+  /// Built once, and indexed into everywhere, because the alternative — fixed
+  /// indices with conditionals sprinkled through three separate switches — is
+  /// how you get an off-by-one that shows the phone step's title above the
+  /// gender step's body.
+  ///
+  /// name/username are asked only when they are missing or auto-generated, so
+  /// an email or Google signup sees exactly the five steps it saw before and
+  /// an Apple one is finally asked for both.
+  late final List<_Step> _steps = [
+    if (!OnboardingProfile.isUsableName(widget.initial.name)) _Step.name,
+    if (OnboardingProfile.isGeneratedUsername(widget.initial.username) ||
+        (widget.initial.username ?? '').trim().isEmpty)
+      _Step.username,
+    _Step.dob,
+    _Step.gender,
+    _Step.style,
+    _Step.phone,
+    _Step.extras,
+  ];
+
+  int get _total => _steps.length;
+  _Step get _cur => _steps[_step];
 
   late OnboardingProfile _draft = widget.initial;
   late int _step = _firstIncompleteStep();
   bool _forward = true;
+  bool _checkingHandle = false;
   bool _saving = false;
   String? _error;
 
@@ -63,46 +91,70 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   String _avatarExt = 'jpg';
   String _bio = '';
 
-  static const _kickers = [
-    'About you', 'About you', 'Your game', 'Contact', 'Your profile',
-  ];
-  static const _titles = [
-    'When were you born?',
-    'How do you identify?',
-    'Your playing style',
-    'What\'s your phone number?',
-    'Put a face to your name',
-  ];
-  static const _subs = [
-    'We use this to match you with players in your age group.',
-    'Helps us place you in the right leagues and events.',
-    'Tell us your dominant hand and preferred court side.',
-    'So other players can reach you to arrange matches.',
-    'Both are optional — you can add or change them later in Edit Profile.',
-  ];
+  static const _kickers = <_Step, String>{
+    _Step.name: 'About you',
+    _Step.username: 'About you',
+    _Step.dob: 'About you',
+    _Step.gender: 'About you',
+    _Step.style: 'Your game',
+    _Step.phone: 'Contact',
+    _Step.extras: 'Your profile',
+  };
+  static const _titles = <_Step, String>{
+    _Step.name: 'What should we call you?',
+    _Step.username: 'Pick your username',
+    _Step.dob: 'When were you born?',
+    _Step.gender: 'How do you identify?',
+    _Step.style: 'Your playing style',
+    _Step.phone: 'What\'s your phone number?',
+    _Step.extras: 'Put a face to your name',
+  };
+  static const _subs = <_Step, String>{
+    _Step.name: 'This is the name other players see on matches and rankings.',
+    _Step.username: 'Your unique handle. Letters, numbers and _ only.',
+    _Step.dob: 'We use this to match you with players in your age group.',
+    _Step.gender: 'Helps us place you in the right leagues and events.',
+    _Step.style: 'Tell us your dominant hand and preferred court side.',
+    _Step.phone: 'So other players can reach you to arrange matches.',
+    _Step.extras: 'Both are optional — you can add or change them later in Edit Profile.',
+  };
 
+  static final _usernameRe = RegExp(r'^[a-z0-9_]{3,20}$');
+
+  /// Where to open. Anything we still have to ASK for comes first — landing an
+  /// Apple signup on the birthday step while its name is blank is how the
+  /// missing answer stays missing.
   int _firstIncompleteStep() {
-    if (widget.initial.dateOfBirth == null) return 0;
-    if (widget.initial.gender == null) return 1;
-    if (widget.initial.hand == null || widget.initial.side == null) return 2;
-    if (OnboardingValidation.phone(widget.initial.phone) != null) return 3;
+    if (_steps.contains(_Step.name)) return _steps.indexOf(_Step.name);
+    if (_steps.contains(_Step.username)) return _steps.indexOf(_Step.username);
+    if (widget.initial.dateOfBirth == null) return _steps.indexOf(_Step.dob);
+    if (widget.initial.gender == null) return _steps.indexOf(_Step.gender);
+    if (widget.initial.hand == null || widget.initial.side == null) {
+      return _steps.indexOf(_Step.style);
+    }
+    if (OnboardingValidation.phone(widget.initial.phone) != null) {
+      return _steps.indexOf(_Step.phone);
+    }
     return 0;
   }
 
   bool get _stepValid {
-    switch (_step) {
-      case 0:
+    switch (_cur) {
+      case _Step.name:
+        return OnboardingProfile.isUsableName(_draft.name) &&
+            _draft.name!.trim().length >= 2;
+      case _Step.username:
+        return _usernameRe.hasMatch((_draft.username ?? '').trim().toLowerCase());
+      case _Step.dob:
         return OnboardingValidation.dateOfBirth(_draft.dateOfBirth) == null;
-      case 1:
+      case _Step.gender:
         return _draft.gender != null;
-      case 2:
+      case _Step.style:
         return _draft.hand != null && _draft.side != null;
-      case 3:
+      case _Step.phone:
         return OnboardingValidation.phone(_draft.phone) == null;
-      case 4:
+      case _Step.extras:
         return true; // photo and bio are both optional
-      default:
-        return false;
     }
   }
 
@@ -116,7 +168,20 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   }
 
   Future<void> _next() async {
-    if (!_stepValid || _saving) return;
+    if (!_stepValid || _saving || _checkingHandle) return;
+    // Check the handle before moving on, not at Finish — the unique index would
+    // otherwise reject it five steps later, on the screen that can't fix it.
+    if (_cur == _Step.username) {
+      final handle = _draft.username!.trim().toLowerCase();
+      setState(() { _checkingHandle = true; _error = null; });
+      final free = await ProfileService.isUsernameAvailable(handle);
+      if (!mounted) return;
+      setState(() => _checkingHandle = false);
+      if (!free) {
+        setState(() => _error = 'That username is already taken. Try another.');
+        return;
+      }
+    }
     if (_step < _total - 1) {
       setState(() {
         _forward = true;
@@ -129,13 +194,41 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   }
 
   Future<void> _submit() async {
-    if (!OnboardingValidation.isValid(_draft)) {
+    // isValid mirrors the server's onboarding_completed, which doesn't include
+    // name/username — so the steps we added need checking separately or they
+    // could be walked past.
+    if (!OnboardingValidation.isValid(_draft) ||
+        (_steps.contains(_Step.name) &&
+            !OnboardingProfile.isUsableName(_draft.name)) ||
+        (_steps.contains(_Step.username) &&
+            !_usernameRe.hasMatch((_draft.username ?? '').trim().toLowerCase()))) {
       setState(() => _error = 'Please complete every step before finishing.');
       return;
     }
     setState(() { _saving = true; _error = null; });
     try {
       await widget.profileService.saveOnboarding(widget.userId, _draft, name: widget.displayName);
+
+      // Read it back before declaring victory. onCompleted() sends AuthGate to
+      // _resolve(), which re-reads the profile and returns straight here if it
+      // still looks incomplete — that is the onboarding loop, and from the
+      // player's side it is indistinguishable from the app being broken.
+      //
+      // An upsert can "succeed" and change nothing: PostgREST reports no error
+      // when RLS matches zero rows, and a column the client has no grant on is
+      // simply refused. One extra round trip, once per account, turns an
+      // infinite loop into a message that says what happened.
+      final saved = await widget.profileService.fetch(widget.userId);
+      if (!mounted) return;
+      if (saved == null || !saved.isComplete) {
+        setState(() {
+          _saving = false;
+          _error = "Your answers were sent but the profile didn't save. "
+              'Please try Finish again — if it keeps happening, contact '
+              'help@padel-rivals.com.';
+        });
+        return;
+      }
       // Optional extras, deliberately after the answers are safely stored and
       // deliberately not awaited into the same try/catch outcome: a photo that
       // fails to upload must not throw away a completed onboarding and drop
@@ -233,13 +326,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                   style: AppText.bodyStrong(AppColors.inkFaint).copyWith(fontSize: 12)),
             ]),
             const SizedBox(height: 18),
-            Text(_kickers[_step].toUpperCase(),
+            Text(_kickers[_cur]!.toUpperCase(),
                 style: AppText.kicker(AppColors.primary).copyWith(fontSize: 11, letterSpacing: 1.5)),
             const SizedBox(height: 5),
-            Text(_titles[_step],
+            Text(_titles[_cur]!,
                 style: AppText.stat(25, AppColors.ink).copyWith(letterSpacing: -0.6, height: 1.05)),
             const SizedBox(height: 7),
-            Text(_subs[_step],
+            Text(_subs[_cur]!,
                 style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13.5, height: 1.45)),
           ]),
         ),
@@ -284,7 +377,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             _PrimaryButton(
               label: _step == _total - 1 ? 'Finish' : 'Continue',
               enabled: _stepValid,
-              loading: _saving,
+              loading: _saving || _checkingHandle,
               onTap: _next,
             ),
           ]),
@@ -295,8 +388,34 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   }
 
   Widget _stepBody() {
-    switch (_step) {
-      case 0:
+    switch (_cur) {
+      case _Step.name:
+        return _TextStep(
+          key: const ValueKey('name'),
+          label: 'Full name',
+          hint: 'e.g. Karim Tamer',
+          icon: Icons.person_outline_rounded,
+          initial: _draft.name ?? '',
+          capitalization: TextCapitalization.words,
+          onChanged: (v) => setState(() {
+            _draft = _draft.copyWith(name: v);
+            _error = null;
+          }),
+        );
+      case _Step.username:
+        return _TextStep(
+          key: const ValueKey('username'),
+          label: 'Username',
+          hint: 'e.g. karim_t',
+          helper: '3–20 characters: letters, numbers or _',
+          icon: Icons.alternate_email_rounded,
+          initial: _draft.username ?? '',
+          onChanged: (v) => setState(() {
+            _draft = _draft.copyWith(username: v.trim().toLowerCase());
+            _error = null;
+          }),
+        );
+      case _Step.dob:
         return _DobStep(
           value: _draft.dateOfBirth,
           onChanged: (d) => setState(() {
@@ -304,7 +423,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             _error = null;
           }),
         );
-      case 1:
+      case _Step.gender:
         return _grid([
           for (final g in Gender.values)
             ChoiceCard(
@@ -317,7 +436,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               }),
             ),
         ]);
-      case 2:
+      case _Step.style:
         return _HandSideStep(
           hand: _draft.hand,
           side: _draft.side,
@@ -330,7 +449,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             _error = null;
           }),
         );
-      case 3:
+      case _Step.phone:
         return _PhoneStep(
           value: _draft.phone,
           onChanged: (p) => setState(() {
@@ -338,7 +457,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             _error = null;
           }),
         );
-      case 4:
+      case _Step.extras:
         return Column(key: const ValueKey('photo_bio'), children: [
           const SizedBox(height: 6),
           Center(child: PhotoPicker(onTap: _pickPhoto, imageBytes: _avatarBytes)),
@@ -349,8 +468,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
           const SizedBox(height: 22),
           BioField(onChanged: (v) => _bio = v),
         ]);
-      default:
-        return const SizedBox.shrink();
     }
   }
 
@@ -366,6 +483,63 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 }
 
 // ── Step 0: Date of Birth ─────────────────────────────────────────────────────
+/// Single-field step (name, username).
+///
+/// Stateful only to own the controller: the parent rebuilds on every keystroke
+/// to re-evaluate the Continue button, and a controller created in build would
+/// reset the cursor to the start each time.
+class _TextStep extends StatefulWidget {
+  final String label;
+  final String? hint;
+  final String? helper;
+  final IconData icon;
+  final String initial;
+  final TextCapitalization capitalization;
+  final ValueChanged<String> onChanged;
+
+  const _TextStep({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.initial,
+    required this.onChanged,
+    this.hint,
+    this.helper,
+    this.capitalization = TextCapitalization.none,
+  });
+
+  @override
+  State<_TextStep> createState() => _TextStepState();
+}
+
+class _TextStepState extends State<_TextStep> {
+  late final TextEditingController _ctrl =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: AuthField(
+        label: widget.label,
+        hint: widget.hint,
+        helper: widget.helper,
+        icon: widget.icon,
+        controller: _ctrl,
+        capitalization: widget.capitalization,
+        autocorrect: false,
+        onChanged: widget.onChanged,
+      ),
+    );
+  }
+}
+
 class _DobStep extends StatelessWidget {
   final DateTime? value;
   final ValueChanged<DateTime> onChanged;
