@@ -81,6 +81,8 @@ function inLines(r: any): Line[] {
     { label: "Store sales", amount: +r.in?.store || 0, hint: `${c.orders ?? 0} orders` },
     { label: "Tournament entries", amount: +r.in?.entries || 0, hint: `${c.entries ?? 0} paid entries` },
     { label: "Repairs", amount: +r.in?.repairs || 0, hint: `${c.repairs ?? 0} collected` },
+    { label: "Trade-in sales", amount: +r.in?.trade_sales || 0, hint: `${c.trade_deals ?? 0} swaps · automatic` },
+    { label: "Used racket sales", amount: +r.in?.used_sales || 0, hint: `${c.used_sold ?? 0} sold · automatic` },
     ...((r.in?.by_category ?? []) as any[]).map((e) => ({
       label: INCOME_LABELS[e.category] ?? "Other",
       amount: +e.amount || 0,
@@ -96,6 +98,8 @@ function outLines(r: any): Line[] {
   const lines: Line[] = [
     { label: "Cost of goods sold", amount: +r.out?.cogs || 0, hint: "What the items sold cost us · automatic" },
     { label: "Trade-in credit", amount: +r.out?.trade_in || 0, hint: `${c.trade_in ?? 0} offers accepted · automatic` },
+    { label: "Trade-in racket cost", amount: +r.out?.trade_cost || 0, hint: "What the rackets we swapped out cost us · automatic" },
+    { label: "Used rackets bought", amount: +r.out?.used_buy || 0, hint: `${c.used_bought ?? 0} bought · automatic` },
     ...((r.out?.by_category ?? []) as any[]).map((e) => ({
       label: EXPENSE_LABELS[e.category] ?? "Other",
       amount: +e.amount || 0,

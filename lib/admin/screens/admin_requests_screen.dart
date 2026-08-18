@@ -62,13 +62,25 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
   static String _msg(Object e) =>
       e is PostgrestException ? e.message : e.toString();
 
-  /// Profit on a recorded swap: cash taken less what the racket cost us. Null
-  /// unless both were filled in — half a sum is worse than none.
+  /// Profit on a recorded swap — the three prices in a trade-in:
+  ///
+  ///     what we sold the new racket for   (given_price)
+  ///   − what the new racket cost us       (given_cost)
+  ///   − what we paid for the used racket  (offer_credit)
+  ///
+  /// This is deliberately the SAME arithmetic the P&L now does, so the number
+  /// on the trade and the number in Reports can never disagree. Note it is not
+  /// `paid_amount - given_cost`: paid_amount is a record of the cash and is
+  /// free to differ (part payment, haggling) without moving platform profit.
+  ///
+  /// Null unless the sale price is known — a "profit" computed from a missing
+  /// price is just the negative of the costs, which reads as a real loss.
   static num? _recordedProfit(Map row) {
-    final paid = row['paid_amount'] as num?;
-    final cost = row['given_cost'] as num?;
-    if (paid == null || cost == null) return null;
-    return paid - cost;
+    final price = row['given_price'] as num?;
+    if (price == null) return null;
+    final cost = (row['given_cost'] as num?) ?? 0;
+    final credit = (row['offer_credit'] as num?) ?? 0;
+    return price - cost - credit;
   }
 
   /// The racket handed back in the swap, or null if none was recorded. Reads
@@ -711,25 +723,46 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
           _kv('Your offer',
               t['offer_credit'] != null ? _egp(t['offer_credit']) : '—'),
         ]),
-        // Only when the swap was recorded — a player-submitted trade-in that
-        // nobody has completed yet has nothing to show here.
-        if (_givenBack(t) != null) ...[
-          const SizedBox(height: 10),
+        // The other half of the swap. A player-submitted trade-in arrives with
+        // none of this, so the button below is how it gets filled in — without
+        // it the deal would show as pure credit out and nothing in.
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(child: Text('THE SWAP', style: AdminText.kicker())),
+          TextButton(
+            onPressed: () => _openTradeMoney(t),
+            child: Text(
+                _givenBack(t) == null ? 'Record the swap' : 'Edit',
+                style: AdminText.strong(AdminColors.primary)),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        if (_givenBack(t) == null && t['given_price'] == null)
+          Text(
+            'Nothing recorded yet, so Reports counts only the credit going '
+            'out. Add what you sold them and what it cost you.',
+            style: AdminText.small(AdminColors.inkFaint),
+          )
+        else ...[
           Row(children: [
-            _kv('Given back', _givenBack(t)!),
+            _kv('Given back', _givenBack(t) ?? '—'),
             const SizedBox(width: 10),
-            _kv('They paid',
-                t['paid_amount'] != null ? _egp(t['paid_amount']) : '—'),
+            _kv('Sold it for',
+                t['given_price'] != null ? _egp(t['given_price']) : '—'),
           ]),
-        ],
-        if (_recordedProfit(t) != null) ...[
           const SizedBox(height: 10),
           Row(children: [
             _kv('It cost us',
                 t['given_cost'] != null ? _egp(t['given_cost']) : '—'),
             const SizedBox(width: 10),
-            _kv('Profit on the deal', _egp(_recordedProfit(t)!)),
+            _kv('Profit on the deal',
+                _recordedProfit(t) != null ? _egp(_recordedProfit(t)!) : '—'),
           ]),
+          if (t['paid_amount'] != null) ...[
+            const SizedBox(height: 6),
+            Text('They handed over ${_egp(t['paid_amount'])} in cash.',
+                style: AdminText.small(AdminColors.inkFaint)),
+          ],
         ],
         const SizedBox(height: 14),
         Container(
@@ -932,6 +965,25 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
     }
   }
 
+  /// Fills in (or corrects) the swap on a trade-in that already exists —
+  /// including one the player submitted through the app, which arrives with
+  /// nothing but their racket and so has no way to reach the P&L otherwise.
+  /// Same sheet as recording one from scratch, so the money fields, the
+  /// catalogue picker and the profit sum are written once.
+  Future<void> _openTradeMoney(Map<String, dynamic> t) async {
+    Navigator.pop(context); // close the trade sheet underneath
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddTradeSheet(existing: t),
+    );
+    if (saved == true) {
+      await _load();
+      if (mounted) adminToast(context, 'Swap saved');
+    }
+  }
+
   Widget _kv(String k, String v) => Expanded(
         child: Container(
           padding: const EdgeInsets.all(11),
@@ -957,7 +1009,11 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen> {
 // picked — there is deliberately no free-text "walk-in stranger" path.
 // ============================================================================
 class _AddTradeSheet extends StatefulWidget {
-  const _AddTradeSheet();
+  /// The trade being edited, or null when recording a new one. Editing reuses
+  /// this sheet so the money fields and the profit sum exist in one place; what
+  /// changes is that the seller is already settled and cannot be re-picked.
+  final Map<String, dynamic>? existing;
+  const _AddTradeSheet({this.existing});
   @override
   State<_AddTradeSheet> createState() => _AddTradeSheetState();
 }
@@ -996,9 +1052,40 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
     'poor': 'Poor',
   };
 
+  /// True when this sheet is correcting a trade that already exists.
+  bool get _editing => widget.existing != null;
+
+  /// Whether to offer the offer-made / accepted choice. A new trade always
+  /// does. An existing one only when it is already at one of those two —
+  /// pending, rejected and completed are moved by the buttons on the trade
+  /// sheet, and a selector here would silently drag it somewhere else.
+  bool get _showsStatus {
+    final s = widget.existing?['status'] as String?;
+    return s == null || s == 'offer_made' || s == 'accepted';
+  }
+
   @override
   void initState() {
     super.initState();
+    final e = widget.existing;
+    if (e != null) {
+      _racket.text = (e['racket_desc'] as String?) ?? '';
+      _given.text = (e['given_name'] as String?) ?? '';
+      _note.text = (e['note'] as String?) ?? '';
+      _condition = e['condition'] as String?;
+      for (final (c, v) in [
+        (_credit, e['offer_credit']),
+        (_givenPrice, e['given_price']),
+        (_paid, e['paid_amount']),
+        (_cost, e['given_cost']),
+      ]) {
+        if (v is num) c.text = _plain(v);
+      }
+      // Only the two money-bearing statuses get a selector (see build); any
+      // other status is left exactly as it is and never sent.
+      final s = e['status'] as String?;
+      if (s == 'offer_made' || s == 'accepted') _status = s!;
+    }
     _loadProducts();
   }
 
@@ -1039,8 +1126,9 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
   Future<void> _save() async {
     final player = _player;
     // One of the two, mirroring trade_requests_who_chk on the table — a row
-    // with neither belongs to nobody and could never be chased up.
-    if (player == null && _walkIn.text.trim().isEmpty) {
+    // with neither belongs to nobody and could never be chased up. An existing
+    // trade already satisfies this and its seller is not re-picked here.
+    if (!_editing && player == null && _walkIn.text.trim().isEmpty) {
       adminToast(context, 'Pick an account or type who sold it', ok: false);
       return;
     }
@@ -1050,28 +1138,47 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
     }
     final credit = int.tryParse(_credit.text.trim());
     if (credit == null || credit <= 0) {
-      adminToast(context, 'Enter the credit in EGP', ok: false);
+      adminToast(context, 'Enter what you paid for their racket', ok: false);
       return;
     }
 
     setState(() => _busy = true);
-    final err = await AdminService.createTrade(
-      playerId: player?['id'] as String?,
-      playerName: _walkIn.text,
-      racketDesc: _racket.text.trim(),
-      condition: _condition,
-      offerCredit: credit,
-      note: _note.text,
-      status: _status,
-      givenProductId: _givenProduct?['id'] as String?,
-      // Whichever route was used, the label is stored as written today.
-      givenName: _givenProduct != null
-          ? _productLabel(_givenProduct!)
-          : _given.text,
-      givenPrice: num.tryParse(_givenPrice.text.trim()),
-      paidAmount: num.tryParse(_paid.text.trim()),
-      givenCost: num.tryParse(_cost.text.trim()),
-    );
+    // Whichever route was used, the label is stored as written today.
+    final givenName =
+        (_givenProduct != null ? _productLabel(_givenProduct!) : _given.text)
+            .trim();
+    final existing = widget.existing;
+    final err = existing == null
+        ? await AdminService.createTrade(
+            playerId: player?['id'] as String?,
+            playerName: _walkIn.text,
+            racketDesc: _racket.text.trim(),
+            condition: _condition,
+            offerCredit: credit,
+            note: _note.text,
+            status: _status,
+            givenProductId: _givenProduct?['id'] as String?,
+            givenName: givenName,
+            givenPrice: num.tryParse(_givenPrice.text.trim()),
+            paidAmount: num.tryParse(_paid.text.trim()),
+            givenCost: num.tryParse(_cost.text.trim()),
+          )
+        : await AdminService.updateTrade(existing['id'] as String, {
+            'racket_desc': _racket.text.trim(),
+            'condition': _condition,
+            'offer_credit': credit,
+            'note': _note.text.trim(),
+            // Clearing a field has to be possible, so these are sent even when
+            // empty — unlike the insert, where absent means "leave the default".
+            'given_name': givenName.isEmpty ? null : givenName,
+            if (_givenProduct != null) 'given_product_id': _givenProduct!['id'],
+            'given_price': num.tryParse(_givenPrice.text.trim()),
+            'paid_amount': num.tryParse(_paid.text.trim()),
+            'given_cost': num.tryParse(_cost.text.trim()),
+            // Only when this trade is at one of the two statuses the selector
+            // covers; anything else belongs to the buttons on the trade sheet.
+            if (_showsStatus) 'status': _status,
+          });
     if (!mounted) return;
     setState(() => _busy = false);
     if (err != null) {
@@ -1106,9 +1213,13 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Record a trade-in', style: AdminText.h2()),
+                      Text(_editing ? 'The swap' : 'Record a trade-in',
+                          style: AdminText.h2()),
                       const SizedBox(height: 2),
-                      Text('A racket taken in outside the app',
+                      Text(
+                          _editing
+                              ? 'What changed hands, and what it made'
+                              : 'A racket taken in outside the app',
                           style: AdminText.small()),
                     ]),
               ),
@@ -1124,7 +1235,12 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
               padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
               children: [
                 _label('Who sold it'),
-                if (_player != null)
+                // Settled on an existing trade — re-picking the seller here
+                // would be a different trade, not an edit of this one.
+                if (_editing)
+                  _staticRow(_AdminRequestsScreenState._playerName(
+                      widget.existing!))
+                else if (_player != null)
                   _selectedPlayer()
                 else ...[
                   // Two ways in, and only one is needed: link an account, or
@@ -1265,33 +1381,43 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
                   ],
                 ],
                 const SizedBox(height: 16),
+                // The three prices in a swap, kept together because the profit
+                // below is made of all three — the credit used to live in its
+                // own section further down, where you could not see what it did
+                // to the deal.
                 _label('The money'),
                 Row(children: [
                   Expanded(
-                      child: _money(_givenPrice, 'Racket price',
+                      child: _money(_credit, 'We paid for theirs',
                           onChanged: () => _syncPaid())),
                   const SizedBox(width: 10),
-                  Expanded(child: _money(_paid, 'They paid')),
+                  Expanded(child: _money(_cost, 'The new one cost us')),
                 ]),
                 const SizedBox(height: 10),
                 Row(children: [
-                  Expanded(child: _money(_cost, 'It cost us')),
+                  Expanded(
+                      child: _money(_givenPrice, 'We sold the new one for',
+                          onChanged: () => _syncPaid())),
                   const SizedBox(width: 10),
                   Expanded(child: _profitBox()),
                 ]),
+                const SizedBox(height: 10),
+                _money(_paid, 'They handed over, in cash'),
                 const SizedBox(height: 8),
                 Text(
-                  'Picking from the store fills the price and cost in for you. '
-                  '"They paid" starts at the price minus the credit above — '
-                  'change it if they paid something else.',
+                  'Picking from the store fills the sale price and the cost in '
+                  'for you. The cash figure starts at the sale price minus the '
+                  'credit — change it if they actually paid something else. It '
+                  'is a record only; the profit above is the three prices.',
                   style: AdminText.small(AdminColors.inkFaint),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'These stay on the trade-in. The Reports P&L does not read '
-                  'them, so ring the racket up as an order if it should move '
-                  'the platform profit figures.',
-                  style: AdminText.small(AdminColors.inkFaint),
+                  'Once this is accepted, Reports counts all three: the sale as '
+                  'money in, the cost and the credit as money out. Do NOT also '
+                  'ring this racket up as a store order — it would be counted '
+                  'twice.',
+                  style: AdminText.small(AdminColors.warn),
                 ),
                 const SizedBox(height: 16),
                 _label('Condition'),
@@ -1304,34 +1430,29 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
                           () => setState(() => _condition = e.key)),
                   ],
                 ),
-                const SizedBox(height: 16),
-                _label('Credit given (EGP)'),
-                TextField(
-                  controller: _credit,
-                  keyboardType: TextInputType.number,
-                  style: AdminText.sans(22, FontWeight.w800, AdminColors.ink),
-                  decoration: _dec('0'),
-                ),
-                const SizedBox(height: 16),
-                _label('Status'),
-                Row(children: [
-                  _chip('Offer made', _status == 'offer_made',
-                      () => setState(() => _status = 'offer_made')),
-                  const SizedBox(width: 8),
-                  _chip('Accepted', _status == 'accepted',
-                      () => setState(() => _status = 'accepted')),
-                ]),
-                const SizedBox(height: 8),
-                Text(
-                  _status == 'accepted'
-                      ? 'Accepted counts the credit against profit straight '
-                          'away — the Reports tab picks it up as trade-in cost.'
-                      : 'An offer costs nothing yet. Mark it accepted once the '
-                          'racket and the credit have actually changed hands.',
-                  style: AdminText.small(_status == 'accepted'
-                      ? AdminColors.warn
-                      : AdminColors.inkSoft),
-                ),
+                if (_showsStatus) ...[
+                  const SizedBox(height: 16),
+                  _label('Status'),
+                  Row(children: [
+                    _chip('Offer made', _status == 'offer_made',
+                        () => setState(() => _status = 'offer_made')),
+                    const SizedBox(width: 8),
+                    _chip('Accepted', _status == 'accepted',
+                        () => setState(() => _status = 'accepted')),
+                  ]),
+                  const SizedBox(height: 8),
+                  Text(
+                    _status == 'accepted'
+                        ? 'Accepted puts the whole deal into Reports straight '
+                            'away — the sale, the cost and the credit.'
+                        : 'An offer moves no money yet. Mark it accepted once '
+                            'the rackets and the money have actually changed '
+                            'hands.',
+                    style: AdminText.small(_status == 'accepted'
+                        ? AdminColors.warn
+                        : AdminColors.inkSoft),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 _label('Note (optional)'),
                 TextField(
@@ -1347,8 +1468,13 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
             decoration: const BoxDecoration(
                 color: AdminColors.surfaceAlt,
                 border: Border(top: BorderSide(color: AdminColors.lineSoft))),
-            child: AdminButton(_busy ? 'Saving…' : 'Save trade-in',
-                full: true, height: 48, onPressed: _busy ? null : _save),
+            child: AdminButton(
+                _busy
+                    ? 'Saving…'
+                    : (_editing ? 'Save the swap' : 'Save trade-in'),
+                full: true,
+                height: 48,
+                onPressed: _busy ? null : _save),
           ),
         ]),
       ),
@@ -1392,13 +1518,15 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
   static String _plain(num v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toString();
 
-  /// Profit on this swap: cash taken less what the racket cost us. Null until
-  /// both halves are known — a half-filled sum is worse than none.
+  /// Profit on this swap: sold for, less what it cost us, less what we paid for
+  /// their old racket. Same sum as [_AdminRequestsScreenState._recordedProfit]
+  /// and as the P&L — see the note there for why paid_amount is not in it.
   num? get _dealProfit {
-    final paid = num.tryParse(_paid.text.trim());
-    final cost = num.tryParse(_cost.text.trim());
-    if (paid == null || cost == null) return null;
-    return paid - cost;
+    final price = num.tryParse(_givenPrice.text.trim());
+    if (price == null) return null;
+    final cost = num.tryParse(_cost.text.trim()) ?? 0;
+    final credit = num.tryParse(_credit.text.trim()) ?? 0;
+    return price - cost - credit;
   }
 
   /// Catalogue rows matching what has been typed, capped so the sheet cannot
@@ -1492,6 +1620,26 @@ class _AddTradeSheetState extends State<_AddTradeSheet> {
               _givenQuery = '';
             }),
             child: Text('Change', style: AdminText.strong(AdminColors.primary)),
+          ),
+        ]),
+      );
+
+  /// A settled value the sheet shows but will not let you change.
+  Widget _staticRow(String text) => Container(
+        padding: const EdgeInsets.all(11),
+        decoration: BoxDecoration(
+          color: AdminColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: AdminColors.line),
+        ),
+        child: Row(children: [
+          AdminAvatar(_AdminRequestsScreenState._initials(text), size: 32),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(text,
+                style: AdminText.strong(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
           ),
         ]),
       );

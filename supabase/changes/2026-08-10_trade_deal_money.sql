@@ -1,5 +1,13 @@
 -- 2026-08-10 — The money in a trade-in swap, so the deal's profit is visible.
 --
+-- ⚠️  SUPERSEDED BY changes/2026-08-18_trade_pl.sql. The "ASKED AND DECIDED"
+-- note at the bottom of this file was reversed: _finance_core now DOES read
+-- given_price (money in) and given_cost (money out), and the order route for
+-- swaps is retired. The column definitions here are still correct and this
+-- file is still safe to re-run — only the reasoning below is out of date.
+-- Deal profit is now given_price - given_cost - offer_credit, not
+-- paid_amount - given_cost.
+--
 -- A swap has three amounts the console could not record:
 --   given_price — the ticket price of the racket handed over
 --   paid_amount — what the player actually handed over in cash, i.e. the price

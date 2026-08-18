@@ -1,11 +1,17 @@
 // ============================================================================
 // finance_model.dart — the money model behind the Reports tab.
 //
-// Mirrors `_finance_core` in supabase/changes/2026-08-06_expenses_and_pl.sql:
-// money IN (store sales, entry fees, repairs), money OUT (cost of goods sold,
-// trade-in credit, hand-recorded expenses) and the profit between them. The
+// Mirrors `_finance_core` (latest: changes/2026-08-18_used_rackets.sql): money
+// IN (store sales, entry fees, repairs, trade-in sales, used racket sales),
+// money OUT (cost of goods sold, trade-in credit, trade-in racket cost, used
+// rackets bought, hand-recorded expenses) and the profit between them. The
 // server is the only thing that computes these numbers — this file just names,
 // formats and orders them for display.
+//
+// A trade-in swap contributes THREE of those lines: `trade_sales` (what we sold
+// the outgoing racket for), `trade_cost` (what it cost us) and `trade_in` (the
+// credit we paid for the incoming racket). Their net is the deal's profit. That
+// is also why a swapped racket must never additionally be rung up as an order.
 //
 // The category list MUST stay in lockstep with `expenses_category_chk` in the
 // SQL. Note there is deliberately no "stock" category: inventory is costed per
@@ -132,8 +138,9 @@ extension LedgerKindX on LedgerKind {
 /// A parsed `admin_finance_summary` / weekly `report` payload.
 class FinanceReport {
   final num moneyIn, moneyOut, profit, margin;
-  final num store, storeCollected, entries, repairs, manualIn;
-  final num cogs, tradeIn, expenses;
+  final num store, storeCollected, entries, repairs, manualIn, tradeSales;
+  final num usedSales;
+  final num cogs, tradeIn, tradeCost, usedBuy, expenses;
   final List<MapEntry<String, num>> byCategory;   // expense category → amount
   final List<MapEntry<String, num>> inByCategory; // income category  → amount
   final Map<String, int> counts;
@@ -151,8 +158,12 @@ class FinanceReport {
     this.entries = 0,
     this.repairs = 0,
     this.manualIn = 0,
+    this.tradeSales = 0,
+    this.usedSales = 0,
     this.cogs = 0,
     this.tradeIn = 0,
+    this.tradeCost = 0,
+    this.usedBuy = 0,
     this.expenses = 0,
     this.byCategory = const [],
     this.inByCategory = const [],
@@ -170,8 +181,12 @@ class FinanceReport {
         entries = 0,
         repairs = 0,
         manualIn = 0,
+        tradeSales = 0,
+        usedSales = 0,
         cogs = 0,
         tradeIn = 0,
+        tradeCost = 0,
+        usedBuy = 0,
         expenses = 0,
         byCategory = const [],
         inByCategory = const [],
@@ -211,8 +226,12 @@ class FinanceReport {
       entries: n(mIn, 'entries'),
       repairs: n(mIn, 'repairs'),
       manualIn: n(mIn, 'manual'),
+      tradeSales: n(mIn, 'trade_sales'),
+      usedSales: n(mIn, 'used_sales'),
       cogs: n(mOut, 'cogs'),
       tradeIn: n(mOut, 'trade_in'),
+      tradeCost: n(mOut, 'trade_cost'),
+      usedBuy: n(mOut, 'used_buy'),
       expenses: n(mOut, 'expenses'),
       byCategory: cats(mOut),
       inByCategory: cats(mIn),
@@ -246,6 +265,31 @@ class FinanceReport {
         tone: AdminColors.info,
         icon: Icons.build_outlined,
         hint: '${counts['repairs'] ?? 0} collected',
+      ),
+      // The racket handed over in a swap, at what we sold it for. Its cost is
+      // the matching `trade_cost` line below and the credit we paid for the
+      // used racket is `trade_in`, so the three together are the deal's profit.
+      MoneyLine(
+        key: 'trade_sales',
+        label: 'Trade-in sales',
+        amount: tradeSales,
+        tone: AdminColors.green,
+        icon: Icons.swap_horiz_rounded,
+        hint: '${counts['trade_deals'] ?? 0} swaps',
+        auto: true,
+      ),
+      // Second-hand rackets sold on, from the Used rackets section. Their
+      // purchase is the matching `used_buy` line below — but on the day it was
+      // BOUGHT, which is often a different week, so the two rarely pair up
+      // inside one report.
+      MoneyLine(
+        key: 'used_sales',
+        label: 'Used racket sales',
+        amount: usedSales,
+        tone: AdminColors.green,
+        icon: Icons.sports_tennis_rounded,
+        hint: '${counts['used_sold'] ?? 0} sold',
+        auto: true,
       ),
       // Recorded by hand — broken out per category so "cash sale" and
       // "sponsorship" don't collapse into one anonymous "manual" line.
@@ -283,6 +327,31 @@ class FinanceReport {
         tone: AdminColors.silver,
         icon: Icons.swap_horiz_rounded,
         hint: '${counts['trade_in'] ?? 0} offers accepted',
+        auto: true,
+      ),
+      // What the racket we handed over in a swap cost us — the COGS of a
+      // trade-in, kept on its own line rather than folded into `cogs` so a
+      // swap's three figures stay traceable back to the trade that made them.
+      MoneyLine(
+        key: 'trade_cost',
+        label: 'Trade-in racket cost',
+        amount: tradeCost,
+        tone: AdminColors.bronze,
+        icon: Icons.sports_tennis_rounded,
+        hint: 'What the rackets we swapped out cost us',
+        auto: true,
+      ),
+      // What second-hand stock cost, on the day it was bought — whether or not
+      // it has sold yet. A racket on the shelf is money already spent, so this
+      // line can run ahead of `used_sales` for weeks; that is the buying, not
+      // a loss.
+      MoneyLine(
+        key: 'used_buy',
+        label: 'Used rackets bought',
+        amount: usedBuy,
+        tone: AdminColors.bronze,
+        icon: Icons.inventory_2_outlined,
+        hint: '${counts['used_bought'] ?? 0} bought',
         auto: true,
       ),
       for (final e in byCategory)

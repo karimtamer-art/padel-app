@@ -1,5 +1,11 @@
 -- 2026-08-10 — Record what we handed BACK in a trade-in.
 --
+-- ⚠️  PARTLY SUPERSEDED BY changes/2026-08-18_trade_pl.sql. The "DELIBERATELY
+-- NOT WIRED TO THE P&L" note below is no longer true of the money: given_price
+-- and given_cost now feed _finance_core directly, and a swapped racket must NOT
+-- also be rung up as an order. Still true of STOCK — filling this in decrements
+-- no inventory, for the reasons given below. Columns unchanged; safe to re-run.
+--
 -- A trade-in is a swap: a racket comes in, and usually one goes out with it.
 -- Only the incoming racket was ever stored, so the console could not say what
 -- the player actually walked away with.

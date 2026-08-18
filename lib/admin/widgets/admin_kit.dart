@@ -156,6 +156,10 @@ class StatusBadge extends StatelessWidget {
     'in_repair': [AdminColors.primary, 'In repair'],
     'ready': [AdminColors.green, 'Ready'],
     'collected': [AdminColors.inkSoft, 'Collected'],
+    // Used rackets: bought to sell on, so "on the shelf" is the working state
+    // and "sold" is the finished one — the opposite polarity to stock levels.
+    'on_shelf': [AdminColors.info, 'On the shelf'],
+    'sold': [AdminColors.success, 'Sold'],
     'offered': [AdminColors.info, 'Offer sent'],
     'accepted': [AdminColors.success, 'Accepted'],
     'declined': [AdminColors.danger, 'Declined'],

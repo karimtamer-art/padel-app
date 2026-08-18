@@ -926,6 +926,113 @@ class AdminService {
     return _db.storage.from(_bannerBucket).getPublicUrl(path);
   }
 
+  // ── Used rackets ──────────────────────────────────────────────
+  //
+  // Second-hand stock bought to sell on. Plain table writes guarded by RLS
+  // (`_can_edit('used_rackets')`) — nothing here is atomic. The P&L reads the
+  // same rows server-side in `_finance_core`, so the console computes no money
+  // that Reports could disagree with; it only re-states per racket what the
+  // server totals per period.
+
+  /// Every used racket: still on the shelf first (nothing to chase on a sold
+  /// one), then newest purchase first. Returns empty on a database without the
+  /// 2026-08-18_used_rackets delta, so the section shows its empty state
+  /// rather than an error.
+  static Future<List<Map<String, dynamic>>> fetchUsedRackets() async {
+    try {
+      final res = await _db.from('used_rackets').select('*');
+      final rows = List<Map<String, dynamic>>.from(res as List);
+      // Sorted in Dart: two keys, one of them a nulls-first flag, is more
+      // legible here than chaining .order() — and postgrest's .order()
+      // defaults to descending, which has bitten this codebase before.
+      rows.sort((a, b) {
+        final aSold = a['sold_on'] != null, bSold = b['sold_on'] != null;
+        if (aSold != bSold) return aSold ? 1 : -1;
+        return ((b['bought_on'] as String?) ?? '')
+            .compareTo((a['bought_on'] as String?) ?? '');
+      });
+      return rows;
+    } catch (e) {
+      debugPrint('[AdminService] fetchUsedRackets: $e');
+      return [];
+    }
+  }
+
+  /// Insert or update one racket. Returns an error string, or null on success.
+  ///
+  /// Every nullable field is sent even when empty so a value can be CLEARED —
+  /// un-selling a racket entered by mistake has to be possible. The DB's
+  /// `used_rackets_sold_chk` refuses a sell price with no date, so the caller
+  /// must clear both together.
+  static Future<String?> saveUsedRacket({
+    String? id,
+    required String name,
+    String? brand,
+    String? condition,
+    String source = 'bought',
+    required String boughtOn, // yyyy-MM-dd
+    num? buyPrice,
+    String? boughtFrom,
+    String? soldOn,
+    num? sellPrice,
+    String? soldTo,
+    String? note,
+  }) async {
+    String? blank(String? s) =>
+        (s == null || s.trim().isEmpty) ? null : s.trim();
+    final row = {
+      'name': name.trim(),
+      'brand': blank(brand),
+      'condition': blank(condition),
+      'source': source,
+      'bought_on': boughtOn,
+      'buy_price': buyPrice,
+      'bought_from': blank(boughtFrom),
+      'sold_on': blank(soldOn),
+      'sell_price': sellPrice,
+      'sold_to': blank(soldTo),
+      'note': blank(note),
+    };
+    try {
+      if (id == null) {
+        await _db.from('used_rackets').insert(row);
+      } else {
+        await _db.from('used_rackets').update(row).eq('id', id);
+      }
+      return null;
+    } on PostgrestException catch (e) {
+      debugPrint('[AdminService] saveUsedRacket: ${e.code} ${e.message}');
+      // The one constraint an admin can trip from the sheet.
+      if (e.message.contains('used_rackets_sold_chk')) {
+        return 'A sale needs the date it sold, not just the price.';
+      }
+      return "Couldn't save that racket.";
+    } catch (e) {
+      debugPrint('[AdminService] saveUsedRacket: $e');
+      return "Couldn't save that racket.";
+    }
+  }
+
+  /// Records the sale without opening the whole form — the common case.
+  static Future<String?> sellUsedRacket(
+      String id, String soldOn, num price, String? soldTo) async {
+    try {
+      await _db.from('used_rackets').update({
+        'sold_on': soldOn,
+        'sell_price': price,
+        if ((soldTo ?? '').trim().isNotEmpty) 'sold_to': soldTo!.trim(),
+      }).eq('id', id);
+      return null;
+    } catch (e) {
+      debugPrint('[AdminService] sellUsedRacket: $e');
+      return "Couldn't record that sale.";
+    }
+  }
+
+  static Future<void> deleteUsedRacket(String id) async {
+    await _db.from('used_rackets').delete().eq('id', id);
+  }
+
   // ── Sponsors / partners ───────────────────────────────────────
   //
   // Plain table writes, guarded by RLS (`_can_edit('sponsors')`) rather than an

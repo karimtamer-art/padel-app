@@ -19,6 +19,7 @@ import 'screens/admin_courts_screen.dart';
 import 'screens/admin_reports_screen.dart';
 import 'screens/admin_promotions_screen.dart';
 import 'screens/admin_sponsors_screen.dart';
+import 'screens/admin_used_rackets_screen.dart';
 import 'screens/admin_payments_screen.dart';
 import 'screens/admin_broadcasts_screen.dart';
 import 'screens/admin_leaderboards_screen.dart';
@@ -218,6 +219,7 @@ class _AdminConsoleState extends State<AdminConsole> {
     'formats':     ['Format Builder', 'Design tournament formats'],
     'courts':      ['Courts',       'Partner clubs'],
     'store':       ['Store & Orders', 'Catalogue & orders'],
+    'used_rackets':['Used rackets',  'Bought & sold second-hand'],
     'promotions':  ['Promotions',   'Store banners & sales'],
     'sponsors':    ['Sponsors',     'Partners shown to players'],
     'payments':    ['Payments',     'Orders & transactions'],
@@ -248,6 +250,7 @@ class _AdminConsoleState extends State<AdminConsole> {
       case 'formats':     return FormatBuilderScreen(organizerId: orgId);
       case 'courts':      return AdminCourtsScreen(organizerId: orgId);
       case 'store':       return const AdminInventoryScreen();
+      case 'used_rackets': return const AdminUsedRacketsScreen();
       case 'promotions':  return const AdminPromotionsScreen();
       case 'sponsors':    return const AdminSponsorsScreen();
       case 'payments':    return const AdminPaymentsScreen();

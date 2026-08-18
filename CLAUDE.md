@@ -323,9 +323,10 @@ before changing anything.
     the link fails with "requested path is invalid".
 - **Money / Reports (P&L)**: the Reports tab is the platform's profit & loss.
   Money IN = store orders + paid tournament entries + collected repairs + the
-  hand-recorded `income` table (money taken outside the app). Money OUT = cost
-  of goods sold (auto, `product_costs.cost` × qty on what sold) + trade-in
-  credit (auto, accepted offers) + the hand-recorded `expenses` table.
+  hand-recorded `income` table (money taken outside the app) + trade-in sales +
+  used racket sales. Money OUT = cost of goods sold (auto, `product_costs.cost`
+  × qty on what sold) + trade-in credit (auto, accepted offers) + trade-in
+  racket cost + used rackets bought + the hand-recorded `expenses` table.
   All of it is computed server-side in `_finance_core` →
   `admin_finance_summary` / `admin_weekly_finance`; Dart mirrors the shapes in
   `lib/admin/data/finance_model.dart` and computes nothing. `LedgerKind` in
@@ -337,6 +338,62 @@ before changing anything.
   (and an Analyst holding Reports) via `_can_see_finance()`; only super admins
   may write to either ledger. See `supabase/changes/2026-08-06_expenses_and_pl.sql`
   and `2026-08-06_manual_income.sql`.
+- **A trade-in swap carries its own P&L, and is the ONLY place it may be
+  recorded** (2026-08-18, reverses the 2026-08-10 decision). A swap has three
+  prices, all on `trade_requests`, all entered in the console's trade sheet:
+  - `offer_credit` — what we paid for their USED racket (money OUT, unchanged
+    since 2026-08-06)
+  - `given_cost` — what the NEW racket cost us (money OUT, `out.trade_cost`)
+  - `given_price` — what we SOLD the new racket for (money IN, `in.trade_sales`)
+
+  so **deal profit = `given_price − given_cost − offer_credit`**, and it falls
+  out of the P&L with no further work. Counted on `accepted`/`completed` rows
+  only, and only where the figure was actually filled in (`sum` skips nulls),
+  so a plain buy-in — racket in, credit out, nothing handed back — still books
+  credit alone.
+  - **Never also ring a swapped racket up as a store order.** That was the old
+    documented route (the order booked the sale and its COGS automatically) and
+    it is now a double count. `_openTradeMoney` is how the money gets recorded,
+    including on a trade-in the player submitted through the app, which arrives
+    with nothing but their racket.
+  - `paid_amount` is a record of the cash only and is read by **nothing** — it
+    is free to differ from `given_price − offer_credit` (part payment, a
+    haggled number) without moving platform profit.
+  - The console's profit figure (`_recordedProfit` / `_dealProfit` in
+    `admin_requests_screen.dart`) is deliberately the same arithmetic as the
+    SQL, so the trade and Reports can't disagree. Change one, change both.
+  - `_AddTradeSheet` doubles as the editor (`existing:`), so the money fields,
+    the catalogue picker and the profit sum exist once. Editing never re-picks
+    the seller, and only offers the status chips when the row is already
+    `offer_made`/`accepted` — other transitions belong to the trade sheet's
+    own buttons.
+  - See `supabase/changes/2026-08-18_trade_pl.sql`, whose verify block lists
+    every swap now carrying money so it can be checked against the orders list.
+- **Used rackets** (added 2026-08-18): `used_rackets` is the second-hand resale
+  book — one row per RACKET, not per transaction, so both halves of its life sit
+  on one line. `buy_price` is money OUT on `bought_on`; `sell_price` is money IN
+  on `sold_on`; profit is the difference. Its own console section
+  (`admin_used_rackets_screen.dart`, section id **`used_rackets`** — a real RBAC
+  id, so it lives in `kSections` + `_allIds` AND in SQL `_role_default`; super
+  admin by default, grantable).
+  - **A racket on the shelf is a cost with no sale yet, and that is correct** —
+    `used_buy` lands on the purchase date whether or not it has sold, so it runs
+    ahead of `used_sales` for weeks. That is the buying, not a loss. Nothing is
+    depreciated and a racket you never sell simply stays a cost.
+  - **`source` is the double-count guard against trade-ins, and the only reason
+    the column exists.** A racket taken in on a trade-in has ALREADY had its
+    acquisition booked as `out.trade_in` credit. `source='trade_in'` records
+    `buy_price` so the racket's real margin is still visible, but `_finance_core`
+    excludes it from `used_buy`; its SALE still counts. `source='bought'` (the
+    default) is the plain purchase and does count. Enforced in SQL, not Dart.
+  - `used_rackets_sold_chk` refuses a `sell_price` with no `sold_on` — the date
+    is what puts money in a reporting period, so a priced sale without one would
+    land in no week at all. Clearing a sale must clear both.
+  - Don't also ring these up as store orders; same double count as swaps.
+  - See `supabase/changes/2026-08-18_used_rackets.sql`. ⚠️ It redefines
+    `_finance_core` INCLUDING the trade lines, so it must be the LAST of the two
+    2026-08-18 deltas to run — applying `trade_pl` after it silently drops the
+    used-racket lines.
 - **Weekly report as an emailable link** (added 2026-08-06). A week's P&L can
   be opened without logging in, which is the only way it works from a mail
   client. `report_links` holds one **permanent, reusable** token per week

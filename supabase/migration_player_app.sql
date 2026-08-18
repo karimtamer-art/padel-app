@@ -441,16 +441,23 @@ alter table public.trade_requests
   add constraint trade_requests_who_chk
   check (player_id is not null
          or btrim(coalesce(player_name, '')) <> '');
--- What went out with the player. Records a fact only: no COGS, no stock move —
--- see changes/2026-08-10_trade_given_racket.sql for why that would double-count.
+-- What went out with the player. The label is stored alongside the FK so the
+-- history still reads correctly if the product is later renamed or deleted.
+-- Recording it moves no stock: products.stock is hand-managed in Store &
+-- Orders, and rackets are usually made_to_order, where stock is never touched.
 alter table public.trade_requests
   add column if not exists given_product_id uuid
     references public.products(id) on delete set null,
   add column if not exists given_name text;
--- The money in the swap: ticket price, what they actually paid in cash, and
--- what it cost us. Deal profit = paid_amount - given_cost, shown in the console
--- only — _finance_core does NOT read these, or the same racket rung up as an
--- order would be counted twice. See changes/2026-08-10_trade_deal_money.sql.
+-- The money in the swap: what we sold the outgoing racket for, what the player
+-- handed over in cash, and what that racket cost us. Since 2026-08-18
+-- _finance_core DOES read given_price (money in) and given_cost (money out) on
+-- accepted/completed trades, so the deal's profit —
+--   given_price - given_cost - offer_credit
+-- — lands in the P&L on its own. A racket recorded here must therefore NOT
+-- also be rung up as a store order; that is the double count this replaced.
+-- paid_amount is a record of the cash only and is read by nothing.
+-- See changes/2026-08-18_trade_pl.sql.
 alter table public.trade_requests
   add column if not exists given_price numeric(10,2),
   add column if not exists paid_amount numeric(10,2),
@@ -730,8 +737,8 @@ returns text[] language sql immutable set search_path = public as $$
   select case p_role
     when 'super_admin' then array['dashboard','reports','players','matches',
                                   'tournaments','formats','courts','store',
-                                  'promotions','sponsors','payments','requests',
-                                  'broadcasts','team']
+                                  'used_rackets','promotions','sponsors',
+                                  'payments','requests','broadcasts','team']
     when 'organizer'   then array['tournaments','formats','courts','broadcasts']
     when 'support'     then array['players','matches','requests']
     when 'analyst'     then array['dashboard','reports']
@@ -8136,6 +8143,82 @@ create policy "income: admin write" on public.income
 grant select, insert, update, delete on public.income to authenticated;
 
 -- ============================================================================
+-- Used rackets — second-hand stock bought to sell on, one row per RACKET so
+-- both halves of its life sit on the same line. Canonical copy of
+-- changes/2026-08-18_used_rackets.sql. Lives here, in the finance block, rather
+-- than beside `sponsors`: its trigger needs ledger_touch() above.
+--
+-- NOT the same thing as a trade-in. `trade_requests` is a swap and already
+-- books all three of its prices. This is the plain resale. They meet in
+-- `source`: a racket that came in on a trade-in has ALREADY had its
+-- acquisition booked as trade-in credit, so its buy_price is recorded for the
+-- margin but is NOT money out a second time. See the delta for the full note.
+-- ============================================================================
+create table if not exists public.used_rackets (
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null,
+  brand        text,
+  condition    text,
+  source       text not null default 'bought',
+  bought_on    date not null default current_date,
+  buy_price    numeric(10,2),
+  bought_from  text,
+  sold_on      date,                 -- null = still on the shelf
+  sell_price   numeric(10,2),
+  sold_to      text,
+  note         text,
+  created_by   uuid references public.profiles(id),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+alter table public.used_rackets add column if not exists name        text;
+alter table public.used_rackets add column if not exists brand       text;
+alter table public.used_rackets add column if not exists condition   text;
+alter table public.used_rackets add column if not exists source      text not null default 'bought';
+alter table public.used_rackets add column if not exists bought_on   date not null default current_date;
+alter table public.used_rackets add column if not exists buy_price   numeric(10,2);
+alter table public.used_rackets add column if not exists bought_from text;
+alter table public.used_rackets add column if not exists sold_on     date;
+alter table public.used_rackets add column if not exists sell_price  numeric(10,2);
+alter table public.used_rackets add column if not exists sold_to     text;
+alter table public.used_rackets add column if not exists note        text;
+alter table public.used_rackets add column if not exists created_by  uuid references public.profiles(id);
+alter table public.used_rackets add column if not exists created_at  timestamptz not null default now();
+alter table public.used_rackets add column if not exists updated_at  timestamptz not null default now();
+
+-- Mirrors kUsedSources in lib/admin/screens/admin_used_rackets_screen.dart.
+alter table public.used_rackets drop constraint if exists used_rackets_source_chk;
+alter table public.used_rackets add constraint used_rackets_source_chk
+  check (source in ('bought', 'trade_in'));
+-- Null means "not recorded", which is different from zero and must stay
+-- possible — a racket can be logged before its price is settled.
+alter table public.used_rackets drop constraint if exists used_rackets_money_chk;
+alter table public.used_rackets add constraint used_rackets_money_chk
+  check ((buy_price  is null or buy_price  >= 0)
+     and (sell_price is null or sell_price >= 0));
+-- A sale needs its date: sold_on is what puts the money in a reporting period.
+alter table public.used_rackets drop constraint if exists used_rackets_sold_chk;
+alter table public.used_rackets add constraint used_rackets_sold_chk
+  check (sell_price is null or sold_on is not null);
+
+create index if not exists used_rackets_bought_idx on public.used_rackets (bought_on desc);
+create index if not exists used_rackets_sold_idx   on public.used_rackets (sold_on desc);
+
+alter table public.used_rackets enable row level security;
+drop policy if exists "used_rackets: staff read" on public.used_rackets;
+create policy "used_rackets: staff read" on public.used_rackets for select
+  using (public._has_access('used_rackets'));
+drop policy if exists "used_rackets: staff write" on public.used_rackets;
+create policy "used_rackets: staff write" on public.used_rackets for all
+  using (public._can_edit('used_rackets'))
+  with check (public._can_edit('used_rackets'));
+grant select, insert, update, delete on public.used_rackets to authenticated;
+
+drop trigger if exists trg_used_rackets_touch on public.used_rackets;
+create trigger trg_used_rackets_touch before insert or update on public.used_rackets
+  for each row execute function public.ledger_touch();
+
+-- ============================================================================
 -- Fold it into the P&L. Identical to the version in
 -- 2026-08-06_expenses_and_pl.sql apart from the `manual` money-in line, which
 -- is added to the money-in total and reported separately so the breakdown can
@@ -8153,6 +8236,9 @@ declare
   v_repairs numeric := 0; v_repair_n int := 0;
   v_manual numeric := 0;  v_manual_n int := 0;
   v_trade numeric := 0;   v_trade_n int := 0;
+  v_tsales numeric := 0;  v_tcost numeric := 0; v_deal_n int := 0;
+  v_used_buy numeric := 0;   v_used_bought_n int := 0;
+  v_used_sell numeric := 0;  v_used_sold_n int := 0;
   v_exp numeric := 0;     v_exp_n int := 0;
   v_cats json := '[]'::json;
   v_incats json := '[]'::json;
@@ -8213,12 +8299,48 @@ begin
            where i.received_on >= p_from and i.received_on < p_to
            group by i.category) y;
 
-  -- Trade-ins: credit handed to a player for their racket.
+  -- Trade-ins: credit handed to a player for their racket. This is what we
+  -- paid for the USED racket, and it has been money out since 2026-08-06.
   select coalesce(sum(coalesce(t.offer_credit, 0)), 0), count(*)
     into v_trade, v_trade_n
     from public.trade_requests t
    where t.status in ('accepted', 'completed')
      and t.created_at >= v_a and t.created_at < v_b;
+
+  -- The other half of the same swap: the racket we handed BACK. Sold for
+  -- given_price, cost us given_cost. Counted only where the figure was
+  -- actually recorded — `sum` skips nulls, so an unfilled trade contributes
+  -- nothing rather than reading as a giveaway. A racket recorded here must NOT
+  -- also be rung up as an order; see changes/2026-08-18_trade_pl.sql.
+  select coalesce(sum(t.given_price), 0),
+         coalesce(sum(t.given_cost), 0),
+         count(*) filter (where t.given_price is not null
+                             or t.given_cost is not null)
+    into v_tsales, v_tcost, v_deal_n
+    from public.trade_requests t
+   where t.status in ('accepted', 'completed')
+     and t.created_at >= v_a and t.created_at < v_b;
+
+  -- Used rackets bought to sell on. The cost lands on the day it was bought,
+  -- whether or not it has sold yet — a racket on the shelf is money spent.
+  -- `source = 'trade_in'` is excluded because the trade-in credit above already
+  -- booked that acquisition; counting it here too would pay for it twice.
+  select coalesce(sum(u.buy_price), 0), count(*)
+    into v_used_buy, v_used_bought_n
+    from public.used_rackets u
+   where u.source = 'bought'
+     and u.buy_price is not null
+     and u.bought_on >= p_from and u.bought_on < p_to;
+
+  -- The sale, on the day it sold. Counted whatever the source: a trade-in
+  -- racket sold on is real money in, it is only its COST that was already
+  -- accounted for.
+  select coalesce(sum(u.sell_price), 0), count(*)
+    into v_used_sell, v_used_sold_n
+    from public.used_rackets u
+   where u.sold_on is not null
+     and u.sell_price is not null
+     and u.sold_on >= p_from and u.sold_on < p_to;
 
   -- Hand-recorded expenses, and the same money split by category.
   select coalesce(sum(e.amount), 0), count(*)
@@ -8235,8 +8357,8 @@ begin
            where e.spent_on >= p_from and e.spent_on < p_to
            group by e.category) x;
 
-  v_in     := v_store + v_entries + v_repairs + v_manual;
-  v_out    := v_cogs + v_trade + v_exp;
+  v_in     := v_store + v_entries + v_repairs + v_manual + v_tsales + v_used_sell;
+  v_out    := v_cogs + v_trade + v_tcost + v_exp + v_used_buy;
   v_profit := v_in - v_out;
 
   return json_build_object(
@@ -8248,11 +8370,15 @@ begin
       'entries',         v_entries,
       'repairs',         v_repairs,
       'manual',          v_manual,
+      'trade_sales',     v_tsales,
+      'used_sales',      v_used_sell,
       'by_category',     v_incats,
       'total',           v_in),
     'out', json_build_object(
       'cogs',        v_cogs,
       'trade_in',    v_trade,
+      'trade_cost',  v_tcost,
+      'used_buy',    v_used_buy,
       'expenses',    v_exp,
       'by_category', v_cats,
       'total',       v_out),
@@ -8260,12 +8386,15 @@ begin
     'margin', case when v_in = 0 then 0
                    else round(100.0 * v_profit / v_in, 1) end,
     'counts', json_build_object(
-      'orders',   v_orders,
-      'entries',  v_entry_n,
-      'repairs',  v_repair_n,
-      'manual',   v_manual_n,
-      'trade_in', v_trade_n,
-      'expenses', v_exp_n)
+      'orders',       v_orders,
+      'entries',      v_entry_n,
+      'repairs',      v_repair_n,
+      'manual',       v_manual_n,
+      'trade_in',     v_trade_n,
+      'trade_deals',  v_deal_n,
+      'used_bought',  v_used_bought_n,
+      'used_sold',    v_used_sold_n,
+      'expenses',     v_exp_n)
   );
 end $$;
 -- Raw numbers, no guard of its own — only the guarded wrappers may reach it.
