@@ -358,17 +358,35 @@ class AuthService {
   // this survived restarts it would start lying to someone who reinstalled.
 
   static const resetCooldown = Duration(seconds: 60);
-  static final Map<String, DateTime> _resetSentAt = {};
+
+  /// Last send per `purpose:email`. One map so the reset link and the signup
+  /// code get independent clocks — waiting on one must not block the other.
+  static final Map<String, DateTime> _sentAt = {};
 
   static String _emailKey(String email) => email.trim().toLowerCase();
+  static String _sendKey(String purpose, String email) =>
+      '$purpose:${_emailKey(email)}';
 
-  /// Seconds still to wait before [email] may request another link. 0 = ready.
-  static int resetCooldownRemaining(String email) {
-    final at = _resetSentAt[_emailKey(email)];
+  static int _sendCooldownRemaining(String purpose, String email) {
+    final at = _sentAt[_sendKey(purpose, email)];
     if (at == null) return 0;
     final left = resetCooldown.inSeconds - DateTime.now().difference(at).inSeconds;
     return left > 0 ? left : 0;
   }
+
+  /// True when Supabase itself refused the send. Its window is longer than ours
+  /// and it counts sends we didn't make (another device), so we start our clock
+  /// on it too rather than inviting an immediate retry that will also fail.
+  static bool _isRateLimited(AuthException e) {
+    final m = e.message.toLowerCase();
+    return e.statusCode == '429' ||
+        m.contains('rate limit') ||
+        m.contains('security purposes');
+  }
+
+  /// Seconds still to wait before [email] may request another link. 0 = ready.
+  static int resetCooldownRemaining(String email) =>
+      _sendCooldownRemaining('reset', email);
 
   /// Mails a password-reset link. Returns null on success, else a message.
   ///
@@ -386,20 +404,86 @@ class AuthService {
       await _db.auth.resetPasswordForEmail(email.trim(),
           redirectTo: passwordResetUrl);
       // Stamped only on success: a send that failed is worth retrying at once.
-      _resetSentAt[_emailKey(email)] = DateTime.now();
+      _sentAt[_sendKey('reset', email)] = DateTime.now();
       return null;
     } on AuthException catch (e) {
-      // Supabase rate-limited us anyway (its window is longer than ours, and
-      // it counts sends we didn't make — e.g. from another device). Start the
-      // cooldown so the UI stops inviting another tap.
-      if (e.statusCode == '429' ||
-          e.message.toLowerCase().contains('rate limit') ||
-          e.message.toLowerCase().contains('security purposes')) {
-        _resetSentAt[_emailKey(email)] = DateTime.now();
+      if (_isRateLimited(e)) {
+        _sentAt[_sendKey('reset', email)] = DateTime.now();
       }
       return _friendlyAuthError(e);
     } catch (e) {
       return 'Could not send the reset email. Please try again.';
+    }
+  }
+
+  // ── Email verification (6-digit code) ──────────────────────────────────────
+  //
+  // With "Confirm email" on in Supabase, [signUp] returns no session and the
+  // player finishes on [CheckEmailScreen] by typing the code from the email.
+  // A code rather than a tap-through link on purpose: the link needs the mail
+  // opened on the same device as the app and a deep-link host of its own, and
+  // it lands the session outside the sign-up flow — a code works from a laptop
+  // inbox and keeps everything in one screen.
+
+  /// Seconds still to wait before another signup code may be sent. 0 = ready.
+  static int signupCodeCooldownRemaining(String email) =>
+      _sendCooldownRemaining('signup', email);
+
+  /// Confirms a new account with the code from the signup email.
+  ///
+  /// Returns null on success. Verifying CREATES THE SESSION, which is why the
+  /// avatar lands here: with confirmation on there is none at [signUp] time, so
+  /// the photo picked during sign-up has nowhere to go until this point.
+  static Future<String?> verifySignupCode(
+    String email,
+    String token, {
+    Uint8List? avatarBytes,
+    String avatarExt = 'jpg',
+  }) async {
+    try {
+      final res = await _db.auth.verifyOTP(
+        type: OtpType.signup,
+        email: email.trim(),
+        token: token.trim(),
+      );
+      final uid = res.user?.id;
+      if (uid != null && avatarBytes != null) {
+        await _uploadAvatar(uid, avatarBytes, avatarExt);
+      }
+      return null;
+    } on AuthException catch (e) {
+      final m = e.message.toLowerCase();
+      if (m.contains('expired')) {
+        return 'That code has expired. Tap Resend to get a new one.';
+      }
+      if (m.contains('invalid') || m.contains('token')) {
+        return "That code isn't right. Check the email and try again.";
+      }
+      return _friendlyAuthError(e);
+    } catch (e) {
+      return 'Could not verify the code. Please try again.';
+    }
+  }
+
+  /// Mails a fresh signup code. Returns null on success, else a message.
+  /// Same cooldown reasoning as [sendPasswordReset] — enforced here so a screen
+  /// that forgets to check can't punch through it.
+  static Future<String?> resendSignupCode(String email) async {
+    final wait = signupCodeCooldownRemaining(email);
+    if (wait > 0) {
+      return 'We just sent one — check your inbox and spam, or try again in ${wait}s.';
+    }
+    try {
+      await _db.auth.resend(type: OtpType.signup, email: email.trim());
+      _sentAt[_sendKey('signup', email)] = DateTime.now();
+      return null;
+    } on AuthException catch (e) {
+      if (_isRateLimited(e)) {
+        _sentAt[_sendKey('signup', email)] = DateTime.now();
+      }
+      return _friendlyAuthError(e);
+    } catch (e) {
+      return 'Could not resend the code. Please try again.';
     }
   }
 
@@ -447,9 +531,16 @@ class AuthService {
         return ('An account with this email already exists. Please sign in instead.', false);
       }
       final sessionCreated = res.session != null;
+      // No session means confirmation is on and Supabase has just mailed the
+      // code. Start the cooldown here, or the verify screen opens with Resend
+      // already tappable and the first tap burns a send for nothing.
+      if (!sessionCreated) {
+        _sentAt[_sendKey('signup', data.email)] = DateTime.now();
+      }
       // Upload the picked profile photo now that a session exists (storage RLS
-      // needs auth). Best-effort: a failure here never blocks account creation,
-      // and if email confirmation is on (no session yet) we simply skip it.
+      // needs auth). Best-effort: a failure here never blocks account creation.
+      // When confirmation is on there is no session yet, so the photo is
+      // carried to the verify screen and uploaded by [verifySignupCode].
       if (sessionCreated && data.avatarBytes != null && res.user != null) {
         await _uploadAvatar(res.user!.id, data.avatarBytes!, data.avatarExt);
       }

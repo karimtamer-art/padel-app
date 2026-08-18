@@ -27,6 +27,10 @@ class _AuthFlowState extends State<AuthFlow> {
   String _email = '';
   String _name = '';
 
+  /// Held only for the confirm-by-code path: the photo picked during sign-up
+  /// can't be uploaded until verifying the code produces a session.
+  SignUpData? _pending;
+
   void _go(_AuthView v) => setState(() => _view = v);
 
   @override
@@ -60,6 +64,7 @@ class _AuthFlowState extends State<AuthFlow> {
               return;
             }
             _email = data.email.trim();
+            _pending = data;
             _go(_AuthView.checkEmail);
           },
         );
@@ -68,6 +73,8 @@ class _AuthFlowState extends State<AuthFlow> {
         screen = CheckEmailScreen(
           email: _email,
           onBack: () => _go(_AuthView.welcome),
+          avatarBytes: _pending?.avatarBytes,
+          avatarExt: _pending?.avatarExt ?? 'jpg',
         );
         break;
       case _AuthView.success:
