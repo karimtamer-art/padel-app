@@ -11,18 +11,25 @@ class TournamentService {
   // instead of a profiles join — that join relied on an FK *hint* that doesn't
   // always resolve, and when it failed the whole tournament query fell back to
   // a no-entries result (so "am I registered?" / spot counts broke).
+  // Eligibility is min_rating/max_rating on the 0.00–7.00 scale. These were
+  // min_elo/max_elo until 2026-08-14 (changes/2026-08-14_drop_elo_v1.sql), which
+  // DROPPED those columns — so this query had been failing with
+  // `column tournaments.min_elo does not exist` ever since, and the fallback
+  // below named min_elo too, so it failed identically and fetchTournaments
+  // returned an empty list. The tab was empty for everyone, and every screen
+  // reading t['min_rating'] got null because nothing selected it.
   static const _cols =
       'id, name, venue_name, status, start_date, end_date, start_time, capacity, organizer_id, '
-      'entry_fee, prize_pool, description, min_elo, max_elo, format, format_note, best_of, sponsored, '
+      'entry_fee, prize_pool, description, min_rating, max_rating, format, format_note, best_of, sponsored, '
       'registration_opens, registration_closed, category, '
       'tournament_entries(id, player_id, player_name, partner_id, partner_name, status, '
       'fee_mode, payer_paid, partner_paid, partner_instapay_sender)';
 
-  // Fallback for a pre-migration DB: no entries join, no max_elo — but still
+  // Fallback for a pre-migration DB: no entries join, no max_rating — but still
   // selects the display fields (prize, about, best_of) so cards/detail render.
   static const _colsPlain =
       'id, name, venue_name, status, start_date, end_date, capacity, '
-      'entry_fee, prize_pool, description, min_elo, best_of';
+      'entry_fee, prize_pool, description, min_rating, best_of';
 
   /// All visible tournaments, soonest first. Falls back to a plain query
   /// (no entries join) so the tab still works before the migration runs.
