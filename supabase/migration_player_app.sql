@@ -2110,6 +2110,17 @@ alter table public.profiles drop column if exists hand;
 alter table public.profiles drop column if exists court_side;
 alter table public.profiles drop column if exists full_name;
 
+-- profiles.name MUST stay nullable. The live table predates this file, so its
+-- `create table if not exists` block was skipped and live kept a NOT NULL name
+-- from the original schema — which meant every Apple signup got NO profile row
+-- at all: Apple sends the name in the credential rather than the ID token, so
+-- handle_new_user() has nothing to insert, and its fallback `insert into
+-- profiles (id)` violates the same constraint. Both branches only raise a
+-- warning, so the account existed with nothing behind it. NULL is the correct
+-- state for a nameless signup — onboarding's name step is what asks.
+-- See changes/2026-08-19_profiles_name_nullable.sql.
+alter table public.profiles alter column name drop not null;
+
 -- gender is male/female only (the 'other' option was removed from the UI); any
 -- legacy 'other' rows are nulled so the tightened constraint applies cleanly.
 update public.profiles set gender = null where gender = 'other';

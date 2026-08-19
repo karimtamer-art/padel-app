@@ -115,7 +115,16 @@ class _AuthGateState extends State<AuthGate> {
     }
     setState(() => _phase = _Phase.checking);
     try {
-      final profile = await widget.profileService.fetch(user.id);
+      var profile = await widget.profileService.fetch(user.id);
+      // No row AT ALL — handle_new_user() failed and swallowed it. Left alone
+      // this is survivable and invisible: onboarding appears to save (PostgREST
+      // reports no error when a write matches nothing) and the player ends up
+      // in the app with no profile and no ranking row. Create it, then read it
+      // back once so the rest of this method sees the real thing.
+      if (profile == null) {
+        await ProfileService.ensureProfile(user);
+        profile = await widget.profileService.fetch(user.id);
+      }
       if (!mounted) return;
       _existing = profile ?? const OnboardingProfile();
       _isStaff = profile?.isStaff ?? false;

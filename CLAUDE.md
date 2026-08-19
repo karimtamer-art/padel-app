@@ -560,6 +560,25 @@ before changing anything.
   blocks are SKIPPED, so columns/CHECKs inside them never apply. Use
   `alter table … add column if not exists`, and `drop constraint if exists`
   then re-add to widen a CHECK.
+- **`profiles.name` was NOT NULL on live and it cost every Apple signup its
+  profile** (2026-08-19, `changes/2026-08-19_profiles_name_nullable.sql`). The
+  repo declares `profiles` inside a `create table if not exists` block, so live
+  kept the original schema's NOT NULL. Apple sends the name in the CREDENTIAL,
+  not the ID token, and only on the first authorization ever — so
+  `handle_new_user()` had nothing to insert, and its fallback
+  `insert into profiles (id)` violated the same constraint. Both branches only
+  `raise warning`, so the account was created with **no profile row, no
+  player_ratings row, and no existence anywhere in the app**.
+  - It stayed hidden because the old client wrote `user.email` as the display
+    name when it had nothing better — satisfying NOT NULL by accident. Fixing
+    that (2026-08-18) removed the accident and exposed the constraint, which is
+    why it read as "the Apple fix broke sign-in".
+  - **NULL name is the correct state for a nameless signup.** `isUsableName`
+    treats it as "still need to ask" and onboarding's name step asks. Never
+    default it to 'Player' — that makes the account look answered.
+  - The lesson generalises: a trigger that catches its own exceptions makes a
+    schema mismatch INVISIBLE. When something is missing for one auth provider
+    only, read Postgres Logs for the `raise warning` before reading any Dart.
 - **Adding a status/enum value? Widen the live CHECK in the same change.**
   `matches_status_chk` (from `migrations/0003`) lacked `pending_confirm`, so
   every RANKED score submission failed until 2026-08-01

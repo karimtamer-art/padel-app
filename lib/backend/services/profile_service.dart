@@ -118,14 +118,21 @@ class ProfileService {
     }
   }
 
+  /// The signed-in user's profile row, or null if there ISN'T one.
+  ///
+  /// `maybeSingle`, not `single`: `single` throws on zero rows, which this
+  /// method's catch then flattened into the same `null` it returns for a
+  /// network error. The caller could not tell "no row" from "no connection",
+  /// and Edit Profile rendered a blank form for both — every field empty
+  /// including the email, which doesn't even come from this query. Now only a
+  /// real failure throws, and a missing row returns null on purpose.
   static Future<Map<String, dynamic>?> getProfile(String uid) async {
-    try {
-      final data = await _db.from('profiles').select(_profileCols).eq('id', uid).single();
-      return Map<String, dynamic>.from(data);
-    } catch (e) {
-      debugPrint('[ProfileService] getProfile error: $e');
-      return null;
-    }
+    final data = await _db
+        .from('profiles')
+        .select(_profileCols)
+        .eq('id', uid)
+        .maybeSingle();
+    return data == null ? null : Map<String, dynamic>.from(data);
   }
 
   /// Permanently deletes the signed-in user's account and data via the
@@ -160,9 +167,24 @@ class ProfileService {
     }
   }
 
+  /// Writes [fields] to the signed-in user's row. Returns an error message, or
+  /// null on success.
+  ///
+  /// `.select()` is not decoration: PostgREST answers 204 whether an UPDATE
+  /// changed a row or matched NONE, so without it "saved" and "there is no row
+  /// to save to" are the same response. That is how a signup whose profiles row
+  /// was never created reported success on every save and changed nothing —
+  /// the screen even pops with the new values, so it looks right until the next
+  /// cold start. Asking for the row back makes the difference visible.
   static Future<String?> updateProfile(String uid, Map<String, dynamic> fields) async {
     try {
-      await _db.from('profiles').update(fields).eq('id', uid);
+      final rows =
+          await _db.from('profiles').update(fields).eq('id', uid).select('id');
+      if ((rows as List).isEmpty) {
+        return "Your profile couldn't be found, so nothing was saved. "
+            'Please sign out and sign in again — if it keeps happening, '
+            'contact help@padel-rivals.com.';
+      }
       // Keep the plumbed-down copies honest — see [currentName].
       final name = fields['name'] as String?;
       if (OnboardingProfile.isUsableName(name)) currentName.value = name!.trim();
@@ -434,28 +456,49 @@ class ProfileService {
     }
   }
 
-  static Future<void> ensureProfile(User user) async {
+  /// Guarantees the signed-in user HAS a profiles row, creating a minimal one
+  /// when the signup trigger didn't.
+  ///
+  /// `handle_new_user()` catches its own exceptions and only `raise warning`s —
+  /// deliberately, so a profile insert can never block a signup — but the cost
+  /// is that its failure is INVISIBLE. The account exists and sign-in works,
+  /// while the person has no profile, no `player_ratings` row, and every write
+  /// they make afterwards matches zero rows. Apple signups are where it shows
+  /// up, because they are the ones that arrive with no name in the ID token.
+  ///
+  /// `ignoreDuplicates` makes this ON CONFLICT DO NOTHING, so it can never
+  /// overwrite a real profile. Returns false if the row still couldn't be made,
+  /// which means the cause is server-side and the caller cannot repair it.
+  static Future<bool> ensureProfile(User user) async {
     final meta = user.userMetadata ?? {};
     final name = ((meta['name'] as String?) ?? (meta['full_name'] as String?) ?? '').trim();
+    final avatar = (meta['avatar_url'] as String?)?.trim();
     try {
-      // Start UNRANKED — no seeded elo/level/tier (matches handle_new_user).
+      // Start UNRANKED. No ranking columns are written here at all: they moved
+      // to player_ratings on 2026-08-15, and this call used to send
+      // placement_played, which made the whole insert 400 — swallowed by the
+      // catch below, so the repair silently never happened. The row's own
+      // trg_player_ratings_row creates the player_ratings row from this insert.
       await _db.from('profiles').upsert(
         {
           'id': user.id,
-          'name': name,
-          'avatar_url': meta['avatar_url'] as String?,
+          // Omitted rather than blanked when there is nothing usable, so the
+          // row keeps a NULL name and onboarding still knows to ASK.
+          if (OnboardingProfile.isUsableName(name)) 'name': name,
+          if (avatar != null && avatar.isNotEmpty) 'avatar_url': avatar,
           // No preferred_hand / preferred_court_side defaults. Onboarding ASKS
           // both questions and treats a stored value as already answered, so
           // pre-filling them made the playing-style step skip itself — which is
           // why "Both" sometimes never appeared. Leave them null and let the
           // player choose.
-          'placement_played': 0,
         },
         onConflict: 'id',
         ignoreDuplicates: true,
       );
+      return true;
     } catch (e) {
       debugPrint('[ProfileService] ensureProfile error: $e');
+      return false;
     }
   }
 

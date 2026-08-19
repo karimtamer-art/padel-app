@@ -28,6 +28,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Map<String, dynamic> _original = {};
 
+  /// Set when the profile could not be read. The form still renders (so the
+  /// screen isn't a dead end) but says so, instead of looking like a profile
+  /// with every field genuinely empty.
+  String? _loadError;
+
   late final TextEditingController _nameCtrl;
   late final TextEditingController _usernameCtrl;
   late final TextEditingController _emailCtrl;
@@ -69,11 +74,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _loadFromSupabase() async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null) { setState(() => _loading = false); return; }
-    final data = await ProfileService.getProfile(uid);
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) { setState(() => _loading = false); return; }
+    try {
+      var data = await ProfileService.getProfile(user.id);
+      // No row at all: handle_new_user() failed on signup and only raised a
+      // warning, so the account exists with no profile behind it. Left alone
+      // this screen painted an entirely empty form — email included, which
+      // comes from the auth session, not this query — and every save went to
+      // zero rows. Create the row, then read it back.
+      if (data == null) {
+        await ProfileService.ensureProfile(user);
+        data = await ProfileService.getProfile(user.id);
+      }
+      if (!mounted) return;
+      if (data != null) {
+        _fill(data);
+      } else {
+        _loadError = "We couldn't load your profile, so nothing here will "
+            'save. Please sign out and sign in again.';
+        _fillEmailOnly();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _loadError = "We couldn't load your profile. Check your connection and "
+          'try again.';
+      _fillEmailOnly();
+    }
     if (!mounted) return;
-    if (data != null) _fill(data);
     setState(() => _loading = false);
   }
 
@@ -130,6 +158,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (_dob != null) _dobCtrl.text = _fmtDate(_dob!);
     }
 
+    _fillEmailOnly();
+  }
+
+  /// The one field that comes from the auth session rather than the profile
+  /// row, so it can still be shown when the row couldn't be read.
+  void _fillEmailOnly() {
     _emailCtrl.text = Supabase.instance.client.auth.currentUser?.email ?? '';
   }
 
@@ -283,6 +317,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               padding: EdgeInsets.fromLTRB(
                   20, 20, 20, MediaQuery.of(context).padding.bottom + 24),
               children: [
+                if (_loadError != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.danger.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.danger.withValues(alpha: 0.35)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.error_outline_rounded,
+                          size: 18, color: AppColors.danger),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(_loadError!,
+                            style: AppText.body(AppColors.danger)
+                                .copyWith(fontSize: 12.5, height: 1.4)),
+                      ),
+                    ]),
+                  ),
+                  const SizedBox(height: 18),
+                ],
                 // ── Avatar ──
                 Center(
                   child: GestureDetector(
