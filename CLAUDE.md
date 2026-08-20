@@ -272,14 +272,25 @@ before changing anything.
     `flutter run` and fails for everyone installing from Play — which reads as
     "only happens to some people".
     - Play App signing — `C2:2F:D9:99:62:92:65:9A:1F:F5:3B:F2:B4:D0:64:CE:CE:2A:DA:65`
-      (Play Console → Protected with Play → Automatic protection → Manage;
-      the old `…/app/<id>/keymanagement` URL still resolves)
+      (Play Console → **Test and release → App integrity → App signing**, under
+      "App signing key certificate" — NOT "Upload key certificate". The
+      `…/app/<id>/keymanagement` URL still lands straight on it. "Protected
+      with Play → Automatic protection" is a DIFFERENT page and shows no
+      fingerprints at all; corrected 2026-08-20 after it wasted a lap.)
     - Upload key — `5C:7C:C4:B8:65:17:98:EF:05:0C:A0:98:EF:CB:C9:10:C3:58:A7:3B`
       (`android/upload-keystore.jks`, alias `upload`)
     - Debug key — `FD:61:85:FB:3C:BA:95:6C:41:BA:5F:60:5F:CD:00:A2:E4:79:1B:C2`
   - Fingerprints are public identifiers (readable from any APK), not secrets.
     The Web client **secret** is one, and lives only in Supabase.
-  - Firebase/Cloud project is **`padel-app-a4407`** (number `61629095085`).
+  - **Two Cloud projects, and they are NOT the same one** (verified 2026-08-20).
+    Every OAuth client — the Web one, the three Android ones and the iOS one —
+    lives in project **`260262268929`**, which is the numeric prefix of every
+    client id. Firebase/FCM lives in **`padel-app-a4407`** (number
+    `61629095085`), and `android/app/google-services.json` names THAT one. So
+    its `project_number` deliberately does not match the client ids, and its
+    empty `oauth_client: []` array is normal. Read that as a cross-project
+    misconfiguration and you will spend a day chasing an audience bug that does
+    not exist — the split is real and works.
   Two Android traps: `google_sign_in_android` forces
   **minSdk 24**, and the browser fallback only returns because
   `AndroidManifest.xml` declares `flutter_web_auth_2`'s `CallbackActivity` for
@@ -290,6 +301,34 @@ before changing anything.
   2026-08-11 — builds older than that still ask Supabase to redirect to
   `padelclay://…`, so leave those two URLs in the Redirect URLs allow-list
   until nobody is running one.
+  - **That `padelclay://` entry actually went missing, and on 2026-08-20 it
+    broke Google sign-in on every live iPhone.** Old App Store builds redirect
+    to `padelclay://login-callback/`; with it absent the redirect had nowhere
+    to land and the browser flow spun — reported as "Google keeps looping and
+    redirecting", and it looked like an app bug because newer test builds were
+    fine. Re-adding it under Supabase → Authentication → URL Configuration
+    fixed every installed phone INSTANTLY — no release, no Apple review. Keep
+    all four (`padelrivals`/`padelclay` × `login-callback`/`reset-password`).
+    The warning above was already written and the entry still got removed, so
+    treat that allow-list as load-bearing production config.
+  - **iOS went native on 2026-08-20.** `kGoogleIosClientIdFallback` was empty
+    until then, so `_nativeGoogleAvailable` was false on every iPhone and
+    Google sign-in ALWAYS took the browser fallback. It is the **iOS** OAuth
+    client (bundle `com.padelegypt.app`) — an iOS client has **no SHA-1**, that
+    is Android-only, so don't go hunting for one. Setting the id is half the
+    job: its REVERSED form (`com.googleusercontent.apps.<id>`) must also be a
+    `CFBundleURLSchemes` entry in `ios/Runner/Info.plist`, or the sheet opens
+    and never returns — indistinguishable from the browser loop it replaces.
+    Change one, change the other.
+  - **Diagnose "Google is broken" from the outside before touching any code.**
+    Three checks answer in a minute what symptoms took a day to narrow:
+    `GET /auth/v1/settings` (anon key) says whether the provider is even
+    enabled; the `Location` header of
+    `GET /auth/v1/authorize?provider=google` reveals the client id Supabase is
+    ACTUALLY configured with, so you never have to trust the dashboard; and
+    `select provider, max(last_sign_in_at) from auth.identities group by 1`
+    gives the exact timestamp each method last worked, which turns "it broke
+    recently" into a date you can diff against.
 - **Password reset** (2026-08-10). Three things were wrong: the button fired
   with no visible feedback (so people tapped until Supabase rate-limited them
   and nothing arrived), it was offered to Google/Apple accounts that have no
