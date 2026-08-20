@@ -29,6 +29,14 @@ const String kSupabaseUrl = 'https://lxihwifpcufhieppfeza.supabase.co';
 /// build up to 1.2.0+5, because this constant was empty. "It opens a browser"
 /// is the symptom of that, not of Android.
 ///
+/// [kGoogleIosClientIdFallback] was empty until 2026-08-20, so every iPhone
+/// took that browser fallback — which is what the "Google keeps looping and
+/// redirecting" reports were. It is the **iOS** client (bundle
+/// `com.padelegypt.app`), NOT the Web one. Setting it is only half the job:
+/// its REVERSED form must also be a URL scheme in ios/Runner/Info.plist, or
+/// the Google SDK has no way back into the app and the sheet hangs. Change one,
+/// change the other.
+///
 /// The Android OAuth clients must be in the SAME Cloud project as this Web
 /// client (its numeric prefix is that project's number). Across projects
 /// Google will not mint a token with this audience and `authenticate()`
@@ -39,7 +47,8 @@ const String kSupabaseUrl = 'https://lxihwifpcufhieppfeza.supabase.co';
 /// override without editing the file.
 const String kGoogleWebClientIdFallback =
     '260262268929-6tu57339u99hv13bbvli5h4i3k454bh1.apps.googleusercontent.com';
-const String kGoogleIosClientIdFallback = '';
+const String kGoogleIosClientIdFallback =
+    '260262268929-6enam99u09k29euijtrv2c64jpq76kog.apps.googleusercontent.com';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

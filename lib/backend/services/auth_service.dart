@@ -123,14 +123,43 @@ class AuthService {
     final idToken = account.authentication.idToken;
     if (idToken == null) {
       // Almost always a console problem: no Android OAuth client for this
-      // package + SHA-1, or a serverClientId that isn't the Web one.
-      throw const AuthException('Google did not return an identity token.');
+      // package + SHA-1, or a serverClientId that isn't the Web one — or the
+      // two live in DIFFERENT Cloud projects, in which case Google returns the
+      // account but refuses to mint a token for that audience.
+      //
+      // The picker succeeding and this being null is the signature of that
+      // mismatch, so name the audience: it is the one fact that identifies
+      // which project Google was asked to vouch for.
+      throw AuthException(
+          'Google returned no identity token for audience ${_clientIdHint()}. '
+          'Check that an Android OAuth client for this package + SHA-1 exists '
+          'in the SAME Cloud project as that Web client.');
     }
 
-    await _db.auth.signInWithIdToken(
-      provider: OAuthProvider.google,
-      idToken: idToken,
-    );
+    try {
+      await _db.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+      );
+    } on AuthException catch (e) {
+      // Google was happy; Supabase was not. Almost always because the client id
+      // under Auth -> Google is a different one from _webClientId, so the
+      // audience check fails. Distinguishing this from the null-token case
+      // above is the whole point — they look identical from the UI otherwise.
+      throw AuthException(
+          'Supabase rejected the Google token (${e.message}). The client id in '
+          'Auth -> Google must equal ${_clientIdHint()}.');
+    }
+  }
+
+  /// The project number + a short tail of the Web client id. Enough to tell two
+  /// client ids apart in an error message without printing the whole thing.
+  static String _clientIdHint() {
+    final id = _webClientId;
+    if (id.isEmpty) return '(none configured)';
+    final dash = id.indexOf('-');
+    if (dash <= 0) return id;
+    return '${id.substring(0, dash)}-...';
   }
 
   /// Native "Sign in with Apple": get an Apple ID credential (the system sheet

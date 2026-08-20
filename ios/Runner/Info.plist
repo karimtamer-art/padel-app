@@ -12,6 +12,19 @@
 				<string>padelrivals</string>
 			</array>
 		</dict>
+		<!-- Native Google sign-in's way back into the app. This is the iOS
+		     OAuth client id REVERSED, and it must stay in lockstep with
+		     kGoogleIosClientIdFallback in lib/main.dart. Without it the system
+		     sheet has nowhere to return to and the sign-in hangs — which is
+		     indistinguishable from the browser-flow loop it replaces. -->
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.260262268929-6enam99u09k29euijtrv2c64jpq76kog</string>
+			</array>
+		</dict>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>

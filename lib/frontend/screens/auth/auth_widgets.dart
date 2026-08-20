@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
 import '../../theme/app_spacing.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show AuthException;
 import '../../../backend/services/auth_service.dart';
 
 /// ── Labelled text field with leading icon + password reveal ──────
@@ -442,6 +443,19 @@ class OrDivider extends StatelessWidget {
   }
 }
 
+/// Message for a failed social sign-in.
+///
+/// An [AuthException] here carries a reason we deliberately wrote to be
+/// actionable (which audience, which side rejected it) — showing "please try
+/// again" instead makes a permanent console misconfiguration look like a
+/// transient blip, which is exactly how one went unnoticed. Anything else is
+/// genuinely unexpected, so it keeps the generic wording.
+String socialAuthErrorText(Object e, String provider) {
+  final name = provider == 'apple' ? 'Apple' : 'Google';
+  if (e is AuthException) return e.message;
+  return '$name sign-in failed. Please try again.';
+}
+
 /// ── Social provider button ───────────────────────────────────────
 class SocialButton extends StatefulWidget {
   final String provider; // 'google' | 'apple'
@@ -463,13 +477,13 @@ class _SocialButtonState extends State<SocialButton> {
       // User dismissed the sheet — silent.
     } catch (e) {
       if (mounted) {
-        final name = widget.provider == 'apple' ? 'Apple' : 'Google';
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(SnackBar(
             behavior: SnackBarBehavior.floating,
             backgroundColor: AppColors.ink,
-            content: Text('$name sign-in failed. Please try again.',
+            duration: const Duration(seconds: 8),
+            content: Text(socialAuthErrorText(e, widget.provider),
                 style: AppText.bodyStrong(AppColors.bg).copyWith(fontSize: 13)),
           ));
       }
@@ -542,7 +556,8 @@ class _GoogleSignInButtonState extends State<GoogleSignInButton> {
           ..showSnackBar(SnackBar(
             behavior: SnackBarBehavior.floating,
             backgroundColor: AppColors.ink,
-            content: Text('Google sign-in failed. Please try again.',
+            duration: const Duration(seconds: 8),
+            content: Text(socialAuthErrorText(e, 'google'),
                 style: AppText.bodyStrong(AppColors.bg).copyWith(fontSize: 13)),
           ));
       }
