@@ -59,22 +59,28 @@ class ProfileService {
       'preferred_court_side, phone, is_admin, avatar_url';
 
   /// Current user's profile, or `null` if the row doesn't exist yet.
-  /// Selects the RBAC `admin_role` too, falling back for pre-migration DBs that
-  /// don't have that column yet (so sign-in never breaks).
+  ///
+  /// Widens out to narrower column sets on failure, so a database that is one
+  /// delta behind still signs people in. The tiers are stepped rather than
+  /// collapsed into one catch-all: dropping straight from the full set to
+  /// [_onbCols] on a missing `username_chosen` would also drop `admin_role`,
+  /// and every admin would land in the player app instead of the console.
   Future<OnboardingProfile?> fetch(String userId) async {
     Map<String, dynamic>? row;
+    Future<Map<String, dynamic>?> read(String cols) => _sb
+        .from('profiles')
+        .select(cols)
+        .eq('id', userId)
+        .maybeSingle();
     try {
-      row = await _sb
-          .from('profiles')
-          .select('$_onbCols, admin_role, must_change_password')
-          .eq('id', userId)
-          .maybeSingle();
+      // username_chosen: 2026-08-20_username_chosen.sql
+      row = await read('$_onbCols, admin_role, must_change_password, username_chosen');
     } catch (_) {
-      row = await _sb
-          .from('profiles')
-          .select(_onbCols)
-          .eq('id', userId)
-          .maybeSingle();
+      try {
+        row = await read('$_onbCols, admin_role, must_change_password');
+      } catch (_) {
+        row = await read(_onbCols);
+      }
     }
     if (row == null) return null;
     final url = (row['avatar_url'] as String?)?.trim();
@@ -190,9 +196,33 @@ class ProfileService {
       if (OnboardingProfile.isUsableName(name)) currentName.value = name!.trim();
       return null;
     } on PostgrestException catch (e) {
+      // The unique index is the REAL guard on a handle: username_available()
+      // fails open on a network error, and anyone can take the name between
+      // that check and this write. Without this the loser of that race saw
+      // 'duplicate key value violates unique constraint profiles_username_key'.
+      if (e.code == '23505' && e.message.contains('profiles_username_key')) {
+        return 'That username is already taken. Try another.';
+      }
       return e.message;
     } catch (e) {
       return e.toString();
+    }
+  }
+
+  /// Records that a human picked their handle, so onboarding stops asking.
+  ///
+  /// Its own call, deliberately not folded into the [updateProfile] payload
+  /// that saves Edit Profile: on a database that hasn't had
+  /// `changes/2026-08-20_username_chosen.sql` run yet the column doesn't exist,
+  /// and one unknown key rejects the WHOLE update — the player would watch
+  /// their name, phone and bio fail to save because of a flag that only
+  /// suppresses a prompt. Best-effort by design; the worst case is being asked
+  /// once more.
+  static Future<void> markUsernameChosen(String uid) async {
+    try {
+      await _db.from('profiles').update({'username_chosen': true}).eq('id', uid);
+    } catch (e) {
+      debugPrint('[ProfileService] markUsernameChosen: $e');
     }
   }
 

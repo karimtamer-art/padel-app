@@ -2166,6 +2166,21 @@ alter table public.profiles add constraint profiles_username_chk
 -- to player<id-fragment> when the seed has too few usable characters. Dedupes by
 -- appending the smallest integer suffix that is still free. Used by the backfill
 -- below and by handle_new_user when signup metadata is missing/invalid/taken.
+--
+-- The seed keeps its underscores (2026-08-20). handle_new_user passes the
+-- username the player TYPED, so stripping `_` turned a taken `karim_h` into
+-- `karimh` — silently, and not recognisably theirs. Only what
+-- profiles_username_chk forbids is stripped; a collision now dedupes to
+-- `karim_h1`.
+--
+-- A seed with no letters or digits at all takes the fallback even when it is
+-- long enough ('___', or an Arabic name after the Latin filter has eaten it).
+-- `player<hex>` is the shape the client's OnboardingProfile.isGeneratedUsername
+-- looks for, so onboarding ASKS for a real handle rather than leaving junk.
+-- The dedupe suffix is decimal and decimal digits are hex digits, so
+-- `player3f9a1c1` still matches the client's `^player[0-9a-f]{6,}$` — that
+-- pairing is load-bearing, change one and change the other.
+-- See changes/2026-08-20_username_collision.sql.
 create or replace function public._unique_username(p_seed text, p_fallback_id uuid)
 returns text
 language plpgsql
@@ -2175,8 +2190,8 @@ declare
   cand text;
   n int := 0;
 begin
-  base := regexp_replace(lower(coalesce(p_seed, '')), '[^a-z0-9]+', '', 'g');
-  if length(base) < 3 then
+  base := regexp_replace(lower(coalesce(p_seed, '')), '[^a-z0-9_]+', '', 'g');
+  if length(base) < 3 or base !~ '[a-z0-9]' then
     base := 'player' || substr(replace(p_fallback_id::text, '-', ''), 1, 6);
   end if;
   base := substr(base, 1, 16);
@@ -2207,6 +2222,23 @@ create unique index if not exists profiles_username_key
 -- plain column grant is safe (the unique index is the real guard).
 grant update (username) on public.profiles to authenticated;
 
+-- Did a HUMAN pick this handle? (2026-08-20)
+--
+-- A pattern cannot answer that: `karimtamer` derived from a Google account's
+-- name looks exactly like `karimtamer` typed by a person, and a signup whose
+-- typed handle was TAKEN gets a near-miss generated for it that also looks
+-- chosen. So the fact is recorded at the moment it is known — true when the
+-- signup metadata's username was used verbatim, when onboarding's username
+-- step is finished, or when the field is saved in Edit Profile. False means
+-- onboarding still owes the player a prompt.
+--
+-- Grant included: the client writes it, profiles has COLUMN-LEVEL grants, and
+-- a missing grant here fails silently and re-asks forever.
+-- See changes/2026-08-20_username_chosen.sql, which also backfills.
+alter table public.profiles
+  add column if not exists username_chosen boolean not null default false;
+grant update (username_chosen) on public.profiles to authenticated;
+
 -- Availability check for the signup/edit screens. SECURITY DEFINER so it works
 -- pre-auth (anon, during signup) without exposing the whole profiles table.
 create or replace function public.username_available(p_username text)
@@ -2230,6 +2262,11 @@ security definer set search_path = public as $$
 declare
   v_name     text;
   v_username text;
+  -- True only when the handle that arrived in the signup metadata was used
+  -- VERBATIM, which is exactly the case where a person typed it and got what
+  -- they asked for. Invalid, absent, or taken-and-therefore-deduped all leave
+  -- it false so onboarding asks.
+  v_typed    boolean := false;
   v_dob      date;
   v_gender   text;
   v_hand     text;
@@ -2244,6 +2281,8 @@ begin
      or v_username !~ '^[a-z0-9_]{3,20}$'
      or exists (select 1 from public.profiles where lower(username) = v_username) then
     v_username := public._unique_username(coalesce(v_username, v_name), new.id);
+  else
+    v_typed := true;
   end if;
   begin
     v_dob := nullif(new.raw_user_meta_data->>'date_of_birth', '')::date;
@@ -2263,10 +2302,10 @@ begin
 
   begin
     insert into public.profiles
-      (id, name, username, avatar_url, phone, bio,
+      (id, name, username, username_chosen, avatar_url, phone, bio,
        date_of_birth, gender, preferred_hand, preferred_court_side)
     values
-      (new.id, v_name, v_username,
+      (new.id, v_name, v_username, v_typed,
        new.raw_user_meta_data->>'avatar_url',
        nullif(new.raw_user_meta_data->>'phone', ''),
        nullif(new.raw_user_meta_data->>'bio', ''),

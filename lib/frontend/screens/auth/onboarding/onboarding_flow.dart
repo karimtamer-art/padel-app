@@ -59,20 +59,42 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   /// how you get an off-by-one that shows the phone step's title above the
   /// gender step's body.
   ///
-  /// name/username are asked only when they are missing or auto-generated, so
-  /// an email or Google signup sees exactly the five steps it saw before and
-  /// an Apple one is finally asked for both.
-  late final List<_Step> _steps = [
-    if (!OnboardingProfile.isUsableName(widget.initial.name)) _Step.name,
-    if (OnboardingProfile.isGeneratedUsername(widget.initial.username) ||
-        (widget.initial.username ?? '').trim().isEmpty)
-      _Step.username,
-    _Step.dob,
-    _Step.gender,
-    _Step.style,
-    _Step.phone,
-    _Step.extras,
-  ];
+  /// EVERY step is conditional now (2026-08-20). It used to ask name and
+  /// username conditionally but always walk through the other five, which was
+  /// fine while the only way in was an incomplete profile — a new account is
+  /// missing all of them anyway.
+  ///
+  /// `username_chosen` broke that assumption: a player who finished onboarding
+  /// months ago can be sent back purely to settle a handle they never picked,
+  /// and re-asking their birthday, gender, court side and phone to get there
+  /// would be indefensible. So each step earns its place by having no answer
+  /// yet, and that player sees exactly one screen.
+  ///
+  /// Extras (photo + bio) is the same judgement: offered while setting an
+  /// account up, skipped for someone already complete, who has a photo already
+  /// and didn't come here for that.
+  late final List<_Step> _steps = _buildSteps(widget.initial);
+
+  static List<_Step> _buildSteps(OnboardingProfile p) {
+    final steps = <_Step>[
+      if (!OnboardingProfile.isUsableName(p.name)) _Step.name,
+      // isGeneratedUsername is still consulted, and is no longer the only
+      // signal: it catches a `player<hex>` handle on a database that predates
+      // the username_chosen column, where handleSettled has to assume settled.
+      if (!p.handleSettled ||
+          OnboardingProfile.isGeneratedUsername(p.username))
+        _Step.username,
+      if (p.dateOfBirth == null) _Step.dob,
+      if (p.gender == null) _Step.gender,
+      if (p.hand == null || p.side == null) _Step.style,
+      if (OnboardingValidation.phone(p.phone) != null) _Step.phone,
+      if (!p.isComplete) _Step.extras,
+    ];
+    // Never empty: _cur indexes straight into this and AuthGate only routes
+    // here when something is outstanding, but an empty list would be a
+    // RangeError on the first frame rather than a wrong screen.
+    return steps.isEmpty ? [_Step.extras] : steps;
+  }
 
   int get _total => _steps.length;
   _Step get _cur => _steps[_step];
@@ -121,22 +143,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   static final _usernameRe = RegExp(r'^[a-z0-9_]{3,20}$');
 
-  /// Where to open. Anything we still have to ASK for comes first — landing an
-  /// Apple signup on the birthday step while its name is blank is how the
-  /// missing answer stays missing.
-  int _firstIncompleteStep() {
-    if (_steps.contains(_Step.name)) return _steps.indexOf(_Step.name);
-    if (_steps.contains(_Step.username)) return _steps.indexOf(_Step.username);
-    if (widget.initial.dateOfBirth == null) return _steps.indexOf(_Step.dob);
-    if (widget.initial.gender == null) return _steps.indexOf(_Step.gender);
-    if (widget.initial.hand == null || widget.initial.side == null) {
-      return _steps.indexOf(_Step.style);
-    }
-    if (OnboardingValidation.phone(widget.initial.phone) != null) {
-      return _steps.indexOf(_Step.phone);
-    }
-    return 0;
-  }
+  /// Where to open. Always 0 now: [_buildSteps] only includes a step that
+  /// still needs an answer, so the first one IS the first unanswered one.
+  ///
+  /// Kept as a named method rather than inlined because the thing it protects
+  /// against is worth naming — landing an Apple signup on the birthday step
+  /// while its name is blank is how the missing answer stays missing.
+  int _firstIncompleteStep() => 0;
 
   bool get _stepValid {
     switch (_cur) {
@@ -220,7 +233,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       // infinite loop into a message that says what happened.
       final saved = await widget.profileService.fetch(widget.userId);
       if (!mounted) return;
-      if (saved == null || !saved.isComplete) {
+      // handleSettled is checked alongside isComplete for the same reason and
+      // against the same failure: username_chosen is a COLUMN-GRANTED write,
+      // and a missing grant is refused with no error at all. Unchecked, that
+      // sends AuthGate straight back here — the onboarding loop, but now
+      // reachable by an existing player who only came to settle a handle.
+      if (saved == null ||
+          !saved.isComplete ||
+          (_steps.contains(_Step.username) && !saved.handleSettled)) {
         setState(() {
           _saving = false;
           _error = "Your answers were sent but the profile didn't save. "

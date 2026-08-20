@@ -157,7 +157,14 @@ class _AuthGateState extends State<AuthGate> {
         setState(() => _phase = _Phase.mustSetPassword);
         return;
       }
-      final complete = profile?.isComplete ?? false;
+      // Two separate reasons to onboard. isComplete mirrors the server's
+      // generated onboarding_completed column; handleSettled asks whether a
+      // human ever picked the username. A Google signup satisfies the first
+      // and not the second — its handle was derived from its display name by
+      // _unique_username and it was never asked — which is why it used to sail
+      // past onboarding with a name it did not choose.
+      final complete =
+          (profile?.isComplete ?? false) && (profile?.handleSettled ?? false);
       // Staff (super admin or a granted role) skip player onboarding entirely —
       // straight to the console. They never see the phone/onboarding step.
       if (!_isStaff && complete) {

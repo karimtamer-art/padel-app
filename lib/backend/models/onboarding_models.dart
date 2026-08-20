@@ -82,6 +82,17 @@ class OnboardingProfile {
   final Hand? hand;
   final CourtSidePref? side;
   final String? phone;
+
+  /// `profiles.username_chosen` — did a HUMAN pick [username]?
+  ///
+  /// **Nullable, and null is not false.** Null means the column wasn't in the
+  /// row we read, i.e. a database that hasn't had
+  /// `changes/2026-08-20_username_chosen.sql` run on it yet. Treating that as
+  /// "not chosen" would send every player on that database into onboarding to
+  /// answer a question the server can't record the answer to — a loop. Null
+  /// therefore reads as settled, via [handleSettled], and is never written
+  /// back.
+  final bool? usernameChosen;
   final bool isAdmin;
   final String? adminRole; // super_admin | organizer | support | analyst | null
   final bool mustChangePassword; // provisioned organizer on a temp password
@@ -94,6 +105,7 @@ class OnboardingProfile {
     this.hand,
     this.side,
     this.phone,
+    this.usernameChosen,
     this.isAdmin = false,
     this.adminRole,
     this.mustChangePassword = false,
@@ -111,11 +123,32 @@ class OnboardingProfile {
   /// (`player` + 6 hex of the uuid), i.e. there was nothing to derive one from.
   /// Those are the accounts worth re-asking; a Google signup's name-derived
   /// handle is left alone, which is why that flow is unchanged.
+  /// True for a handle the SERVER made up, which onboarding then asks the
+  /// player to replace. `_unique_username` builds it as `player` + the first
+  /// six hex characters of their uuid.
+  ///
+  /// `{6,}` rather than `{6}`, because the generator dedupes by appending a
+  /// decimal suffix: a second `player3f9a1c` becomes `player3f9a1c1`. Anchored
+  /// at exactly six it stopped matching, and that player kept the junk handle
+  /// forever — never asked, because the only thing that asks is this test.
+  /// Decimal digits are hex digits, so the suffixed form is still covered.
+  ///
+  /// A player who deliberately picks something like `playerabc123` reads as
+  /// generated and gets asked once during onboarding. They can type the same
+  /// thing again; that is much cheaper than the miss.
   static bool isGeneratedUsername(String? v) =>
-      RegExp(r'^player[0-9a-f]{6}$').hasMatch((v ?? '').trim().toLowerCase());
+      RegExp(r'^player[0-9a-f]{6,}$').hasMatch((v ?? '').trim().toLowerCase());
 
   /// Any console access — a super admin (is_admin) or a granted staff role.
   bool get isStaff => isAdmin || adminRole != null;
+
+  /// True when there is a handle and nobody still owes the player a say in it.
+  ///
+  /// Separate from [isComplete] on purpose: that one mirrors the server's
+  /// generated `onboarding_completed` column and must keep doing so. This is
+  /// the second reason `AuthGate` may route into onboarding.
+  bool get handleSettled =>
+      (usernameChosen ?? true) && (username ?? '').trim().isNotEmpty;
 
   /// Mirrors the server's generated `onboarding_completed` column.
   bool get isComplete =>
@@ -133,6 +166,7 @@ class OnboardingProfile {
     Hand? hand,
     CourtSidePref? side,
     String? phone,
+    bool? usernameChosen,
     bool? isAdmin,
     String? adminRole,
     bool? mustChangePassword,
@@ -145,6 +179,7 @@ class OnboardingProfile {
         hand: hand ?? this.hand,
         side: side ?? this.side,
         phone: phone ?? this.phone,
+        usernameChosen: usernameChosen ?? this.usernameChosen,
         isAdmin: isAdmin ?? this.isAdmin,
         adminRole: adminRole ?? this.adminRole,
         mustChangePassword: mustChangePassword ?? this.mustChangePassword,
@@ -163,6 +198,9 @@ class OnboardingProfile {
       hand: Hand.fromId(j['preferred_hand'] as String?),
       side: CourtSidePref.fromId(j['preferred_court_side'] as String?),
       phone: j['phone'] as String?,
+      // Absent key stays null — see [usernameChosen]. `?? false` here would
+      // route every player on a pre-delta database into onboarding.
+      usernameChosen: j['username_chosen'] as bool?,
       isAdmin: j['is_admin'] as bool? ?? false,
       adminRole: j['admin_role'] as String?,
       mustChangePassword: j['must_change_password'] as bool? ?? false,
@@ -184,6 +222,12 @@ class OnboardingProfile {
       // signup trigger stored rather than stamping 'Player' over a real name.
       if (resolvedName != null) 'name': resolvedName,
       if (handle.isNotEmpty) 'username': handle,
+      // Finishing onboarding means the player saw this handle and accepted it,
+      // whether they typed a new one or kept what was offered. Written only
+      // when we actually READ the column: on a database without it,
+      // usernameChosen is null and sending the key would 400 the whole upsert
+      // and lose every other answer with it.
+      if (handle.isNotEmpty && usernameChosen != null) 'username_chosen': true,
       'date_of_birth': dateOfBirth == null ? null : _ymd(dateOfBirth!),
       'gender': gender?.id,
       'preferred_hand': hand?.id,
