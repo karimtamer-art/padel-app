@@ -4,12 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
-import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
 import 'package:padel_clay/frontend/widgets/avatar_crop_sheet.dart';
 import 'package:padel_clay/backend/services/auth_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
+import 'package:padel_clay/backend/models/onboarding_models.dart';
 import 'auth_widgets.dart';
+import 'onboarding/onboarding_widgets.dart';
 
 /// Collected onboarding answers.
 class SignUpData {
@@ -49,8 +50,20 @@ class _SignUpFlowState extends State<SignUpFlow> {
   late final TextEditingController _confirmCtrl;
   late final TextEditingController _dobCtrl;
 
-  static const _kickers = ['Basic Information', 'Player Profile', 'Complete Profile'];
-  static const _titles = ["Let's set up your account", 'How do you play?', 'Make it yours'];
+  // Kicker / title / subtitle per step. Deliberately the same three-line
+  // header OnboardingFlow uses - a Google or Apple signup lands there instead
+  // of here, and the two must not read as different apps.
+  static const _kickers = ['About you', 'Your game', 'Your profile'];
+  static const _titles = [
+    "Let's set up your account",
+    'Your playing style',
+    'Put a face to your name',
+  ];
+  static const _subs = [
+    'A few details so other players know who they are matching with.',
+    'Tell us your dominant hand and preferred court side.',
+    'Both are optional — you can add or change them later in Edit Profile.',
+  ];
 
   @override
   void initState() {
@@ -131,6 +144,25 @@ class _SignUpFlowState extends State<SignUpFlow> {
       return;
     }
     setState(() => _loading = true);
+    // Re-check the handle. It was checked on step 1, which is two steps and an
+    // unbounded amount of time ago, and handle_new_user does not fail on a
+    // taken username — it quietly generates a near-miss instead. Better to send
+    // them back one screen than to create the account under a name they never
+    // chose.
+    if (!await ProfileService.isUsernameAvailable(_data.username)) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _step = 0;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('That username was taken while you were signing up. '
+                'Please pick another.'),
+            backgroundColor: Color(0xFFB00020)),
+      );
+      return;
+    }
     final (error, sessionCreated) = await AuthService.signUp(_data);
     if (!mounted) return;
     setState(() => _loading = false);
@@ -202,7 +234,10 @@ class _SignUpFlowState extends State<SignUpFlow> {
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.of(context).padding.top;
-    return Container(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Container(
       color: AppColors.bg,
       child: Column(children: [
         // ── header ──
@@ -216,24 +251,28 @@ class _SignUpFlowState extends State<SignUpFlow> {
             Row(children: [
               BackSquare(onTap: _back),
               const SizedBox(width: 14),
-              Expanded(child: StepBar(step: _step, total: 3)),
+              Expanded(child: OnbProgress(step: _step, total: 3)),
               const SizedBox(width: 14),
               Text('${_step + 1} / 3',
                   style: AppText.bodyStrong(AppColors.inkFaint).copyWith(fontSize: 12)),
             ]),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             Text(_kickers[_step].toUpperCase(),
                 style: AppText.kicker(AppColors.primary).copyWith(fontSize: 11, letterSpacing: 1.5)),
-            const SizedBox(height: 4),
+            const SizedBox(height: 5),
             Text(_titles[_step],
-                style: AppText.stat(24, AppColors.ink).copyWith(letterSpacing: -0.5, height: 1.0)),
+                style: AppText.stat(25, AppColors.ink).copyWith(letterSpacing: -0.6, height: 1.05)),
+            const SizedBox(height: 7),
+            Text(_subs[_step],
+                style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13.5, height: 1.45)),
           ]),
         ),
 
         // ── body ──
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 24),
+            physics: const BouncingScrollPhysics(),
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
               child: _step == 0
@@ -273,7 +312,8 @@ class _SignUpFlowState extends State<SignUpFlow> {
           ),
         ),
       ]),
-    );
+    ),   // Container
+    );   // GestureDetector
   }
 
   // ── Step 1 — Basic Information ──────────────────────────────────────
@@ -338,44 +378,76 @@ class _SignUpFlowState extends State<SignUpFlow> {
           controller: _dobCtrl,
           trailing: const Icon(Icons.expand_more_rounded, size: 20, color: AppColors.inkFaint),
         ),
-        const SizedBox(height: 20),
-        SegmentedField(
-          label: 'Gender',
-          columns: 2,
-          value: _data.gender,
-          onChanged: (v) => setState(() => _data.gender = v),
-          options: const [
-            SegOption('male', 'Male'),
-            SegOption('female', 'Female'),
-          ],
-        ),
+        const SizedBox(height: 22),
+        const _SectionLabel(icon: Icons.wc_rounded, label: 'How do you identify?'),
+        const SizedBox(height: 12),
+        _cardRow([
+          for (final g in Gender.values)
+            ChoiceCard(
+              label: g.label,
+              icon: g.icon,
+              selected: _data.gender == g.id,
+              onTap: () => setState(() => _data.gender = g.id),
+            ),
+        ]),
       ]);
 
   // ── Step 2 — Player Profile ─────────────────────────────────────────
   Widget _playerStep() => Column(key: const ValueKey(1), children: [
-        SegmentedField(
-          label: 'Preferred Playing Hand',
-          columns: 2,
-          value: _data.hand,
-          onChanged: (v) => setState(() => _data.hand = v),
-          options: const [
-            SegOption('right', 'Right Handed', icon: Icons.back_hand_outlined, flipIcon: true),
-            SegOption('left', 'Left Handed', icon: Icons.back_hand_outlined),
-          ],
+        const _SectionLabel(
+          icon: Icons.back_hand_outlined,
+          label: 'Which hand do you play with?',
         ),
+        const SizedBox(height: 12),
+        _cardRow([
+          for (final h in Hand.values)
+            ChoiceCard(
+              label: h.label,
+              icon: h.icon,
+              flipIcon: h.flipIcon,
+              selected: _data.hand == h.id,
+              onTap: () => setState(() => _data.hand = h.id),
+            ),
+        ]),
         const SizedBox(height: 22),
-        SegmentedField(
-          label: 'Preferred Court Side',
-          columns: 3,
-          value: _data.side,
-          onChanged: (v) => setState(() => _data.side = v),
-          options: const [
-            SegOption('left', 'Left', side: CourtSide.left),
-            SegOption('right', 'Right', side: CourtSide.right),
-            SegOption('both', 'Both', side: CourtSide.both),
+        const _SectionLabel(
+          icon: Icons.sports_tennis_rounded,
+          label: 'Your preferred court side?',
+        ),
+        const SizedBox(height: 12),
+        _cardRow(
+          [
+            for (final s in CourtSidePref.values)
+              ChoiceCard(
+                label: s.label,
+                glyph: CourtSideGlyph(
+                  // "Both" lights up the whole court.
+                  leftFill: s != CourtSidePref.right,
+                  rightFill: s != CourtSidePref.left,
+                  selected: _data.side == s.id,
+                  // Three across instead of two - a 70pt court would overflow
+                  // the row on a narrow phone.
+                  width: 52,
+                ),
+                selected: _data.side == s.id,
+                onTap: () => setState(() => _data.side = s.id),
+              ),
           ],
+          gap: 10,
         ),
       ]);
+
+  /// Equal-width row of [ChoiceCard]s - the same grid OnboardingFlow lays its
+  /// answer cards out on.
+  Widget _cardRow(List<Widget> cards, {double gap = 12}) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (int i = 0; i < cards.length; i++) ...[
+            if (i > 0) SizedBox(width: gap),
+            Expanded(child: cards[i]),
+          ],
+        ],
+      );
 
   Future<void> _pickPhoto() async {
     try {
@@ -411,40 +483,34 @@ class _SignUpFlowState extends State<SignUpFlow> {
         const SizedBox(height: 6),
         Center(child: PhotoPicker(onTap: _pickPhoto, imageBytes: _data.avatarBytes)),
         const SizedBox(height: 14),
-        Text('Add a profile photo so opponents recognise you on court.',
+        Text('A photo helps opponents recognise you on court.',
             textAlign: TextAlign.center,
             style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 12.5)),
         const SizedBox(height: 22),
         BioField(onChanged: (v) => _data.bio = v),
-        const SizedBox(height: 22),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.1),
-            borderRadius: AppRadius.cardR,
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.22)),
-          ),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.info_outline_rounded, size: 18, color: AppColors.primary),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Text.rich(
-                TextSpan(
-                  style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 12.5, height: 1.5),
-                  children: [
-                    const TextSpan(text: 'You can refine your profile, ELO and tier anytime from '),
-                    TextSpan(text: 'Settings', style: AppText.bodyStrong().copyWith(fontSize: 12.5)),
-                    const TextSpan(text: '.'),
-                  ],
-                ),
-              ),
-            ),
-          ]),
-        ),
       ]);
 
   static String _fmtDate(DateTime d) {
     const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return '${d.day} ${m[d.month - 1]} ${d.year}';
+  }
+}
+
+/// Small icon + caption above a group of [ChoiceCard]s. Mirrors the private
+/// `_SectionLabel` in `onboarding/onboarding_flow.dart` so the two flows label
+/// their answer grids identically; change one, change the other.
+class _SectionLabel extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionLabel({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 15, color: AppColors.inkSoft),
+      const SizedBox(width: 7),
+      Text(label,
+          style: AppText.bodyStrong(AppColors.inkSoft).copyWith(fontSize: 13)),
+    ]);
   }
 }
