@@ -41,6 +41,9 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
   List<Map<String, dynamic>> _courts = [];
   bool _courtsLoading = true;
   String? _courtId;
+  final _courtSearch = TextEditingController();
+  String _courtQuery = '';
+  bool _courtShowAll = false;
 
   List<Map<String, dynamic>> _players = [];
   bool _playersLoading = true;
@@ -63,6 +66,7 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
   @override
   void dispose() {
     _search.dispose();
+    _courtSearch.dispose();
     super.dispose();
   }
 
@@ -571,10 +575,122 @@ class _CreateMatchSheetState extends State<CreateMatchSheet> {
       else if (_courts.isEmpty)
         _emptyBox(Icons.place_outlined, 'No courts listed yet',
             'Courts will appear here once added to the system. You can still create the match and agree on a venue with the players.')
-      else
-        Column(children: [
-          for (final c in _courts) _courtTile(c),
+      else ...[
+        // A handful of courts is faster to scan than to type into; the search
+        // only earns its space once the list stops fitting on a screen.
+        if (_courts.length > _kCourtSearchFrom) _courtSearchField(),
+        _courtResults(),
+      ],
+    ]);
+  }
+
+  // Above this many courts, browsing stops working and the list gets a search
+  // box. The catalogue is ~185 venues, so in practice it is always on.
+  static const int _kCourtSearchFrom = 6;
+
+  // How many tiles to build at once. Every tile is built eagerly inside a
+  // Column, so rendering the whole catalogue would cost ~185 of them on a step
+  // most people reach with a court already in mind.
+  static const int _kCourtPageSize = 20;
+
+  /// Courts matching the search box. Filtered on the client because
+  /// [MatchService.fetchCourts] already holds the whole catalogue in memory —
+  /// so this is instant, survives a dropped connection, and costs no round trip
+  /// per keystroke. Every term must match somewhere, which is what makes
+  /// "padel maadi" narrower than either word alone.
+  List<Map<String, dynamic>> get _filteredCourts {
+    final q = _courtQuery.trim().toLowerCase();
+    if (q.isEmpty) return _courts;
+    final terms = q.split(RegExp(r'\s+'));
+    return _courts.where((c) {
+      final hay = [c['venue_name'], c['name'], c['area'], c['city']]
+          .whereType<String>()
+          .join(' ')
+          .toLowerCase();
+      return terms.every(hay.contains);
+    }).toList();
+  }
+
+  Widget _courtSearchField() => Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+            color: AppColors.field,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.line)),
+        child: Row(children: [
+          const Icon(Icons.search_rounded, size: 18, color: AppColors.inkFaint),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _courtSearch,
+              onChanged: (v) => setState(() => _courtQuery = v),
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'Search by club, area or city…',
+                hintStyle:
+                    AppText.body(AppColors.inkFaint).copyWith(fontSize: 13.5),
+                border: InputBorder.none,
+              ),
+              style: AppText.body().copyWith(fontSize: 13.5),
+            ),
+          ),
+          if (_courtQuery.isNotEmpty)
+            GestureDetector(
+              onTap: () {
+                _courtSearch.clear();
+                setState(() => _courtQuery = '');
+                FocusScope.of(context).unfocus();
+              },
+              behavior: HitTestBehavior.opaque,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+                child: Icon(Icons.close_rounded,
+                    size: 17, color: AppColors.inkFaint),
+              ),
+            ),
         ]),
+      );
+
+  Widget _courtResults() {
+    final list = _filteredCourts;
+    if (list.isEmpty) {
+      return _emptyBox(Icons.search_off_rounded, 'No courts match',
+          'Try the club name or the area — "Maadi", "Zayed", "Padel Yard". You can also leave the court unset and agree on a venue with the players.');
+    }
+    final shown =
+        _courtShowAll ? list : list.take(_kCourtPageSize).toList();
+    // A court chosen before the search was typed must not vanish behind it —
+    // otherwise the summary says one thing and the visible list another.
+    final matches = _courtId == null
+        ? const <Map<String, dynamic>>[]
+        : _courts.where((c) => c['id'] == _courtId).toList();
+    final picked = matches.isEmpty ? null : matches.first;
+    final hidden = list.length - shown.length;
+
+    return Column(children: [
+      if (picked != null && !shown.any((c) => c['id'] == _courtId))
+        _courtTile(picked),
+      for (final c in shown) _courtTile(c),
+      // The cap is a rendering budget, not a limit on what's reachable —
+      // tapping lifts it, so a player who doesn't know the club name can still
+      // browse the whole catalogue.
+      if (hidden > 0)
+        GestureDetector(
+          onTap: () => setState(() => _courtShowAll = true),
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            child: Text(
+              _courtQuery.trim().isEmpty
+                  ? 'Showing ${shown.length} of ${list.length} courts — search above, or tap to show all'
+                  : '$hidden more match — keep typing, or tap to show all',
+              textAlign: TextAlign.center,
+              style: AppText.small(AppColors.primary)
+                  .copyWith(fontSize: 11.5, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
     ]);
   }
 

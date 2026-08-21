@@ -252,10 +252,15 @@ class MatchService {
           .from('courts')
           .select('*')
           .eq('is_public', true)
-          .order('venue_name');
+          // postgrest's .order() defaults to DESCENDING, so this listed the
+          // catalogue Z→A. Invisible at three courts, obvious at 185.
+          .order('venue_name', ascending: true);
     } catch (_) {
       try {
-        rows = await _db.from('courts').select('*').order('venue_name');
+        rows = await _db
+            .from('courts')
+            .select('*')
+            .order('venue_name', ascending: true);
       } catch (e) {
         debugPrint('[MatchService] fetchCourts: $e');
         return [];

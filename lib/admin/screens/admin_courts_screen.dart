@@ -17,13 +17,37 @@ class AdminCourtsScreen extends StatefulWidget {
 class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
   List<Map<String, dynamic>> _courts = [];
   bool _loading = true;
+  final _search = TextEditingController();
+  String _query = '';
 
   bool get _isOrganizer => widget.organizerId != null;
+
+  /// Courts matching the search box. Filtered client-side — the whole list is
+  /// already loaded, so this needs no round trip and keeps the KPI tiles above
+  /// counting the FULL catalogue rather than the current search.
+  List<Map<String, dynamic>> get _filtered {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return _courts;
+    final terms = q.split(RegExp(r'\s+'));
+    return _courts.where((c) {
+      final hay = [c['venue_name'], c['name'], c['area'], c['city'], c['owner_label']]
+          .whereType<String>()
+          .join(' ')
+          .toLowerCase();
+      return terms.every(hay.contains);
+    }).toList();
+  }
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -84,8 +108,20 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
               child: Text('No courts yet — tap Add to create one',
                   style: AdminText.small(AdminColors.inkFaint)),
             )
-          else
-            for (final c in _courts) _card(c),
+          else ...[
+            if (_courts.length > 6) _searchField(),
+            if (_filtered.isEmpty)
+              Container(
+                margin: const EdgeInsets.only(top: 24),
+                padding: const EdgeInsets.all(28),
+                alignment: Alignment.center,
+                child: Text('No courts match "${_query.trim()}"',
+                    textAlign: TextAlign.center,
+                    style: AdminText.small(AdminColors.inkFaint)),
+              )
+            else
+              for (final c in _filtered) _card(c),
+          ],
         ],
       ),
     );
@@ -479,6 +515,53 @@ class _AdminCourtsScreenState extends State<AdminCourtsScreen> {
           Text(label, style: AdminText.body()),
         ]),
       );
+
+  Widget _searchField() {
+    final shown = _filtered.length;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: _search,
+        onChanged: (v) => setState(() => _query = v),
+        textInputAction: TextInputAction.search,
+        style: AdminText.body(),
+        decoration: InputDecoration(
+          isDense: true,
+          filled: true,
+          fillColor: AdminColors.surfaceAlt,
+          hintText: 'Search ${_courts.length} courts by venue, area or city…',
+          hintStyle: AdminText.small(AdminColors.inkFaint),
+          prefixIcon: const Icon(Icons.search_rounded,
+              size: 18, color: AdminColors.inkFaint),
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded,
+                      size: 17, color: AdminColors.inkFaint),
+                  tooltip: 'Clear',
+                  onPressed: () {
+                    _search.clear();
+                    setState(() => _query = '');
+                    FocusScope.of(context).unfocus();
+                  },
+                ),
+          helperText: _query.trim().isEmpty
+              ? null
+              : '$shown of ${_courts.length} court${_courts.length != 1 ? 's' : ''}',
+          helperStyle: AdminText.small(AdminColors.inkFaint),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide: const BorderSide(color: AdminColors.line)),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: AdminUI.fieldR,
+              borderSide:
+                  const BorderSide(color: AdminColors.primary, width: 1.6)),
+        ),
+      ),
+    );
+  }
 
   Widget _field(String label, TextEditingController c, {String? hint}) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
