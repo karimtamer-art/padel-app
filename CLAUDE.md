@@ -550,6 +550,62 @@ before changing anything.
   `navForAccess` deliberately opens the Reports section to anyone holding
   Requests — otherwise Support would lose the queue. They get the Moderation
   half only; the money stays behind `_can_see_finance()`.
+- **"Please update" is asked of the STORES, not of an admin** (2026-08-21,
+  `changes/2026-08-21_app_update_gate.sql`). Shipping a release is the whole
+  procedure — nothing is typed anywhere afterwards. `AppUpdateService.check`
+  runs at launch and on resume; `UpdateGate` wraps `AuthGate` in `main.dart`
+  and is its only consumer.
+  - **The two stores are not symmetric and neither half is optional.**
+    Android uses **Play's in-app update service** (`in_app_update`, the one new
+    dependency, approved 2026-08-21) — Google publishes no version API at all,
+    so this is the only supported way to ask, and it can install the update
+    without leaving the app. iOS uses **Apple's public lookup endpoint**
+    (`itunes.apple.com/lookup?id=<Apple ID>`), which needs no package and no
+    key but lags a publish by a few hours — harmless for a nudge.
+  - **Play answers only for builds installed FROM Play.** A `flutter run`,
+    sideloaded or other-store build throws, which lands as "no update". So the
+    nudge cannot be tested from a debug build — use an internal-testing track.
+  - Apple's lookup answers `resultCount: 0` for a storefront the app isn't
+    sold in, so `kAppleStorefronts` tries `eg` and then the default (US)
+    rather than pinning us to one country.
+  - **Version NAMES are compared component by component** (`isNewer`), which is
+    the only safe way — `"1.10.0" < "1.9.0"` as a string. That path exists for
+    Apple alone, since Play reports a version CODE and iOS gets no code at all.
+    The block below compares build numbers, never names.
+  - **The hard block stays a human decision.** No store can know that an old
+    build talks to the server wrongly, so `update_min_build_<p>` in
+    `app_settings` is still hand-set, still compared against `kAppBuild`, and
+    still replaces the whole app tree including sign-in. The console confirms
+    the number out loud before saving, because a minimum above what is actually
+    live locks out everybody including the person who typed it — and nothing in
+    the app can check that against the store.
+  - **Every failure path answers "no update".** Offline, a store that won't
+    answer, `1.4.0` typed into a build field, zero, negative — all mean "no
+    rule". A gate that locks players out when Supabase or Play hiccups is worse
+    than no gate.
+  - The store answer is cached for `storeTtl` (6h) so a resume doesn't re-ask
+    Play every time someone switches apps. A resume **while already showing an
+    update prompt** forces a fresh check — that resume is most likely the trip
+    to the store — as does "I've updated" on the block screen.
+  - The nudge waits for `UpdateGate.appReady`, set by `AuthGate` when the app
+    is really on screen — a sheet over the splash or over half-finished
+    onboarding reads as a bug. The block does not wait. Dismissal is remembered
+    for the process only; persisting it means `shared_preferences` and rule #6
+    says ask first.
+  - What is left in the console (**Broadcasts → App update**,
+    `admin/widgets/app_update_card.dart`, not a new RBAC section) is only the
+    minimum build, the optional message, and a `store_url_<p>` override —
+    editable for the same reason the block is: fixing a wrong store link must
+    not require shipping the very release nobody can install. Both defaults
+    work as-is: `?id=com.padelegypt.app` on Play, and
+    `apps.apple.com/app/id6786002098` on Apple. **That number is the app's
+    Apple ID** (App Store Connect → App Information, or the digits after `/id`
+    in any App Store link), NOT the bundle id and NOT the Team ID; it is
+    assigned once and never changes. The URL deliberately carries no country
+    code and no name slug so it resolves for every storefront.
+  - `update_message` is **not tied to a version** — it is one shared string, so
+    a "what's new" line written for 1.4.0 keeps showing on 1.5.0 until someone
+    clears it. The card says so.
 
 ## Environment / workflow
 

@@ -2568,6 +2568,26 @@ exception when duplicate_object then null; end $$;
 grant select on public.app_settings to anon, authenticated;
 grant insert, update on public.app_settings to authenticated;
 
+-- ── "Please update" gate (2026-08-21) ──────────────────────────
+-- "A newer version is published" is asked of the STORES themselves (Play's
+-- in-app update service, Apple's lookup endpoint), so nothing about the
+-- published version lives here. What does: the part no store can answer.
+-- `update_min_build_<p>` locks out anything below that build — a judgement,
+-- not a fact, compared on the BUILD (pubspec's `+N`) because the build only
+-- ever goes up and "1.10.0" < "1.9.0" as text. `store_url_<p>` overrides the
+-- listing link, `update_message` is optional copy. Empty = no rule, and so is
+-- anything that isn't a positive integer, so a half-filled row (or an
+-- unreachable DB) can never lock players out. Read by Dart in
+-- AppUpdateService; written from the console's Broadcasts → App update.
+-- See supabase/changes/2026-08-21_app_update_gate.sql.
+insert into public.app_settings (key, value) values
+  ('update_min_build_android', ''),
+  ('update_min_build_ios',     ''),
+  ('store_url_android', 'https://play.google.com/store/apps/details?id=com.padelegypt.app'),
+  ('store_url_ios',     'https://apps.apple.com/app/id6786002098'),
+  ('update_message',    '')
+on conflict (key) do nothing;
+
 -- ── Matchmaking band config (Phase 0) ──────────────────────────
 -- Tunable constants for the video-game-style matchmaker (band = who sees/gets
 -- paired with whom). Single source of truth, admin-editable, no redeploy.

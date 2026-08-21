@@ -7,6 +7,7 @@ import 'package:padel_clay/backend/services/auth_service.dart';
 import 'package:padel_clay/backend/services/profile_service.dart';
 import 'package:padel_clay/backend/services/push_service.dart';
 import 'package:padel_clay/frontend/navigation/push_router.dart';
+import 'package:padel_clay/frontend/widgets/update_gate.dart';
 
 /// This project's Supabase URL. Lives here because `Supabase.initialize` needs
 /// it, but it's a const so anything else that must build a project URL by hand
@@ -102,7 +103,13 @@ class PadelApp extends StatelessWidget {
         onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
         child: child,
       ),
-      home: AuthGate(authService: auth, profileService: profiles),
+      // Everything sits behind the update gate: a build older than what the
+      // console published is told to update, either as a dismissible nudge or
+      // as a screen it can't get past. It answers "no update" on any failure,
+      // so it can never lock players out by accident.
+      home: UpdateGate(
+        child: AuthGate(authService: auth, profileService: profiles),
+      ),
     );
   }
 }

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
+import '../../widgets/update_gate.dart';
 import '../../../backend/services/auth_service.dart';
 import '../../../backend/models/onboarding_models.dart';
 import '../../../backend/models/ranking_scale.dart';
@@ -173,6 +174,10 @@ class _AuthGateState extends State<AuthGate> {
       if (!mounted) return;
       final ready = _isStaff || complete;
       setState(() => _phase = ready ? _Phase.ready : _Phase.onboarding);
+      // The "a new version is out" nudge waits for this — a sheet over the
+      // splash or over half-finished onboarding reads as a bug. The hard block
+      // doesn't wait; it applies at the sign-in screen too.
+      if (ready) UpdateGate.appReady.value = true;
       // Signed in & resolved → register this device for push (Android-only,
       // no-op elsewhere). Fire-and-forget; failures are swallowed internally.
       // Also wire notification taps to deep-link into the right screen.

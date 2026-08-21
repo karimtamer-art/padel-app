@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
+import '../widgets/app_update_card.dart';
 import '../../backend/services/community_service.dart';
 
 class AdminBroadcastsScreen extends StatefulWidget {
@@ -72,6 +73,9 @@ class _AdminBroadcastsScreenState extends State<AdminBroadcastsScreen> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 40),
         children: [
+          // Platform-wide only: an organizer broadcasts to their community,
+          // they don't publish the app.
+          if (!_isOrganizer) const AppUpdateCard(),
           AdminSection(
             'Broadcasts',
             sub: '${_broadcasts.length} sent',
