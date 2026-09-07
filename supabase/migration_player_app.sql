@@ -10682,18 +10682,38 @@ end $$;
 -- ---------------------------------------------------------------------------
 do $$
 begin
-  -- guarded: retyping is a table rewrite, so skip it once already applied
-  if (select numeric_scale from information_schema.columns
-       where table_schema = 'public' and table_name = 'profiles'
-         and column_name = 'rating') is distinct from 6 then
+  -- Guarded twice, and the first half is not redundant: retyping is a table
+  -- rewrite, so skip it once applied -- but `numeric_scale` for a column that
+  -- does not exist is NULL, and `NULL is distinct from 6` is TRUE. Without the
+  -- exists() this guard OPENS exactly when the column is missing. It survives
+  -- today only because the ranking columns (dropped at the end of this file)
+  -- are re-added by the rating-v2 section above, so `rating` is always present
+  -- here on a re-run. That is statement ordering, not a guard, and the test
+  -- 'nothing touches a profiles ranking column after the drop block' is what
+  -- keeps the ordering true.
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'profiles'
+                and column_name = 'rating')
+     and (select numeric_scale from information_schema.columns
+           where table_schema = 'public' and table_name = 'profiles'
+             and column_name = 'rating') is distinct from 6 then
     alter table public.profiles alter column rating type numeric(9,6);
   end if;
 end $$;
 
 -- New accounts start at the V3-F5 starting uncertainty. Existing rows are NOT
 -- touched here — see section 9.
-alter table public.profiles
-  alter column sigma set default 0.95;
+-- Same reasoning as the retype above: `sigma` is dropped at the end of this
+-- file and re-added by the rating-v2 section, so a bare ALTER here is correct
+-- only by ordering. Guarded so it is correct on its own terms.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'profiles'
+                and column_name = 'sigma') then
+    alter table public.profiles alter column sigma set default 0.95;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- 2. Rating history gains provenance. Legacy rows keep engine_version NULL,

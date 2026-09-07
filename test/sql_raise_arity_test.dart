@@ -600,4 +600,52 @@ void main() {
     expect(broken.contains('player_ratings'), isFalse);
     expect(col.hasMatch(broken), isTrue);
   });
+
+  // ── the drop block stays last ────────────────────────────────────────────
+  //
+  // migration_player_app.sql re-runs on live as a matter of course, and it
+  // still contains every historical statement that wrote the ranking columns
+  // on profiles (the v2 backfill, the placement_played sync, the retype). Those
+  // survive a re-run only because the columns are RE-ADDED at the rating-v2
+  // section and dropped again at the very end — so each statement finds its
+  // column present when it runs.
+  //
+  // That is statement ordering, not a guard. Append one statement touching a
+  // profiles ranking column after the drop block and the re-run breaks, with
+  // no other signal. This pins the ordering instead.
+  test('nothing touches a profiles ranking column after the drop block', () {
+    const ranking = <String>[
+      'rating', 'sigma', 'is_anchor', 'competitive_matches',
+      'last_competitive_match_at', 'placement_played', 'placement_revealed',
+      'is_provisional', 'reliability', 'tier', 'level',
+    ];
+    final sql = _stripLineComments(
+        readSql('supabase/migration_player_app.sql'));
+
+    final dropAt = sql.indexOf(
+        RegExp(r'alter table public\.profiles\s+drop column if exists rating'));
+    expect(dropAt, greaterThan(0),
+        reason: 'the ranking-column drop block is gone — if that was '
+            'deliberate, this test is what needs revisiting');
+
+    final tail = sql.substring(dropAt).toLowerCase();
+    final col = RegExp('[^a-z0-9_](${ranking.join("|")})[^a-z0-9_]');
+    final touchesProfiles = RegExp(
+        r'(from|join|update|into)\s+(public\.)?profiles([^a-z0-9_]|$)'
+        r'|alter table\s+(public\.)?profiles');
+
+    final after = <String>[];
+    for (final stmt in tail.split(';')) {
+      // the drop statements themselves are the block being located
+      if (RegExp(r'drop column if exists').hasMatch(stmt)) continue;
+      if (!touchesProfiles.hasMatch(stmt)) continue;
+      final m = col.firstMatch(stmt);
+      if (m == null) continue;
+      after.add('"${m.group(1)}" in "${stmt.trim().split("\n").first.trim()}"');
+    }
+
+    expect(after, isEmpty,
+        reason: 'these run AFTER the ranking columns are dropped, so a re-run '
+            'of the migration will fail on them:\n  ${after.join("\n  ")}');
+  });
 }
