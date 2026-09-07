@@ -10950,8 +10950,9 @@ begin
     end if;
     v_sig_after := round(greatest(c_sig_min, least(c_sig_max, r.sigma * v_decay)), c_dp);
 
-    -- player_ratings is the engine's table; a trigger mirrors it back onto
-    -- profiles for the readers not yet migrated (phase 1 of the split).
+    -- player_ratings is the engine's table, and it is the ONLY copy: the
+    -- 2026-08-15 split deliberately ships no mirror back onto profiles.
+    -- Services flatten the embed at the boundary instead.
     update player_ratings set
       rating = v_after,
       -- level is the 2dp DISPLAY mirror of rating; it is never read back into

@@ -31,8 +31,8 @@ class StoreService {
           .from('banners')
           .select('id, title, subtitle, image_url, bg_color, discount_pct')
           .eq('is_active', true)
-          .order('sort_order')
-          .order('created_at');
+          .order('sort_order', ascending: true)
+          .order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (_) {
       return [];

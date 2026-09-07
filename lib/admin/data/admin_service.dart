@@ -44,12 +44,19 @@ class AdminService {
       ]..sort((a, b) => ((b['rating'] as num?) ?? -1)
           .compareTo((a['rating'] as num?) ?? -1));
     } catch (_) {
+      // No `.order('rating')` here: rating moved to player_ratings on
+      // 2026-08-15, so ordering profiles by it is a 400 — this fallback could
+      // only ever have re-thrown. It also has to flatten, or every caller
+      // reads a null rating off a nested row. Sorted in Dart for both reasons.
       final res = await _db
           .from('profiles')
           .select(base)
-          .eq('is_admin', false)
-          .order('rating', ascending: false, nullsFirst: false);
-      return List<Map<String, dynamic>>.from(res as List);
+          .eq('is_admin', false);
+      return [
+        for (final r in (res as List))
+          flattenRatings(Map<String, dynamic>.from(r as Map))
+      ]..sort((a, b) => ((b['rating'] as num?) ?? -1)
+          .compareTo((a['rating'] as num?) ?? -1));
     }
   }
 
@@ -712,9 +719,9 @@ class AdminService {
               'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_name, partner_name), '
               'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_name, partner_name)')
           .eq('tournament_id', tournamentId)
-          .order('bracket')
-          .order('round')
-          .order('slot');
+          .order('bracket', ascending: true)
+          .order('round', ascending: true)
+          .order('slot', ascending: true);
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (_) {
       return [];
@@ -819,7 +826,7 @@ class AdminService {
         .from('product_images')
         .select('id, url, sort_order')
         .eq('product_id', productId)
-        .order('sort_order');
+        .order('sort_order', ascending: true);
     return List<Map<String, dynamic>>.from(res as List);
   }
 
@@ -864,7 +871,7 @@ class AdminService {
     final res = await _db
         .from('banners')
         .select('*')
-        .order('sort_order')
+        .order('sort_order', ascending: true)
         .order('created_at', ascending: false);
     return List<Map<String, dynamic>>.from(res as List);
   }

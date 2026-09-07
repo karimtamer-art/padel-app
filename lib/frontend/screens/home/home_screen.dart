@@ -259,7 +259,7 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
           .inFilter('id', ids)
           .inFilter('status',
               ['open', 'full', 'in_progress', 'pending_confirm', 'disputed'])
-          .order('scheduled_at')
+          .order('scheduled_at', ascending: true) // DESC + limit(20) took the 20 FARTHEST-out matches
           .limit(20);
 
       final list = List<Map<String, dynamic>>.from(rows as List)

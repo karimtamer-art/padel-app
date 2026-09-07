@@ -185,9 +185,9 @@ class TournamentService {
               'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_id, partner_id, player_name, partner_name), '
               'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_id, partner_id, player_name, partner_name)')
           .eq('tournament_id', tournamentId)
-          .order('bracket')
-          .order('round')
-          .order('slot');
+          .order('bracket', ascending: true)
+          .order('round', ascending: true)
+          .order('slot', ascending: true);
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (e) {
       debugPrint('[TournamentService] fetchBracket: $e — retrying without result fields');
@@ -199,9 +199,9 @@ class TournamentService {
                 'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_id, partner_id, player_name, partner_name), '
                 'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_id, partner_id, player_name, partner_name)')
             .eq('tournament_id', tournamentId)
-            .order('bracket')
-            .order('round')
-            .order('slot');
+            .order('bracket', ascending: true)
+            .order('round', ascending: true)
+            .order('slot', ascending: true);
         return List<Map<String, dynamic>>.from(rows as List);
       } catch (e2) {
         debugPrint('[TournamentService] fetchBracket fallback: $e2');

@@ -79,7 +79,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             .from('product_images')
             .select('url, sort_order')
             .eq('product_id', id)
-            .order('sort_order');
+            .order('sort_order', ascending: true);
         urls = [for (final r in rows as List) r['url'] as String];
       } catch (_) {}
     }

@@ -715,7 +715,13 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
         await MatchService.playerPhone(p['player_id'] as String) ?? '';
     if (!mounted) return;
     final username = (prof?['username'] as String?)?.trim() ?? '';
-    final elo = (prof?['elo'] as num?)?.toInt() ?? 1000;
+    // profiles.elo went with the v1 ELO layer (2026-08-14) and matchCols never
+    // selected it, so this read null and EVERY player showed "1000 ELO".
+    // Same convention as the roster row above.
+    final ranked = prof?['rating'] != null || prof?['level'] != null;
+    final lv = (prof?['rating'] as num?)?.toDouble() ??
+        (prof?['level'] as num?)?.toDouble() ?? 0.0;
+    final rankTag = ranked ? RankingScale.levelTag(lv) : 'Unranked';
 
     showModalBottomSheet(
       context: context,
@@ -750,7 +756,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 1),
                     Text(
-                        '${username.isNotEmpty ? '@$username · ' : ''}$elo ELO',
+                        '${username.isNotEmpty ? '@$username · ' : ''}$rankTag',
                         style: AppText.small().copyWith(fontSize: 12)),
                   ]),
                 ),
