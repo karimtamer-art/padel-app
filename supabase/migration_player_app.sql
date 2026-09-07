@@ -10502,10 +10502,26 @@ begin
   -- refuse a casual match on rating distance instead, which is the same bug
   -- wearing a different error message.
   if v_type is distinct from 'casual' then
-    select coalesce(rating, level, public.rating_prior()), (coalesce(placement_played, 0) < 5)
-      into v_my_rating, v_my_plac from profiles where id = v_uid;
-    select (coalesce(placement_played, 0) < 5) into v_cr_plac
-      from profiles where id = v_created_by;
+    -- Ranking state lives in player_ratings, NOT on profiles (2026-08-15).
+    -- These two reads were the last in the schema still pointed at profiles;
+    -- they made every RANKED join fail with `column "rating" does not exist`
+    -- (2026-09-07). The partner read below was converted at the time; these
+    -- were missed because they sit inside the casual guard.
+    select coalesce(pr.rating, pr.level, public.rating_prior()),
+           (coalesce(pr.placement_played, 0) < 5)
+      into v_my_rating, v_my_plac
+      from player_ratings pr where pr.player_id = v_uid;
+    -- No row = a player the trigger never covered: unrated and unplaced, which
+    -- is what the profiles read returned for a NULL column. Never NULL, or the
+    -- placement branch below evaluates to NULL and waves them straight through.
+    if not found then
+      v_my_rating := public.rating_prior();
+      v_my_plac   := true;
+    end if;
+
+    select (coalesce(pr.placement_played, 0) < 5) into v_cr_plac
+      from player_ratings pr where pr.player_id = v_created_by;
+    v_cr_plac := coalesce(v_cr_plac, true);
 
     if v_my_plac or v_cr_plac then
       if not (v_my_plac and v_cr_plac) then

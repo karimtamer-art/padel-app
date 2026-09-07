@@ -522,4 +522,82 @@ void main() {
         reason: 'the delta checks for these but never redefines them, so it '
             'will abort on a real database: ${missing.join(", ")}');
   });
+
+  // ── no function reads a ranking column off profiles ──────────────────────
+  //
+  // The mirror of the grant test above. That one stops a client WRITING the
+  // ranking columns; this one stops the server READING them from a table
+  // where they no longer exist.
+  //
+  // On 2026-09-07 mm_accept still had two such reads and every RANKED join
+  // failed with `column "rating" does not exist`, surfaced raw in the radar.
+  // 2026-08-15_player_ratings_p1.sql converted the other matchmaking
+  // functions completely and missed these two because they sit inside the
+  // `if v_type is distinct from 'casual'` guard — so CASUAL kept working and
+  // hid it, the same way casual skipping pending_confirm hid the
+  // matches_status_chk break in 2026-08-01.
+  //
+  // The p1 delta's own header promises exactly this sweep ("the catalog is
+  // swept for any function still reading profiles.<ranking column>, and the
+  // migration ABORTS naming it") but its section 6 never implemented it.
+  // 2026-09-07_mm_accept_player_ratings.sql now does it in SQL; this is the
+  // same check where it can fail before anything is pasted into live.
+  test('no function reads a ranking column off profiles', () {
+    const ranking = <String>[
+      'rating', 'sigma', 'is_anchor', 'competitive_matches',
+      'last_competitive_match_at', 'placement_played', 'placement_revealed',
+      'is_provisional', 'reliability', 'tier', 'level',
+    ];
+    // A qualifier dot is ALLOWED before the column (`p.rating`) — excluding it
+    // would silently miss the qualified form, which is the more common way to
+    // write the bug. Verified over the whole schema: this reports the two real
+    // statements and nothing else, so the looser form costs no false alarms.
+    final col = RegExp('[^a-z0-9_](${ranking.join("|")})[^a-z0-9_]');
+    final fromProfiles =
+        RegExp(r'(from|join)\s+(public\.)?profiles([^a-z0-9_]|$)');
+
+    // Statement-level, not function-level: a function may legitimately read a
+    // name off profiles in one statement and a rating off player_ratings in
+    // the next, and judging the whole body together flags every one of them.
+    final offenders = <String>[];
+    for (final path in <String>[
+      'supabase/migration_player_app.sql',
+      // Only the deltas from the move onward. Anything older read profiles
+      // correctly for the schema of its day and is history, not a bug.
+      'supabase/changes/2026-08-15_player_ratings_p1.sql',
+      'supabase/changes/2026-08-15_cleanup_stale_columns.sql',
+      'supabase/changes/2026-09-07_mm_accept_player_ratings.sql',
+    ]) {
+      final f = File(path);
+      if (!f.existsSync()) continue;
+      final sql = _stripLineComments(readSql(path)).toLowerCase();
+      for (final stmt in sql.split(';')) {
+        if (!fromProfiles.hasMatch(stmt)) continue;
+        if (stmt.contains('player_ratings')) continue;
+        final m = col.firstMatch(stmt);
+        if (m == null) continue;
+        offenders.add('$path: reads "${m.group(1)}" from profiles in '
+            '"${stmt.trim().split("\n").first.trim()}"');
+      }
+    }
+
+    expect(offenders, isEmpty,
+        reason: 'ranking state lives in player_ratings since 2026-08-15, so '
+            'these reads raise "column ... does not exist" at runtime:\n  '
+            '${offenders.join("\n  ")}');
+  });
+
+  test('that scanner would have caught the mm_accept break', () {
+    // Guards the guard: the regexes above are loose enough to be worth
+    // proving against the exact statement that shipped broken.
+    const broken = '''
+    select coalesce(rating, level, public.rating_prior()), (coalesce(placement_played, 0) < 5)
+      into v_my_rating, v_my_plac from profiles where id = v_uid''';
+    final col = RegExp(r'[^a-z0-9_](rating|placement_played|level)[^a-z0-9_]');
+    final fromProfiles =
+        RegExp(r'(from|join)\s+(public\.)?profiles([^a-z0-9_]|$)');
+    expect(fromProfiles.hasMatch(broken), isTrue);
+    expect(broken.contains('player_ratings'), isFalse);
+    expect(col.hasMatch(broken), isTrue);
+  });
 }

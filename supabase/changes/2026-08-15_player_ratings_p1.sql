@@ -1337,9 +1337,13 @@ begin
   -- wearing a different error message.
   if v_type is distinct from 'casual' then
     select coalesce(rating, level, 2.0), (coalesce(placement_played, 0) < 5)
-      into v_my_rating, v_my_plac from profiles where id = v_uid;
+      into v_my_rating, v_my_plac from player_ratings where player_id = v_uid;
+    -- reads player_ratings, not profiles: the ranking columns are dropped a few
+    -- sections below, so re-running this file with the old source table would
+    -- reintroduce `column "rating" does not exist` on every ranked join
+    -- (2026-09-07, see changes/2026-09-07_mm_accept_player_ratings.sql).
     select (coalesce(placement_played, 0) < 5) into v_cr_plac
-      from profiles where id = v_created_by;
+      from player_ratings where player_id = v_created_by;
 
     if v_my_plac or v_cr_plac then
       if not (v_my_plac and v_cr_plac) then
