@@ -11923,3 +11923,231 @@ begin
 end $$;
 
 notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Regions: one app, many countries (2026-09-26).
+--
+-- The app serves Egypt AND markets outside it from one binary and one store
+-- listing. Region is DATA, not a build flag: a `regions` row decides the
+-- currency shown, the phone dial code, and whether the Store exists at all.
+--
+-- Deliberately NOT region-scoped: the rating engine. V3-F5 stays one global
+-- 0.00-7.00 scale so a player keeps one strength between countries.
+-- `_finance_core` is also untouched -- commerce is Egypt-only, so the money
+-- shapes do not change.
+--
+-- Seasons ARE region-scoped (one ladder per market), via seasons.region_id.
+-- The older `seasons.region` free-text column is STALE -- nothing has ever
+-- written it and no SQL reads it; it comes out in a follow-up cleanup.
+--
+-- Full notes + verify block: supabase/changes/2026-09-26_regions.sql
+-- ============================================================================
+
+create table if not exists public.regions (
+  id               text primary key,                    -- 'EG', 'AE', 'SA'
+  name             text not null,
+  currency_code    text not null,
+  dial_code        text not null,
+  commerce_enabled boolean not null default false,
+  active           boolean not null default true,
+  sort             int not null default 0,
+  created_at       timestamptz not null default now()
+);
+
+-- self-heal, same reason as sponsors/banners: a drifted table would make the
+-- create above a no-op and none of these columns would exist.
+alter table public.regions add column if not exists name             text;
+alter table public.regions add column if not exists currency_code    text;
+alter table public.regions add column if not exists dial_code        text;
+alter table public.regions add column if not exists commerce_enabled boolean not null default false;
+alter table public.regions add column if not exists active           boolean not null default true;
+alter table public.regions add column if not exists sort             int not null default 0;
+alter table public.regions add column if not exists created_at       timestamptz not null default now();
+
+create index if not exists regions_active_idx on public.regions (active, sort);
+
+-- Egypt must exist before the region_id columns below: they default to 'EG'
+-- and carry a foreign key. The conflict branch leaves commerce_enabled/active/
+-- sort alone on purpose -- those are operational switches and a re-run must not
+-- flip one back that somebody turned off deliberately.
+insert into public.regions (id, name, currency_code, dial_code, commerce_enabled, active, sort)
+values ('EG', 'Egypt', 'EGP', '+20', true, true, 0)
+on conflict (id) do update
+  set name          = excluded.name,
+      currency_code = excluded.currency_code,
+      dial_code     = excluded.dial_code;
+
+-- region_id on the four tables that need it. Five steps each rather than one
+-- combined alter, so a database where an earlier run added the column as
+-- nullable still converges. Every existing row becomes Egyptian, which is
+-- correct -- that is the only market the app has run in.
+alter table public.profiles add column if not exists region_id text;
+update public.profiles set region_id = 'EG' where region_id is null;
+alter table public.profiles alter column region_id set default 'EG';
+alter table public.profiles alter column region_id set not null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_region_id_fkey') then
+    alter table public.profiles add constraint profiles_region_id_fkey
+      foreign key (region_id) references public.regions(id);
+  end if;
+end $$;
+
+alter table public.courts add column if not exists region_id text;
+update public.courts set region_id = 'EG' where region_id is null;
+alter table public.courts alter column region_id set default 'EG';
+alter table public.courts alter column region_id set not null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'courts_region_id_fkey') then
+    alter table public.courts add constraint courts_region_id_fkey
+      foreign key (region_id) references public.regions(id);
+  end if;
+end $$;
+
+alter table public.tournaments add column if not exists region_id text;
+update public.tournaments set region_id = 'EG' where region_id is null;
+alter table public.tournaments alter column region_id set default 'EG';
+alter table public.tournaments alter column region_id set not null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'tournaments_region_id_fkey') then
+    alter table public.tournaments add constraint tournaments_region_id_fkey
+      foreign key (region_id) references public.regions(id);
+  end if;
+end $$;
+
+alter table public.seasons add column if not exists region_id text;
+update public.seasons set region_id = 'EG' where region_id is null;
+alter table public.seasons alter column region_id set default 'EG';
+alter table public.seasons alter column region_id set not null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'seasons_region_id_fkey') then
+    alter table public.seasons add constraint seasons_region_id_fkey
+      foreign key (region_id) references public.regions(id);
+  end if;
+end $$;
+
+create index if not exists tournaments_region_idx  on public.tournaments (region_id, start_date);
+create index if not exists seasons_region_live_idx on public.seasons (region_id, status);
+create index if not exists courts_region_city_idx  on public.courts (region_id, city);
+
+-- Everyone reads the active list -- the sign-up screen needs it before the user
+-- is authenticated, hence `anon`. Only a SUPER ADMIN writes: a region row
+-- decides whether the store exists and what currency money is shown in, so it
+-- is structural config, not a grantable section.
+alter table public.regions enable row level security;
+
+drop policy if exists "regions: read active" on public.regions;
+create policy "regions: read active" on public.regions for select
+  using (active = true or public._is_admin());
+
+drop policy if exists "regions: super admin write" on public.regions;
+create policy "regions: super admin write" on public.regions for all
+  using (public._is_admin()) with check (public._is_admin());
+
+grant select on public.regions to anon, authenticated;
+grant insert, update, delete on public.regions to authenticated;  -- RLS gates it
+
+-- profiles has COLUMN-LEVEL grants, so onboarding cannot write region_id
+-- unless it is named here. Forgetting is invisible: Postgres refuses the write
+-- and a fire-and-forget call swallows it. region_id is safe to expose -- it is
+-- not a ranking or privilege column, and the worst a user achieves by changing
+-- it is showing themselves a store that cannot deliver to them.
+grant update (region_id) on public.profiles to authenticated;
+
+do $$
+declare v_regions int; v_unset int;
+begin
+  select count(*) into v_regions from public.regions where active;
+  select (select count(*) from public.profiles    where region_id is null)
+       + (select count(*) from public.courts      where region_id is null)
+       + (select count(*) from public.tournaments where region_id is null)
+       + (select count(*) from public.seasons     where region_id is null)
+    into v_unset;
+  if v_unset > 0 then
+    raise exception 'regions: % row(s) still have no region_id', v_unset
+      using hint = 'The backfill above should have made every existing row EG.';
+  end if;
+  raise notice 'regions ready: % active.', v_regions;
+end $$;
+
+
+-- ---------------------------------------------------------------------------
+-- 6. profiles.region_chosen — did a HUMAN pick this region?
+--
+--    `region_id` is NOT NULL and defaults to 'EG', so there is no "unset"
+--    state to detect and nothing to tell a real answer from the default. Same
+--    problem `username_chosen` solves, solved the same way: record the fact at
+--    the moment it is known instead of trying to infer it later.
+--
+--    Without this, onboarding either asks nobody (the default looks like an
+--    answer) or asks everybody -- including a long-standing Egyptian player
+--    sent back only to settle a handle, which is exactly the nag that column
+--    was added to avoid.
+--
+--    THE BACKFILL GRANDFATHERS EVERY EXISTING PLAYER, on purpose: Egypt is the
+--    only market the app has run in, so every current row is correctly
+--    Egyptian and re-asking would be a prompt with one possible answer.
+--    Guarded on app_settings so a re-run cannot un-answer a new signup.
+--
+--    ⚠️ WHEN YOU ADD A SECOND REGION, decide what happens to the accounts
+--       created before it existed. They still carry region_chosen = false, so
+--       they WILL be asked on their next trip through onboarding. That is
+--       usually what you want ("we're in more places now -- where do you
+--       play?"). To grandfather them instead, run:
+--           update public.profiles set region_chosen = true;
+--       It is deliberately not automatic, because which of the two is right
+--       depends on whether the new region overlaps the old audience.
+-- ---------------------------------------------------------------------------
+alter table public.profiles
+  add column if not exists region_chosen boolean not null default false;
+
+comment on column public.profiles.region_chosen is
+  'True when a human picked profiles.region_id. False means it is still the '
+  '''EG'' default and onboarding owes the player the question -- but only once '
+  'more than one region is active, since a one-option question is not worth '
+  'asking. Written from the client, so it carries a column grant; it gates '
+  'nothing but a prompt.';
+
+-- Same silent-failure trap as username_chosen: without the grant PostgREST
+-- refuses the write, reports no error, and onboarding asks again every launch.
+-- Not a ranking or privilege column -- the worst a forged `true` buys is
+-- skipping a question you could have answered anyway.
+grant update (region_chosen) on public.profiles to authenticated;
+
+do $$
+declare v_marked int;
+begin
+  if exists (select 1 from public.app_settings where key = 'region_chosen_backfilled') then
+    raise notice 'region_chosen backfill already ran (%), skipping',
+      (select value from public.app_settings where key = 'region_chosen_backfilled');
+    return;
+  end if;
+
+  update public.profiles set region_chosen = true where not region_chosen;
+  get diagnostics v_marked = row_count;
+
+  insert into public.app_settings(key, value)
+  values ('region_chosen_backfilled', now()::text)
+  on conflict (key) do update set value = excluded.value, updated_at = now();
+
+  raise notice 'region_chosen: % existing players grandfathered as Egyptian', v_marked;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 7. Verify the two column grants that fail silently when forgotten.
+-- ---------------------------------------------------------------------------
+do $$
+declare c text;
+begin
+  for c in select unnest(array['region_id', 'region_chosen']) loop
+    if not exists (
+      select 1 from information_schema.column_privileges
+       where table_schema = 'public' and table_name = 'profiles'
+         and column_name = c
+         and grantee = 'authenticated' and privilege_type = 'UPDATE')
+    then
+      raise exception 'authenticated has no UPDATE grant on profiles.%', c;
+    end if;
+  end loop;
+  raise notice 'profiles.region_id and profiles.region_chosen are both writable by the client.';
+end $$;
+notify pgrst, 'reload schema';

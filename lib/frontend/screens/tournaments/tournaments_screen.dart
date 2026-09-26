@@ -8,6 +8,7 @@ import 'package:padel_clay/frontend/widgets/screen_bar.dart';
 import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
+import 'package:padel_clay/backend/services/region_service.dart' show money;
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import 'tournament_detail_screen.dart';
 
@@ -192,7 +193,7 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
           const SizedBox(height: 14),
           Row(children: [
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(prize > 0 ? _egp(prize) : (fee > 0 ? _egp(fee) : 'Free'),
+              Text(prize > 0 ? money(prize) : (fee > 0 ? money(fee) : 'Free'),
                   style: AppText.stat(18, AppColors.primary)),
               Text(prize > 0 ? 'Prize Pool' : 'Entry / Pair',
                   style: AppText.small().copyWith(fontSize: 11)),
@@ -263,16 +264,6 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
         'mixed' => 'Mixed',
         _ => null,
       };
-
-  static String _egp(int n) {
-    final s = n.toString();
-    final buf = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
-      buf.write(s[i]);
-    }
-    return 'EGP $buf';
-  }
 
   static String _fmtRange(String? startIso, String? endIso) {
     final s = startIso == null ? null : DateTime.tryParse(startIso)?.toLocal();

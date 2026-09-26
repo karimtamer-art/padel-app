@@ -8,6 +8,7 @@ import '../../../theme/app_spacing.dart';
 import '../../../theme/app_text.dart';
 import '../../../../backend/models/onboarding_models.dart';
 import '../../../../backend/services/profile_service.dart';
+import '../../../../backend/services/region_service.dart';
 import '../auth_widgets.dart' show PhotoPicker, BioField, AuthField;
 import '../../../widgets/avatar_crop_sheet.dart';
 import 'onboarding_widgets.dart';
@@ -15,7 +16,11 @@ import 'onboarding_widgets.dart';
 /// Mandatory profile-completion flow. Shown by [AuthGate] when a signed-in user
 /// is missing any onboarding field.
 ///
-/// Steps: Date of Birth → Gender → Hand + Court Side → Phone → Photo + Bio.
+/// Steps: Name → Username → Region → Date of Birth → Gender → Hand + Court Side
+/// → Phone → Photo + Bio. Every one is conditional; see [_buildSteps].
+///
+/// Region only appears where there is more than one active region, so today
+/// (Egypt only) nobody sees it.
 ///
 /// The last step is where a Google/Apple signup gets asked for a picture and a
 /// bio at all. [SignUpFlow] asks on its own final step, but a social signup
@@ -49,7 +54,7 @@ class OnboardingFlow extends StatefulWidget {
 
 /// The steps this flow can show, in order. Which ones actually appear is
 /// decided once in [_OnboardingFlowState._steps].
-enum _Step { name, username, dob, gender, style, phone, extras }
+enum _Step { name, username, region, dob, gender, style, phone, extras }
 
 class _OnboardingFlowState extends State<OnboardingFlow> {
   /// The steps THIS player sees.
@@ -84,6 +89,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       if (!p.handleSettled ||
           OnboardingProfile.isGeneratedUsername(p.username))
         _Step.username,
+      // Two conditions, and both matter. `multiRegion` skips a question with one
+      // possible answer — with only Egypt live there is nothing to pick.
+      // `regionSettled` stops it being re-asked of a player who already
+      // answered, or of one on a database without the regions delta, where the
+      // server could not record the answer. It sits before `phone` because the
+      // phone step's badge shows this region's flag and dial code.
+      if (RegionService.multiRegion && !p.regionSettled) _Step.region,
       if (p.dateOfBirth == null) _Step.dob,
       if (p.gender == null) _Step.gender,
       if (p.hand == null || p.side == null) _Step.style,
@@ -116,6 +128,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   static const _kickers = <_Step, String>{
     _Step.name: 'About you',
     _Step.username: 'About you',
+    _Step.region: 'Where you play',
     _Step.dob: 'About you',
     _Step.gender: 'About you',
     _Step.style: 'Your game',
@@ -125,6 +138,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   static const _titles = <_Step, String>{
     _Step.name: 'What should we call you?',
     _Step.username: 'Pick your username',
+    _Step.region: 'Where do you play?',
     _Step.dob: 'When were you born?',
     _Step.gender: 'How do you identify?',
     _Step.style: 'Your playing style',
@@ -134,6 +148,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   static const _subs = <_Step, String>{
     _Step.name: 'This is the name other players see on matches and rankings.',
     _Step.username: 'Your unique handle. Letters, numbers and _ only.',
+    _Step.region: 'This sets your leaderboard, your currency and the events you see.',
     _Step.dob: 'We use this to match you with players in your age group.',
     _Step.gender: 'Helps us place you in the right leagues and events.',
     _Step.style: 'Tell us your dominant hand and preferred court side.',
@@ -158,6 +173,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             _draft.name!.trim().length >= 2;
       case _Step.username:
         return _usernameRe.hasMatch((_draft.username ?? '').trim().toLowerCase());
+      case _Step.region:
+        return (_draft.regionId ?? '').trim().isNotEmpty;
       case _Step.dob:
         return OnboardingValidation.dateOfBirth(_draft.dateOfBirth) == null;
       case _Step.gender:
@@ -214,7 +231,9 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         (_steps.contains(_Step.name) &&
             !OnboardingProfile.isUsableName(_draft.name)) ||
         (_steps.contains(_Step.username) &&
-            !_usernameRe.hasMatch((_draft.username ?? '').trim().toLowerCase()))) {
+            !_usernameRe.hasMatch((_draft.username ?? '').trim().toLowerCase())) ||
+        (_steps.contains(_Step.region) &&
+            (_draft.regionId ?? '').trim().isEmpty)) {
       setState(() => _error = 'Please complete every step before finishing.');
       return;
     }
@@ -238,9 +257,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       // and a missing grant is refused with no error at all. Unchecked, that
       // sends AuthGate straight back here — the onboarding loop, but now
       // reachable by an existing player who only came to settle a handle.
+      // regionSettled joins the read-back for the same reason handleSettled
+      // did: region_chosen is a COLUMN-GRANTED write, and a missing grant is
+      // refused with no error at all — which would send AuthGate straight back
+      // here and ask the question again on every launch.
       if (saved == null ||
           !saved.isComplete ||
-          (_steps.contains(_Step.username) && !saved.handleSettled)) {
+          (_steps.contains(_Step.username) && !saved.handleSettled) ||
+          (_steps.contains(_Step.region) && !saved.regionSettled)) {
         setState(() {
           _saving = false;
           _error = "Your answers were sent but the profile didn't save. "
@@ -435,6 +459,23 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             _error = null;
           }),
         );
+      case _Step.region:
+        return _grid([
+          for (final r in RegionService.known)
+            ChoiceCard(
+              label: '${r.flag}  ${r.name}',
+              icon: Icons.public_rounded,
+              selected: _draft.regionId == r.id,
+              onTap: () => setState(() {
+                _draft = _draft.copyWith(regionId: r.id, regionChosen: true);
+                _error = null;
+                // Move the live region immediately, so the phone step two
+                // screens later shows THIS region's flag and dial code rather
+                // than the one they signed up under.
+                RegionService.current.value = r;
+              }),
+            ),
+        ]);
       case _Step.dob:
         return _DobStep(
           value: _draft.dateOfBirth,
@@ -762,18 +803,24 @@ class _PhoneStepState extends State<_PhoneStep> {
           boxShadow: kCardShadow,
         ),
         child: Row(children: [
-          // +20 prefix badge
+          // dial-code prefix badge — follows the region picked a step earlier
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
             decoration: const BoxDecoration(
               border: Border(right: BorderSide(color: AppColors.line, width: 1.5)),
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Text('🇪🇬', style: TextStyle(fontSize: 20, decoration: TextDecoration.none)),
-              const SizedBox(width: 8),
-              Text('+20',
-                  style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 16)),
-            ]),
+            child: ValueListenableBuilder<Region>(
+              valueListenable: RegionService.current,
+              builder: (_, region, __) =>
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(region.flag,
+                    style: const TextStyle(
+                        fontSize: 20, decoration: TextDecoration.none)),
+                const SizedBox(width: 8),
+                Text(region.dialCode,
+                    style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 16)),
+              ]),
+            ),
           ),
           // number field
           Expanded(

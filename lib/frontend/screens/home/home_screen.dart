@@ -13,6 +13,7 @@ import 'package:padel_clay/frontend/widgets/skeleton.dart';
 import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart';
+import 'package:padel_clay/backend/services/region_service.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/notification_service.dart';
@@ -736,10 +737,14 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
                 SectionHeader('Tournaments',
                     action: 'View All', onAction: widget.onSeeTournaments),
                 _tournamentsSection(),
-                const SizedBox(height: AppSpacing.section),
-                SectionHeader('From the Store',
-                    action: 'Shop', onAction: widget.onSeeStore),
-                _storeSection(),
+                // No store outside the regions that have one — otherwise this
+                // strip's "Shop" action points at a tab that isn't there.
+                if (RegionService.now.commerceEnabled) ...[
+                  const SizedBox(height: AppSpacing.section),
+                  SectionHeader('From the Store',
+                      action: 'Shop', onAction: widget.onSeeStore),
+                  _storeSection(),
+                ],
                 // Hidden entirely when nobody is on board yet (also the case on
                 // a database without the sponsors delta — the service returns
                 // empty rather than throwing).
@@ -1577,16 +1582,6 @@ class _TournamentTile extends StatelessWidget {
     return '${months[s.month - 1]} ${s.day} – ${months[e.month - 1]} ${e.day}';
   }
 
-  static String _egp(int n) {
-    final s = n.toString();
-    final buf = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
-      buf.write(s[i]);
-    }
-    return 'EGP $buf';
-  }
-
   @override
   Widget build(BuildContext context) {
     final uid = Supabase.instance.client.auth.currentUser?.id;
@@ -1648,7 +1643,7 @@ class _TournamentTile extends StatelessWidget {
           Row(children: [
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(prize > 0 ? _egp(prize) : (fee > 0 ? _egp(fee) : 'Free'),
+                Text(prize > 0 ? money(prize) : (fee > 0 ? money(fee) : 'Free'),
                     style: AppText.stat(16, AppColors.primary)),
                 Text(prize > 0 ? 'Prize Pool' : 'Entry / Pair',
                     style: AppText.small().copyWith(fontSize: 10.5)),

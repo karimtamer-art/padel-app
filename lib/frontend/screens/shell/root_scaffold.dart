@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../backend/services/region_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/app_toast.dart';
@@ -84,8 +85,20 @@ class _RootScaffoldState extends State<RootScaffold> {
     _openCart();
   }
 
-  // page index per visual slot (slot 2 is the FAB, not a page)
-  static const _slotToPage = {0: 0, 1: 1, 3: 2, 4: 3};
+  /// Does this player's region have a store?
+  ///
+  /// Cash-on-delivery and the Egyptian `addresses` shape (governorate / city /
+  /// area) don't export, so the Store is Egypt-only — decided by
+  /// `regions.commerce_enabled`, i.e. by DATA rather than by a build flag.
+  bool get _commerce => RegionService.now.commerceEnabled;
+
+  /// Nav slot id → IndexedStack page. Slot 2 is the Create FAB and has no page.
+  ///
+  /// The slot ids are STABLE (Store is always 3, You is always 4) so that
+  /// `onSeeStore` and the refresh conditions below keep meaning one thing; only
+  /// which slots are *visible* and which page each maps to changes.
+  Map<int, int> get _slotToPage =>
+      _commerce ? const {0: 0, 1: 1, 3: 2, 4: 3} : const {0: 0, 1: 1, 4: 2};
 
   Future<void> _openCreate() async {
     final matchId = await showModalBottomSheet<String>(
@@ -126,7 +139,10 @@ class _RootScaffoldState extends State<RootScaffold> {
             initials: widget.initials,
           ),
           const TournamentsScreen(),
-          StoreScreen(cart: _cartCount, onAdd: _addToCart, onOpenCart: _openCart),
+          // Left out of the tree entirely where there is no store, rather than
+          // built and never shown — StoreScreen fetches products on init.
+          if (_commerce)
+            StoreScreen(cart: _cartCount, onAdd: _addToCart, onOpenCart: _openCart),
           ProfileScreen(
             profile: widget.profile,
             refreshTick: _profileRefresh,
@@ -140,6 +156,7 @@ class _RootScaffoldState extends State<RootScaffold> {
         ],
       ),
       bottomNavigationBar: _NavBar(
+        commerce: _commerce,
         current: _tab,
         onTap: (i) => setState(() {
           // Returning to Home refetches it (it's kept alive in the IndexedStack,
@@ -159,7 +176,23 @@ class _NavBar extends StatelessWidget {
   final int current;
   final ValueChanged<int> onTap;
   final VoidCallback onCreate;
-  const _NavBar({required this.current, required this.onTap, required this.onCreate});
+
+  /// Whether the Store slot appears. See `RootScaffold._commerce`.
+  final bool commerce;
+
+  const _NavBar({
+    required this.current,
+    required this.onTap,
+    required this.onCreate,
+    this.commerce = true,
+  });
+
+  /// Slot ids in visual order. 2 is the Create FAB, which the pill skips.
+  ///
+  /// The bar used to be hardcoded to five slots, including the `/ 5` the pill
+  /// geometry divides by. Dropping Store has to move that divisor too, or the
+  /// active pill lands between icons.
+  List<int> get _slots => [0, 1, 2, if (commerce) 3, 4];
 
   // The create button floats above the bar by this much; the Stack reserves
   // the space so the whole circle stays tappable (OverflowBox would clip hits).
@@ -182,9 +215,13 @@ class _NavBar extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(6, 8, 6, 26),
             child: LayoutBuilder(
               builder: (context, c) {
-                final slotW = c.maxWidth / 5; // 5 slots incl. Create (skipped)
+                final slotW = c.maxWidth / _slots.length; // incl. Create
                 const pillW = 48.0, pillH = 36.0;
-                final pillLeft = slotW * current + (slotW - pillW) / 2;
+                // Position by VISUAL index, not slot id — with Store hidden,
+                // slot 4 ("You") is the fourth icon, not the fifth.
+                final visualIndex = _slots.indexOf(current);
+                final pillLeft =
+                    slotW * (visualIndex < 0 ? 0 : visualIndex) + (slotW - pillW) / 2;
                 return Stack(
                   clipBehavior: Clip.none,
                   children: [
@@ -210,7 +247,8 @@ class _NavBar extends StatelessWidget {
                         _item(0, Icons.home_outlined, 'Home', reduce),
                         _item(1, Icons.emoji_events_outlined, 'Tournaments', reduce),
                         _createSlot(),
-                        _item(3, Icons.shopping_bag_outlined, 'Store', reduce),
+                        if (commerce)
+                          _item(3, Icons.shopping_bag_outlined, 'Store', reduce),
                         _item(4, Icons.account_circle_outlined, 'You', reduce),
                       ],
                     ),

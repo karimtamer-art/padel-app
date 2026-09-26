@@ -5,6 +5,7 @@ import '../../theme/app_text.dart';
 import '../../theme/app_spacing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show AuthException;
 import '../../../backend/services/auth_service.dart';
+import '../../../backend/services/region_service.dart';
 
 /// ── Labelled text field with leading icon + password reveal ──────
 class AuthField extends StatefulWidget {
@@ -208,11 +209,17 @@ class _PhoneFieldState extends State<PhoneField> {
               margin: const EdgeInsets.symmetric(vertical: 13),
               decoration: const BoxDecoration(
                   border: Border(right: BorderSide(color: AppColors.line))),
-              child: Row(children: [
-                const Text('🇪🇬', style: TextStyle(fontSize: 17)),
-                const SizedBox(width: 6),
-                Text('+20', style: AppText.bodyStrong().copyWith(fontSize: 15)),
-              ]),
+              // Flag + dial code follow the player's region, so this badge does
+              // not keep claiming Egypt in a market that isn't.
+              child: ValueListenableBuilder<Region>(
+                valueListenable: RegionService.current,
+                builder: (_, region, __) => Row(children: [
+                  Text(region.flag, style: const TextStyle(fontSize: 17)),
+                  const SizedBox(width: 6),
+                  Text(region.dialCode,
+                      style: AppText.bodyStrong().copyWith(fontSize: 15)),
+                ]),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(

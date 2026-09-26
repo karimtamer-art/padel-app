@@ -2,6 +2,8 @@
 /// Swap these for your real models / API responses.
 library;
 
+import '../services/region_service.dart';
+
 class Player {
   final String initials, name, tier;
   final int elo;
@@ -256,13 +258,9 @@ class MockData {
     Achievement(IconKind.crown, 'Finalist', 'diamond'),
   ];
 
-  static String egp(int n) {
-    final s = n.toString();
-    final buf = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
-      buf.write(s[i]);
-    }
-    return 'EGP $buf';
-  }
+  /// Formats a store price. Kept under this name because the store calls it
+  /// from ~25 places; the formatting itself now lives in `money()` so there is
+  /// one currency formatter for the whole app and it follows the player's
+  /// region. Output is byte-identical for whole amounts.
+  static String egp(int n) => money(n);
 }

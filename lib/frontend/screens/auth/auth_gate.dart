@@ -12,6 +12,7 @@ import '../../../backend/models/onboarding_models.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/profile_service.dart';
 import '../../../backend/services/push_service.dart';
+import '../../../backend/services/region_service.dart';
 import '../../navigation/push_router.dart';
 import '../shell/root_scaffold.dart';
 import '../splash/splash_screen.dart';
@@ -129,6 +130,12 @@ class _AuthGateState extends State<AuthGate> {
       if (!mounted) return;
       _existing = profile ?? const OnboardingProfile();
       _isStaff = profile?.isStaff ?? false;
+      // Resolve the region BEFORE anything paints. It decides the currency, the
+      // phone dial code and whether the Store tab exists at all, so letting the
+      // shell build first would flash the wrong tab set and then rearrange it.
+      // Every failure inside answers Egypt, so this never blocks sign-in.
+      await RegionService.load(user.id);
+      if (!mounted) return;
       final meta = user.userMetadata ?? {};
       // profiles.name FIRST. Auth metadata is fixed at signup and never changes,
       // so preferring it meant an edited name never appeared anywhere — the
@@ -193,6 +200,7 @@ class _AuthGateState extends State<AuthGate> {
 
   Future<void> _signOut() async {
     await PushService.unregister(); // stop push to this device before sign-out
+    RegionService.reset(); // next account must not inherit this one's currency
     await widget.authService.signOut();
   }
 

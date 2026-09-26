@@ -73,13 +73,19 @@ class ProfileService {
         .eq('id', userId)
         .maybeSingle();
     try {
-      // username_chosen: 2026-08-20_username_chosen.sql
-      row = await read('$_onbCols, admin_role, must_change_password, username_chosen');
+      // region_id / region_chosen: 2026-09-26_regions.sql
+      row = await read('$_onbCols, admin_role, must_change_password, '
+          'username_chosen, region_id, region_chosen');
     } catch (_) {
       try {
-        row = await read('$_onbCols, admin_role, must_change_password');
+        // username_chosen: 2026-08-20_username_chosen.sql
+        row = await read('$_onbCols, admin_role, must_change_password, username_chosen');
       } catch (_) {
-        row = await read(_onbCols);
+        try {
+          row = await read('$_onbCols, admin_role, must_change_password');
+        } catch (_) {
+          row = await read(_onbCols);
+        }
       }
     }
     if (row == null) return null;

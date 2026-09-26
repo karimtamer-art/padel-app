@@ -93,6 +93,24 @@ class OnboardingProfile {
   /// therefore reads as settled, via [handleSettled], and is never written
   /// back.
   final bool? usernameChosen;
+
+  /// `profiles.region_id` — which market this player is in ('EG').
+  final String? regionId;
+
+  /// `profiles.region_chosen` — did a HUMAN pick [regionId]?
+  ///
+  /// **Nullable, and null is not false**, for exactly the reason spelled out on
+  /// [usernameChosen]: null means the column wasn't in the row we read, i.e. a
+  /// database without `changes/2026-09-26_regions.sql`. Treating that as "not
+  /// chosen" would send every player into onboarding to answer a question the
+  /// server can't record — a loop. Null therefore reads as settled, via
+  /// [regionSettled], and is never written back.
+  ///
+  /// `region_id` is NOT NULL and defaults to 'EG' server-side, so there is no
+  /// empty value to detect and nothing to tell a real answer from the default.
+  /// That is the whole reason this flag exists.
+  final bool? regionChosen;
+
   final bool isAdmin;
   final String? adminRole; // super_admin | organizer | support | analyst | null
   final bool mustChangePassword; // provisioned organizer on a temp password
@@ -106,6 +124,8 @@ class OnboardingProfile {
     this.side,
     this.phone,
     this.usernameChosen,
+    this.regionId,
+    this.regionChosen,
     this.isAdmin = false,
     this.adminRole,
     this.mustChangePassword = false,
@@ -150,6 +170,17 @@ class OnboardingProfile {
   bool get handleSettled =>
       (usernameChosen ?? true) && (username ?? '').trim().isNotEmpty;
 
+  /// True when nobody still owes the player a say in which region they're in.
+  ///
+  /// Like [handleSettled], and separate from [isComplete] for the same reason:
+  /// the server's generated `onboarding_completed` column doesn't include it.
+  ///
+  /// Note this answers "has it been ASKED", not "is there a value" — there is
+  /// always a value, because `region_id` defaults to 'EG'. Whether the question
+  /// is worth asking at all is a separate call that belongs to the onboarding
+  /// flow: with one active region it is a one-option prompt and is skipped.
+  bool get regionSettled => regionChosen ?? true;
+
   /// Mirrors the server's generated `onboarding_completed` column.
   bool get isComplete =>
       dateOfBirth != null &&
@@ -167,6 +198,8 @@ class OnboardingProfile {
     CourtSidePref? side,
     String? phone,
     bool? usernameChosen,
+    String? regionId,
+    bool? regionChosen,
     bool? isAdmin,
     String? adminRole,
     bool? mustChangePassword,
@@ -180,6 +213,8 @@ class OnboardingProfile {
         side: side ?? this.side,
         phone: phone ?? this.phone,
         usernameChosen: usernameChosen ?? this.usernameChosen,
+        regionId: regionId ?? this.regionId,
+        regionChosen: regionChosen ?? this.regionChosen,
         isAdmin: isAdmin ?? this.isAdmin,
         adminRole: adminRole ?? this.adminRole,
         mustChangePassword: mustChangePassword ?? this.mustChangePassword,
@@ -201,6 +236,10 @@ class OnboardingProfile {
       // Absent key stays null — see [usernameChosen]. `?? false` here would
       // route every player on a pre-delta database into onboarding.
       usernameChosen: j['username_chosen'] as bool?,
+      regionId: j['region_id'] as String?,
+      // Absent key stays null — see [regionChosen]. Same trap as above: `?? false`
+      // would route every player on a pre-delta database into onboarding.
+      regionChosen: j['region_chosen'] as bool?,
       isAdmin: j['is_admin'] as bool? ?? false,
       adminRole: j['admin_role'] as String?,
       mustChangePassword: j['must_change_password'] as bool? ?? false,
@@ -228,6 +267,14 @@ class OnboardingProfile {
       // usernameChosen is null and sending the key would 400 the whole upsert
       // and lose every other answer with it.
       if (handle.isNotEmpty && usernameChosen != null) 'username_chosen': true,
+      // Same guard, same reason: on a database without the regions delta
+      // regionChosen is null, and sending either key would 400 the whole upsert
+      // and lose every other answer with it. region_id is only written when the
+      // player actually picked one — otherwise the server's 'EG' default stands.
+      if (regionChosen != null && (regionId ?? '').trim().isNotEmpty) ...{
+        'region_id': regionId!.trim(),
+        'region_chosen': true,
+      },
       'date_of_birth': dateOfBirth == null ? null : _ymd(dateOfBirth!),
       'gender': gender?.id,
       'preferred_hand': hand?.id,

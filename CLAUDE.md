@@ -14,6 +14,33 @@ before changing anything.
 - **Database contract**: `supabase/migration_player_app.sql`. This file IS the
   schema + RPCs + RLS. It is idempotent and gets re-run on the live project.
 
+### Where this is going (decided 2026-09-26)
+
+The app is mid-pivot to **tournament-first and multi-region**. Read this before
+"fixing" something that looks half-finished:
+
+- **Tournaments become the product; pickup matches go away.** Create-match,
+  matchmaking, join/leave, match invites and private codes are all scheduled for
+  removal. Do not build on them, and do not delete them yet either — they are
+  still live for players.
+- **`matches` / `match_players` STAY** and become the internal **settlement
+  ledger** for tournament results. `finalize_tournament` already materialises
+  each decided `tournament_matches` row into a completed `matches` +
+  `match_players` row and settles it through `_settle_rating` (idempotent via
+  `matches.tournament_match_id`), which is why the pivot needs **no
+  rating-engine change at all**. If you see a `matches` row with a `TRN-` invite
+  code, that is what it is — not dead data.
+- **One app, one store listing, for Egypt and everywhere else.** A second
+  Egypt-only app was considered and rejected: the expensive half of this project
+  is the rigging (three Android SHA-1s across two Cloud projects, the Supabase
+  redirect allow-list, the Cloudflare/Resend mail stack, two review queues), and
+  forking it doubles the surface that can drift.
+- **Season points are the visible ladder**, one season per region; the
+  0.00–7.00 rating stays one global scale underneath.
+- **Store / commerce / P&L stay, Egypt-gated** by `regions.commerce_enabled`.
+- Rollout is phased: region scaffolding first (done), then the tournament-first
+  surface, then tournament comms, then pickup removal.
+
 ## Hard rules (do not break these)
 
 1. **Never change the DB schema from Dart alone.** Any new column/table/RPC
@@ -123,6 +150,56 @@ before changing anything.
 
 ## Key flows (so you don't "fix" working behavior)
 
+- **Region is DATA, not a build flag** (2026-09-26,
+  `changes/2026-09-26_regions.sql`). One binary serves every market. A `regions`
+  row (`id` is a text code like `'EG'`, not a uuid) decides three things and
+  deliberately nothing else: `currency_code`, `dial_code`, and
+  `commerce_enabled`. `region_id` hangs off `profiles`, `courts`, `tournaments`
+  and `seasons`, all defaulting to `'EG'`, so every pre-existing row is Egyptian
+  — which is correct, it is the only market the app has run in.
+  - **`RegionService.now` is the synchronous answer** and every failure path
+    returns `Region.egypt` — offline, signed out, or a database without the
+    delta. Same principle as `AppUpdateService`, where every failure answers
+    "no update": a player who can't see prices because Supabase hiccuped is
+    worse than one shown the wrong currency. `AuthGate._resolve` awaits
+    `RegionService.load` **before anything paints**, because the region decides
+    whether the Store tab exists and rearranging the nav bar after first frame
+    reads as a bug.
+  - **There is ONE money formatter**, `money()` in `region_service.dart`. It
+    replaced four byte-identical private `_egp` helpers copy-pasted across
+    tournaments / tournament-detail / home, plus `MockData.egp`, which now
+    delegates to it (the store calls that from ~25 places). Whole amounts render
+    exactly as before. Don't add a fifth.
+  - **The flag emoji is derived from `id`**, not stored — a two-letter ISO code
+    maps onto the regional-indicator block by a fixed offset. Nothing to keep in
+    sync; a non-2-letter id gets a globe.
+  - **The Store is region-gated in four places**, and all four matter or you get
+    a dead end: the nav slot, the `IndexedStack` child (left out entirely, since
+    `StoreScreen` fetches products on init), Home's "From the Store" strip, and
+    Profile's "My Orders" row. The nav bar's pill geometry divides by
+    `_slots.length` — it was hardcoded `/ 5`, and dropping a slot without moving
+    that lands the active pill between icons.
+  - **`profiles.region_chosen` is the `username_chosen` pattern, for the same
+    reason.** `region_id` is NOT NULL and defaults to `'EG'`, so there is no
+    empty value to detect and nothing distinguishes a real answer from the
+    default. Null means the column wasn't read (a pre-delta database) and
+    therefore reads as **settled** — `?? false` there would loop every player
+    through onboarding to answer something the server can't record.
+  - **The onboarding region step needs TWO conditions**: more than one active
+    region (`RegionService.multiRegion` — a one-option question isn't worth
+    asking, so today nobody sees it) AND `!regionSettled`. Its backfill
+    grandfathers every existing player as Egyptian, guarded on
+    `app_settings.region_chosen_backfilled`. ⚠️ **When you add a second region,
+    decide what happens to accounts created before it** — they still carry
+    `region_chosen = false` and WILL be asked. The delta says how to
+    grandfather them instead.
+  - Both `region_id` and `region_chosen` carry **column grants** on `profiles`;
+    forgetting one is invisible (see the drift traps below).
+  - `seasons.region` (free text, older) is **stale** — nothing ever wrote it and
+    no SQL read it. `seasons.region_id` is the real key; the old column comes
+    out in a follow-up, same treatment as `profiles.instapay_handle`.
+  - Communities are still **city**-scoped only, not region-scoped. Deliberate,
+    and a candidate for a follow-up.
 - **Create match**: `create_match_sheet.dart` → `MatchService.createMatch`
   (inserts `matches` + `match_players`, creator on team A ONLY) → root scaffold
   opens `MatchDetailScreen(matchId)` and bumps a key to refresh Home.

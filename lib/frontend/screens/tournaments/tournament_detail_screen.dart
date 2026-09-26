@@ -11,6 +11,7 @@ import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/frontend/widgets/copy_icon.dart';
 import 'package:padel_clay/frontend/widgets/instapay_field.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
+import 'package:padel_clay/backend/services/region_service.dart' show money;
 import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
@@ -267,9 +268,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     final body = !paidEntry
         ? 'Your spot opens for another pair.'
         : refundable
-            ? 'Your spot opens up, and your ${_egp(_fee)} entry fee will be '
+            ? 'Your spot opens up, and your ${money(_fee)} entry fee will be '
                 'refunded once an admin processes it.'
-            : 'Withdrawing on the tournament day — your ${_egp(_fee)} entry fee '
+            : 'Withdrawing on the tournament day — your ${money(_fee)} entry fee '
                 'is non-refundable.';
     final sure = await showDialog<bool>(
       context: context,
@@ -321,7 +322,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       _snack(err, color: AppColors.danger);
     } else {
       _snack(paidEntry && refundable
-          ? 'Withdrawn — your ${_egp(_fee)} refund will be processed by an admin.'
+          ? 'Withdrawn — your ${money(_fee)} refund will be processed by an admin.'
           : 'You have withdrawn from this tournament.');
       _load();
     }
@@ -378,16 +379,6 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       default:
         return 'Doubles';
     }
-  }
-
-  static String _egp(int n) {
-    final s = n.toString();
-    final buf = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
-      buf.write(s[i]);
-    }
-    return 'EGP $buf';
   }
 
   // ── Build ────────────────────────────────────────────────────────────────
@@ -552,12 +543,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         // prize / entry cards
         Row(children: [
           Expanded(
-            child: _bigStat('PRIZE POOL', prize > 0 ? _egp(prize) : '—',
+            child: _bigStat('PRIZE POOL', prize > 0 ? money(prize) : '—',
                 highlight: true),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: _bigStat('ENTRY / PLAYER', _fee > 0 ? _egp(_fee) : 'Free'),
+            child: _bigStat('ENTRY / PLAYER', _fee > 0 ? money(_fee) : 'Free'),
           ),
         ]),
         if (_myUnpaidPartnerShare != null) ...[
@@ -721,10 +712,10 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
           ),
         ]),
         const SizedBox(height: 6),
-        Text('Pay your ${_egp(_fee)} share to lock in your spot together.',
+        Text('Pay your ${money(_fee)} share to lock in your spot together.',
             style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13.5, height: 1.4)),
         const SizedBox(height: 12),
-        AppButton('Pay my share · ${_egp(_fee)}',
+        AppButton('Pay my share · ${money(_fee)}',
             full: true,
             height: 50,
             onPressed: _busy ? null : () => _startPartnerShare(entry)),
@@ -1252,7 +1243,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       child: Row(children: [
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('ENTRY / PLAYER', style: AppText.tag().copyWith(fontSize: 9.5)),
-          Text(_fee > 0 ? _egp(_fee) : 'Free', style: AppText.stat(20)),
+          Text(_fee > 0 ? money(_fee) : 'Free', style: AppText.stat(20)),
         ]),
         const SizedBox(width: 14),
         Expanded(
@@ -1342,8 +1333,6 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
     _sender.dispose();
     super.dispose();
   }
-
-  static String _egp(int n) => 'EGP $n';
 
   Future<void> _pickProof() async {
     // Downscale + compress so proofs stay small (full-res photos time out /
@@ -1453,7 +1442,7 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                 _copyRow('Send to · InstaPay', _handle.isEmpty ? '…' : _handle,
                     mono: true),
                 const SizedBox(height: 10),
-                _copyRow('Amount', _egp(_amount), copyable: false),
+                _copyRow('Amount', money(_amount), copyable: false),
                 if ((_payLink ?? '').isNotEmpty) ...[
                   const SizedBox(height: 12),
                   SizedBox(
@@ -1553,7 +1542,7 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                         style: AppText.bodyStrong().copyWith(fontSize: 13.5))),
               ]),
               const SizedBox(height: 6),
-              Text(_egp(amount),
+              Text(money(amount),
                   style: AppText.stat(18, on ? AppColors.primary : AppColors.ink)),
               const SizedBox(height: 3),
               Text(sub, style: AppText.small().copyWith(fontSize: 11, height: 1.3)),

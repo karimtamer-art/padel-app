@@ -11,6 +11,7 @@ import 'package:padel_clay/frontend/widgets/copy_icon.dart';
 import 'package:padel_clay/frontend/widgets/instapay_field.dart';
 import 'package:padel_clay/backend/models/mock_data.dart';
 import 'package:padel_clay/backend/services/address_service.dart';
+import 'package:padel_clay/backend/services/region_service.dart';
 import 'package:padel_clay/backend/services/order_service.dart';
 
 enum _Step { address, pay, instapay, done }
@@ -462,7 +463,8 @@ class _CheckoutFlowScreenState extends State<CheckoutFlowScreen> {
         _input(_fullName, 'Recipient name'),
         const SizedBox(height: 12),
         _fieldLabel('Phone for the courier'),
-        _input(_phone, '+20 1XX XXX XXXX', keyboard: TextInputType.phone),
+        _input(_phone, '${RegionService.now.dialCode} 1XX XXX XXXX',
+            keyboard: TextInputType.phone),
         const SizedBox(height: 12),
         _fieldLabel('Governorate'),
         _govField(),

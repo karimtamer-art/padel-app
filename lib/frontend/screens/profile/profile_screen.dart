@@ -10,6 +10,7 @@ import '../../widgets/auto_refresh.dart';
 import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/profile_service.dart';
 import '../../../backend/models/mock_data.dart' show CartLine;
+import '../../../backend/services/region_service.dart';
 import 'division_card.dart';
 import 'edit_profile_screen.dart';
 import 'my_orders_screen.dart';
@@ -420,7 +421,11 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
 
   Widget _menu(BuildContext context) {
     final items = <(IconData, String, Widget)>[
-      (Icons.receipt_long_outlined, 'My Orders', MyOrdersScreen(onReorder: widget.onReorder)),
+      // The last commerce entry point outside the Store tab — gated on the same
+      // region flag, or a player with no store gets a menu row that can only
+      // ever be empty.
+      if (RegionService.now.commerceEnabled)
+        (Icons.receipt_long_outlined, 'My Orders', MyOrdersScreen(onReorder: widget.onReorder)),
       (Icons.emoji_events_outlined, 'My Tournaments', const MyTournamentsScreen()),
       (Icons.history_rounded, 'Match History', const MatchHistoryScreen()),
       (Icons.notifications_none_rounded, 'Notifications', const NotificationsScreen()),
