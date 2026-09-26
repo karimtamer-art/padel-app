@@ -170,7 +170,13 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
   }
 
   String get _matchLine {
-    final t = widget.matchType == 'ranked' ? 'Competitive' : 'Casual';
+    // 'tournament' comes from ticket_inbox for a thread hanging off a
+    // tournament_matches row rather than a matches row (2026-09-26).
+    final t = switch (widget.matchType) {
+      'tournament' => 'Tournament',
+      'ranked' => 'Competitive',
+      _ => 'Casual',
+    };
     return '$t · Doubles';
   }
 

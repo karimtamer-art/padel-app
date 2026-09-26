@@ -226,7 +226,15 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> with AutoRefr
     final open = t['is_open'] == true;
     final unread = (t['unread'] as int?) ?? 0;
     final hasUnread = unread > 0;
-    final ranked = t['match_type'] == 'ranked';
+    // 'tournament' is a thread on a tournament_matches row (2026-09-26); it has
+    // no matches row at all, so match_type comes from ticket_inbox's coalesce.
+    final kind = (t['match_type'] as String?) ?? 'casual';
+    final isTournament = kind == 'tournament';
+    final label = switch (kind) {
+      'tournament' => 'Tournament match',
+      'ranked' => 'Competitive match',
+      _ => 'Casual match',
+    };
     final at = DateTime.tryParse('${t['scheduled_at']}')?.toLocal();
     final place = [t['venue'] as String?, t['court'] as String?]
         .where((s) => s != null && s.trim().isNotEmpty)
@@ -249,7 +257,10 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> with AutoRefr
                   : AppColors.field,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(Icons.confirmation_number_outlined,
+            child: Icon(
+                isTournament
+                    ? Icons.emoji_events_outlined
+                    : Icons.confirmation_number_outlined,
                 size: 20,
                 color: open ? AppColors.primary : AppColors.inkFaint),
           ),
@@ -260,7 +271,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> with AutoRefr
                 children: [
                   Row(children: [
                     Flexible(
-                      child: Text(ranked ? 'Competitive match' : 'Casual match',
+                      child: Text(label,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: AppText.bodyStrong(AppColors.ink).copyWith(

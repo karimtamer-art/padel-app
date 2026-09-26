@@ -5957,20 +5957,77 @@ create table if not exists public.ticket_reads (
 
 -- ── membership + lifecycle helpers ────────────────────────────────────────
 
+-- ── a ticket's parent: a pickup match OR a tournament match ───────────────
+-- (2026-09-26) Tournaments had no chat at all. Rather than fake a `matches` row
+-- per tournament match — which every PICKUP surface would then have picked up,
+-- from "Your Pickup Matches" to join_match/leave_match/score submission — a
+-- ticket gains a second, mutually exclusive parent. `finalize_tournament` and
+-- `_settle_rating` are untouched by this.
+-- Full notes: supabase/changes/2026-09-26_tournament_tickets.sql
+alter table public.match_tickets alter column match_id drop not null;
+
+alter table public.match_tickets
+  add column if not exists tournament_match_id uuid
+    references public.tournament_matches(id) on delete cascade;
+
+create unique index if not exists match_tickets_tm_key
+  on public.match_tickets (tournament_match_id)
+  where tournament_match_id is not null;
+
+alter table public.match_tickets drop constraint if exists match_tickets_one_parent_chk;
+alter table public.match_tickets add constraint match_tickets_one_parent_chk
+  check ((match_id is not null) <> (tournament_match_id is not null));
+
+-- The four players of a ticket, whichever parent it has. ONE definition, so
+-- membership, the roster and the number-request guard can never disagree about
+-- who is in a thread. Guests (entry with player_id null) are skipped — they have
+-- no profile, so there is nobody to add.
+create or replace function public._ticket_players(p_ticket uuid)
+returns table (player_id uuid, team text)
+language sql stable security definer set search_path = public as $$
+  select mp.player_id, mp.team
+    from public.match_tickets t
+    join public.match_players mp on mp.match_id = t.match_id
+   where t.id = p_ticket
+  union
+  select v.pid, v.team
+    from public.match_tickets t
+    join public.tournament_matches tm on tm.id = t.tournament_match_id
+    join public.tournament_entries e1 on e1.id = tm.entry1
+    join public.tournament_entries e2 on e2.id = tm.entry2
+   cross join lateral (values
+      (e1.player_id, 'a'), (e1.partner_id, 'a'),
+      (e2.player_id, 'b'), (e2.partner_id, 'b')
+   ) as v(pid, team)
+   where t.id = p_ticket
+     and v.pid is not null;
+$$;
+grant execute on function public._ticket_players(uuid) to authenticated;
+
+-- Is a SPECIFIC player in this thread? request_number needs exactly this about
+-- someone else, and used to ask by joining match_players directly — which
+-- rejects every target in a tournament thread.
+create or replace function public._ticket_has_player(p_ticket uuid, p_player uuid)
+returns boolean language sql stable security definer
+set search_path = public as $$
+  select exists (
+    select 1 from public._ticket_players(p_ticket) tp
+     where tp.player_id = p_player);
+$$;
+grant execute on function public._ticket_has_player(uuid, uuid) to authenticated;
+
 -- SECURITY DEFINER: these are called from RLS policies, so they must see
 -- match_players regardless of the caller's own row-level visibility.
 create or replace function public._ticket_member(p_ticket uuid)
 returns boolean language sql stable security definer
 set search_path = public as $$
-  select exists (
-    select 1
-      from public.match_tickets t
-      join public.match_players mp on mp.match_id = t.match_id
-     where t.id = p_ticket
-       and mp.player_id = auth.uid());
+  select public._ticket_has_player(p_ticket, auth.uid());
 $$;
 
--- Open until 24h after the scheduled start; a cancelled match closes at once.
+-- A pickup thread is open until 24h after the scheduled start; a cancelled match
+-- closes it at once. A TOURNAMENT thread stays open until 48h after the event's
+-- last day — an event runs over days rather than starting at one instant, and
+-- players still need each other while it is on.
 create or replace function public._ticket_open(p_ticket uuid)
 returns boolean language sql stable security definer
 set search_path = public as $$
@@ -5980,7 +6037,16 @@ set search_path = public as $$
       join public.matches m on m.id = t.match_id
      where t.id = p_ticket
        and m.status <> 'cancelled'
-       and now() < m.scheduled_at + interval '24 hours');
+       and now() < m.scheduled_at + interval '24 hours')
+      or exists (
+    select 1
+      from public.match_tickets t
+      join public.tournament_matches tm on tm.id = t.tournament_match_id
+      join public.tournaments tr        on tr.id = tm.tournament_id
+     where t.id = p_ticket
+       and coalesce(tr.status, '') <> 'cancelled'
+       and now() < (coalesce(tr.end_date, tr.start_date)::timestamptz
+                    + interval '48 hours'));
 $$;
 
 -- ── RLS ───────────────────────────────────────────────────────────────────
@@ -6040,52 +6106,67 @@ on conflict (match_id) do nothing;
 
 -- Every ticket the caller is in: the match line, the last message, and how
 -- many they have not read. Newest activity first.
+-- DROPPED first: `create or replace` cannot change a return type (42P13), and
+-- this gained `tournament_match_id` in 2026-09-26. Same reason dm_inbox is
+-- dropped before being redefined.
+-- For a tournament thread `match_id` is null, `match_type` is 'tournament',
+-- `venue` is the event's venue and `court` its name — so an inbox row reads
+-- "Cairo Padel Club · Autumn Open" with no client branching.
+drop function if exists public.ticket_inbox();
 create or replace function public.ticket_inbox()
 returns table (
-  ticket_id    uuid,
-  match_id     uuid,
-  is_open      boolean,
-  match_type   text,
-  scheduled_at timestamptz,
-  venue        text,
-  court        text,
-  last_text    text,
-  last_at      timestamptz,
-  last_sender  text,
-  unread       int
+  ticket_id           uuid,
+  match_id            uuid,
+  tournament_match_id uuid,
+  is_open             boolean,
+  match_type          text,
+  scheduled_at        timestamptz,
+  venue               text,
+  court               text,
+  last_text           text,
+  last_at             timestamptz,
+  last_sender         text,
+  unread              int
 )
 language sql stable security definer set search_path = public as $$
+  with mine as (
+    select t.id as ticket_id, t.match_id, t.tournament_match_id, t.created_at
+      from public.match_tickets t
+     where public._ticket_member(t.id)
+  )
   select
-    t.id,
-    m.id,
-    (m.status <> 'cancelled' and now() < m.scheduled_at + interval '24 hours'),
-    m.match_type,
-    m.scheduled_at,
-    c.venue_name,
-    c.name,
+    mine.ticket_id,
+    mine.match_id,
+    mine.tournament_match_id,
+    public._ticket_open(mine.ticket_id),
+    coalesce(m.match_type, 'tournament'),
+    coalesce(m.scheduled_at, tr.start_date::timestamptz),
+    coalesce(c.venue_name, tr.venue_name),
+    coalesce(c.name, tr.name),
     lm.text,
     lm.sent_at,
     lp.name,
     (select count(*)::int
        from public.ticket_messages x
-      where x.ticket_id = t.id
+      where x.ticket_id = mine.ticket_id
         and x.sender_id <> auth.uid()
         and x.sent_at > coalesce(r.last_read_at, 'epoch'::timestamptz))
-  from public.match_tickets t
-  join public.matches m       on m.id = t.match_id
-  join public.match_players me on me.match_id = m.id and me.player_id = auth.uid()
-  left join public.courts c   on c.id = m.court_id
+  from mine
+  left join public.matches m             on m.id  = mine.match_id
+  left join public.courts c              on c.id  = m.court_id
+  left join public.tournament_matches tm on tm.id = mine.tournament_match_id
+  left join public.tournaments tr        on tr.id = tm.tournament_id
   left join public.ticket_reads r
-         on r.ticket_id = t.id and r.player_id = auth.uid()
+         on r.ticket_id = mine.ticket_id and r.player_id = auth.uid()
   left join lateral (
     select x.text, x.sent_at, x.sender_id
       from public.ticket_messages x
-     where x.ticket_id = t.id
+     where x.ticket_id = mine.ticket_id
      order by x.sent_at desc
      limit 1
   ) lm on true
   left join public.profiles lp on lp.id = lm.sender_id
-  order by coalesce(lm.sent_at, t.created_at) desc;
+  order by coalesce(lm.sent_at, mine.created_at) desc;
 $$;
 grant execute on function public.ticket_inbox() to authenticated;
 
@@ -9458,6 +9539,16 @@ end $$;
 create or replace function public.open_match_ticket_on_join()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  -- A finished or cancelled match gets no thread (2026-09-26). This was
+  -- ungated, and `finalize_tournament` inserts its four match_players rows with
+  -- status already 'completed' — so it had been minting a dead thread for every
+  -- historical tournament match, for matches that were already over.
+  if exists (select 1 from public.matches m
+              where m.id = new.match_id
+                and m.status in ('completed', 'cancelled')) then
+    return new;
+  end if;
+
   if exists (select 1 from public.match_players
               where match_id = new.match_id and team = 'a')
      and exists (select 1 from public.match_players
@@ -9607,10 +9698,10 @@ begin
   if not public._ticket_member(p_ticket) then
     return 'Not a member of this ticket.';
   end if;
-  if not exists (
-    select 1 from public.match_tickets t
-      join public.match_players mp on mp.match_id = t.match_id
-     where t.id = p_ticket and mp.player_id = p_target) then
+  -- Via the shared helper (2026-09-26): this used to join match_players
+  -- directly, which answers "isn't in this match" for every target in a
+  -- tournament thread.
+  if not public._ticket_has_player(p_ticket, p_target) then
     return 'That player isn''t in this match.';
   end if;
 
@@ -9738,9 +9829,15 @@ begin
     p.name,
     p.username,
     p.avatar_url,
-    mp.team,
+    tp.team,
     (select level from public.player_ratings where player_id = p.id),
-    (m.created_by = p.id),
+    -- False for a tournament thread, deliberately: nobody hosts a tournament
+    -- match. The organizer does, and they are not in the thread.
+    coalesce(
+      (select m.created_by = p.id
+         from public.match_tickets t
+         join public.matches m on m.id = t.match_id
+        where t.id = p_ticket), false),
     (p.id = v_uid),
     -- A closed ticket hides numbers again, exactly as before; a swap that
     -- happened inside it survives, but this thread stops serving it.
@@ -9754,12 +9851,11 @@ begin
                       and r.status = 'pending') then 'pending'
       else 'none'
     end
-  from public.match_tickets t
-  join public.matches m        on m.id = t.match_id
-  join public.match_players mp on mp.match_id = m.id
-  join public.profiles p       on p.id = mp.player_id
-  where t.id = p_ticket
-  order by mp.team, (m.created_by = p.id) desc, p.name;
+  -- One query for both parents (2026-09-26): the four players come from
+  -- _ticket_players, so the pickup and tournament cases don't branch.
+  from public._ticket_players(p_ticket) tp
+  join public.profiles p on p.id = tp.player_id
+  order by tp.team, p.name;
 end $$;
 grant execute on function public.ticket_roster(uuid) to authenticated;
 
@@ -12278,6 +12374,84 @@ begin
 
   select count(*) into v_live from public.seasons where status = 'live';
   raise notice 'seasons per region ready: % live season(s).', v_live;
+end $$;
+
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Open the tournament-match thread when the pairing is known (2026-09-26).
+--
+-- A trigger on `tournament_matches` rather than edits to the four functions that
+-- can set a pairing (`generate_draw`, `_advance_winner`, `record_bracket_winner`
+-- for the losers-bracket drop, and `add_custom_match`). One trigger catches
+-- every path, including ones added later, and none of those functions changes.
+--
+-- Sits at the END of the file because it needs both `match_tickets` (with its
+-- 2026-09-26 second parent) and `tournament_matches` to exist.
+-- Full notes: supabase/changes/2026-09-26_tournament_tickets.sql
+-- ============================================================================
+create or replace function public.open_tournament_ticket()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_real int;
+begin
+  if new.entry1 is null or new.entry2 is null then return new; end if;
+
+  -- At least one real profile per side, or there is nobody to talk to. A pair of
+  -- guests has no profile at all, so the thread would be empty on that side.
+  select count(*) into v_real
+    from public.tournament_entries e
+   where e.id in (new.entry1, new.entry2)
+     and e.player_id is not null;
+  if coalesce(v_real, 0) < 2 then return new; end if;
+
+  insert into public.match_tickets (tournament_match_id)
+  values (new.id)
+  on conflict (tournament_match_id) where tournament_match_id is not null
+    do nothing;
+  return new;
+end $$;
+
+drop trigger if exists trg_open_tournament_ticket on public.tournament_matches;
+create trigger trg_open_tournament_ticket
+  after insert or update of entry1, entry2 on public.tournament_matches
+  for each row execute function public.open_tournament_ticket();
+
+-- Retire the dead threads the un-gated trigger already minted for FINISHED
+-- tournament matches. Only ones with no messages — an existing conversation is
+-- never deleted, the same rule the 2026-08-03 ticket backfill used.
+delete from public.match_tickets t
+ where t.match_id is not null
+   and not exists (select 1 from public.ticket_messages tm where tm.ticket_id = t.id)
+   and exists (select 1 from public.matches m
+                where m.id = t.match_id
+                  and m.tournament_match_id is not null
+                  and m.status = 'completed');
+
+-- Open threads for tournament matches already drawn and still to be played.
+insert into public.match_tickets (tournament_match_id)
+select tm.id
+  from public.tournament_matches tm
+  join public.tournaments tr on tr.id = tm.tournament_id
+ where tm.entry1 is not null and tm.entry2 is not null
+   and tm.winner_entry is null
+   and coalesce(tr.status, '') <> 'cancelled'
+   and now() < (coalesce(tr.end_date, tr.start_date)::timestamptz + interval '48 hours')
+   and (select count(*) from public.tournament_entries e
+         where e.id in (tm.entry1, tm.entry2) and e.player_id is not null) >= 2
+on conflict (tournament_match_id) where tournament_match_id is not null do nothing;
+
+do $$
+declare v_pickup int; v_tour int; v_bad int;
+begin
+  select count(*) filter (where match_id is not null),
+         count(*) filter (where tournament_match_id is not null),
+         count(*) filter (where (match_id is not null) = (tournament_match_id is not null))
+    into v_pickup, v_tour, v_bad
+    from public.match_tickets;
+  if v_bad > 0 then
+    raise exception 'match_tickets: % row(s) do not have exactly one parent', v_bad;
+  end if;
+  raise notice 'match threads: % pickup, % tournament.', v_pickup, v_tour;
 end $$;
 
 notify pgrst, 'reload schema';
