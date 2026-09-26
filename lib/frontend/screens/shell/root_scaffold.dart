@@ -133,6 +133,9 @@ class _RootScaffoldState extends State<RootScaffold> {
             refreshTick: _homeRefresh,
             onSeeStore: () => setState(() => _tab = 3),
             onSeeTournaments: () => setState(() => _tab = 1),
+            // The create-match sheet used to hang off the centre FAB. With the
+            // FAB gone, Home's demoted pickup section is the only way in.
+            onCreateMatch: _openCreate,
             onAddToCart: _addToCart,
             profile: widget.profile,
             displayName: widget.displayName,
@@ -166,7 +169,6 @@ class _RootScaffoldState extends State<RootScaffold> {
           if (i == 4 && _tab != 4) _profileRefresh++;
           _tab = i;
         }),
-        onCreate: _openCreate,
       ),
     );
   }
@@ -175,7 +177,6 @@ class _RootScaffoldState extends State<RootScaffold> {
 class _NavBar extends StatelessWidget {
   final int current;
   final ValueChanged<int> onTap;
-  final VoidCallback onCreate;
 
   /// Whether the Store slot appears. See `RootScaffold._commerce`.
   final bool commerce;
@@ -183,108 +184,73 @@ class _NavBar extends StatelessWidget {
   const _NavBar({
     required this.current,
     required this.onTap,
-    required this.onCreate,
     this.commerce = true,
   });
 
-  /// Slot ids in visual order. 2 is the Create FAB, which the pill skips.
+  /// Slot ids in visual order.
   ///
-  /// The bar used to be hardcoded to five slots, including the `/ 5` the pill
-  /// geometry divides by. Dropping Store has to move that divisor too, or the
-  /// active pill lands between icons.
-  List<int> get _slots => [0, 1, 2, if (commerce) 3, 4];
-
-  // The create button floats above the bar by this much; the Stack reserves
-  // the space so the whole circle stays tappable (OverflowBox would clip hits).
-  static const double _fabSize = 64;
-  static const double _fabOverlap = 18;
+  /// Slot **2 was the raised "Create" FAB and is gone** (2026-09-26): in a
+  /// tournament-first app a player has nothing to create — tournaments are made
+  /// in the admin console, and `AuthGate` sends staff there rather than here, so
+  /// nobody who sees this bar could ever have used it for that. Creating a
+  /// pickup match moved into Home's demoted pickup section, which is the only
+  /// remaining way in until Phase 3 removes pickup outright.
+  ///
+  /// Slot ids stay STABLE (Store is still 3, You is still 4) so `onSeeStore` and
+  /// the refresh conditions keep meaning one thing. The pill divides by
+  /// `_slots.length`, so dropping a slot moves the geometry with it.
+  List<int> get _slots => [0, 1, if (commerce) 3, 4];
 
   @override
   Widget build(BuildContext context) {
     final reduce = MediaQuery.of(context).disableAnimations;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: _fabOverlap),
-          child: Container(
-            decoration: const BoxDecoration(
-              color: AppColors.bg,
-              border: Border(top: BorderSide(color: AppColors.lineSoft)),
-            ),
-            padding: const EdgeInsets.fromLTRB(6, 8, 6, 26),
-            child: LayoutBuilder(
-              builder: (context, c) {
-                final slotW = c.maxWidth / _slots.length; // incl. Create
-                const pillW = 48.0, pillH = 36.0;
-                // Position by VISUAL index, not slot id — with Store hidden,
-                // slot 4 ("You") is the fourth icon, not the fifth.
-                final visualIndex = _slots.indexOf(current);
-                final pillLeft =
-                    slotW * (visualIndex < 0 ? 0 : visualIndex) + (slotW - pillW) / 2;
-                return Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // gliding active-tab pill (behind the icons); skips Create
-                    if (current != 2)
-                      AnimatedPositioned(
-                        duration: Duration(milliseconds: reduce ? 0 : 280),
-                        curve: Curves.easeOutCubic,
-                        left: pillLeft,
-                        top: 0,
-                        width: pillW,
-                        height: pillH,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                      ),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        _item(0, Icons.home_outlined, 'Home', reduce),
-                        _item(1, Icons.emoji_events_outlined, 'Tournaments', reduce),
-                        _createSlot(),
-                        if (commerce)
-                          _item(3, Icons.shopping_bag_outlined, 'Store', reduce),
-                        _item(4, Icons.account_circle_outlined, 'You', reduce),
-                      ],
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: GestureDetector(
-              onTap: onCreate,
-              child: Container(
-                width: _fabSize,
-                height: _fabSize,
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                        color: AppColors.primary.withValues(alpha: 0.4),
-                        blurRadius: 18,
-                        offset: const Offset(0, 8)),
-                  ],
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.bg,
+        border: Border(top: BorderSide(color: AppColors.lineSoft)),
+      ),
+      padding: const EdgeInsets.fromLTRB(6, 8, 6, 26),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final slotW = c.maxWidth / _slots.length;
+          const pillW = 48.0, pillH = 36.0;
+          // Position by VISUAL index, not slot id — with Store hidden, slot 4
+          // ("You") is the third icon, not the fourth.
+          final visualIndex = _slots.indexOf(current);
+          final pillLeft =
+              slotW * (visualIndex < 0 ? 0 : visualIndex) + (slotW - pillW) / 2;
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // gliding active-tab pill, behind the icons
+              AnimatedPositioned(
+                duration: Duration(milliseconds: reduce ? 0 : 280),
+                curve: Curves.easeOutCubic,
+                left: pillLeft,
+                top: 0,
+                width: pillW,
+                height: pillH,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
-                child: const Icon(Icons.add_rounded,
-                    color: AppColors.primaryInk, size: 32),
               ),
-            ),
-          ),
-        ),
-      ],
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _item(0, Icons.home_outlined, 'Home', reduce),
+                  _item(1, Icons.emoji_events_outlined, 'Tournaments', reduce),
+                  if (commerce)
+                    _item(3, Icons.shopping_bag_outlined, 'Store', reduce),
+                  _item(4, Icons.account_circle_outlined, 'You', reduce),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -323,18 +289,4 @@ class _NavBar extends StatelessWidget {
     );
   }
 
-  Widget _createSlot() {
-    return Expanded(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // reserved space under the floating create button
-          const SizedBox(height: 38),
-          Text('Create',
-              style: AppText.tag(AppColors.primary)
-                  .copyWith(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 0.1)),
-        ],
-      ),
-    );
-  }
 }

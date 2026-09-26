@@ -38,8 +38,8 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
 - **Season points are the visible ladder**, one season per region; the
   0.00–7.00 rating stays one global scale underneath.
 - **Store / commerce / P&L stay, Egypt-gated** by `regions.commerce_enabled`.
-- Rollout is phased: region scaffolding first (done), then the tournament-first
-  surface, then tournament comms, then pickup removal.
+- Rollout is phased: region scaffolding (**done**), the tournament-first surface
+  + one season per region (**done**), then tournament comms, then pickup removal.
 
 ## Hard rules (do not break these)
 
@@ -200,6 +200,68 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     out in a follow-up, same treatment as `profiles.instapay_handle`.
   - Communities are still **city**-scoped only, not region-scoped. Deliberate,
     and a candidate for a follow-up.
+- **One season ladder per region** (2026-09-26,
+  `changes/2026-09-26_seasons_per_region.sql`). This was a **correctness** fix,
+  not a feature, and it had to land before a second region is ever seeded:
+  - **`seasons_one_live_key` was unique on `((status)) where status = 'live'`** —
+    at most one live season in the whole database. A ladder per region wasn't
+    unimplemented, it was structurally forbidden. It is now unique on
+    `(region_id)`. `seasons_no_key` went the same way → `(region_id, no)`, so
+    each market runs its own Season 1, 2, 3.
+  - **Six lookups shaped `where status = 'live' limit 1`** were exact with one
+    season and silently pick an ARBITRARY region's once there are two — Egyptian
+    points landing in another market's ladder with no error anywhere. They all go
+    through **`_live_season(region)`** now, which is the single definition.
+    `_player_region(uuid)` is its companion. A verify query in the delta lists
+    any function still doing the unscoped lookup.
+  - **Which region decides differs by points type, on purpose.** Per-MATCH points
+    resolve **per player** (`profiles.region_id`) inside the loop, because points
+    are inserted per player and a player's ladder is their own — so two players
+    from different regions in one match each score in their own season. That also
+    forced `season_rules` to be read **per season** rather than once per match,
+    since two regions can price a win differently. TOURNAMENT placement points
+    resolve from the **tournament's** region: an event belongs to one market and
+    its title must not land in two ladders because a visitor entered.
+  - `snapshot_season_ranks()` now loops **every** live season. Taking only one
+    would leave other markets with no trend data, and a missing snapshot reads as
+    trend 0 rather than as an error.
+  - `admin_create_season` went from **4 to 5 arguments** (`p_region`). The old
+    signature is DROPPED, not left beside it — an overload would make the
+    `grant execute` line name a dead signature, and PostgREST can't choose
+    between two candidates when the client omits the argument.
+  - ⚠️ **The season functions are edited IN PLACE in `migration_player_app.sql`**,
+    at their original definitions — NOT appended as another `create or replace`.
+    `test/sql_raise_arity_test.dart` ratchets against new duplicate definitions.
+    But the two `language sql` helpers and the two indexes ARE appended at the
+    end, because they reference `seasons.region_id` and a `language sql` body is
+    parsed at creation time (plpgsql bodies are not, which is exactly why the
+    plpgsql functions could stay where they live). Get that ordering wrong and a
+    fresh database fails mid-migration.
+- **Tournaments lead Home; pickup is DEMOTED, not removed** (2026-09-26).
+  - `home_screen.dart`'s section order is now Tournaments → Recent Form → Season
+    → Community → **pickup** → Store → Partners. `_NextEventHero` replaced
+    `_BookNextHero` as the default hero (the old one led with "Book your next
+    game", pointing the most valuable space on Home at the feature being
+    retired). `_PlacementWelcome` now leads with Browse Tournaments, which is
+    also just *correct*: tournament results are what count placement matches.
+  - The pickup section renders only when `_myMatches` is non-empty, and
+    deliberately **not** on `_joinable` — advertising other people's open matches
+    to someone who doesn't use pickup is promotion, the opposite of demotion.
+  - **The centre "Create" FAB is gone.** In a tournament-first app a player has
+    nothing to create: tournaments are made in the admin console and `AuthGate`
+    sends staff there rather than to `RootScaffold`, so nobody who saw that FAB
+    could ever have used it for a tournament. Both pickup paths it owned
+    (`_openCreate` and the hero's `_scheduleSearch`) are now quiet text links in
+    Home's pickup area, passed down as `HomeScreen.onCreateMatch`. Slot ids stay
+    stable (Store 3, You 4) so `onSeeStore` and the refresh conditions keep
+    meaning one thing.
+- **`TournamentService.fetchTournaments` is region-scoped by default** and has
+  **three** fallback tiers, not two. `region_id` and the entries join can be
+  missing independently, so dropping straight to `_colsPlain` on a missing
+  `region_id` would also lose the entries join and every card would stop knowing
+  who is registered. Pass `regionId: ''` to deliberately ask across regions.
+  Registration is `isParticipant(entries, uid)` — it already existed; don't add a
+  second one.
 - **Create match**: `create_match_sheet.dart` → `MatchService.createMatch`
   (inserts `matches` + `match_players`, creator on team A ONLY) → root scaffold
   opens `MatchDetailScreen(matchId)` and bumps a key to refresh Home.

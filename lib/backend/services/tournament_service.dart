@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'region_service.dart';
 
 /// Tournament + ranking I/O for the player app.
 class TournamentService {
@@ -31,26 +32,48 @@ class TournamentService {
       'id, name, venue_name, status, start_date, end_date, capacity, '
       'entry_fee, prize_pool, description, min_rating, best_of';
 
-  /// All visible tournaments, soonest first. Falls back to a plain query
-  /// (no entries join) so the tab still works before the migration runs.
-  static Future<List<Map<String, dynamic>>> fetchTournaments() async {
+  /// All visible tournaments, soonest first.
+  ///
+  /// Scoped to [regionId] (defaulting to the player's region) so a player in one
+  /// market doesn't browse events they could never travel to. Pass an empty
+  /// string to deliberately ask for every region.
+  ///
+  /// Three tiers, widest first, because the two things that can be missing are
+  /// independent: `region_id` needs `2026-09-26_regions.sql` and the entries
+  /// join needs the older migration. Dropping straight from the full query to
+  /// the plain one on a missing `region_id` would also lose the entries join,
+  /// and every card would stop showing who is registered.
+  static Future<List<Map<String, dynamic>>> fetchTournaments({
+    String? regionId,
+  }) async {
+    final region = regionId ?? RegionService.now.id;
     try {
-      final rows = await _db
-          .from('tournaments')
-          .select(_cols)
-          .order('start_date', ascending: true);
+      var q = _db.from('tournaments').select(_cols);
+      if (region.isNotEmpty) q = q.eq('region_id', region);
+      final rows = await q.order('start_date', ascending: true);
       return List<Map<String, dynamic>>.from(rows as List);
     } catch (e) {
-      debugPrint('[TournamentService] fetchTournaments (rich): $e — falling back');
+      debugPrint('[TournamentService] fetchTournaments (region): $e — falling back');
       try {
+        // Same rich columns, no region filter: a database without the regions
+        // delta has one market anyway, so unfiltered IS that market.
         final rows = await _db
             .from('tournaments')
-            .select(_colsPlain)
+            .select(_cols)
             .order('start_date', ascending: true);
         return List<Map<String, dynamic>>.from(rows as List);
       } catch (e2) {
-        debugPrint('[TournamentService] fetchTournaments (plain): $e2');
-        return [];
+        debugPrint('[TournamentService] fetchTournaments (rich): $e2 — falling back');
+        try {
+          final rows = await _db
+              .from('tournaments')
+              .select(_colsPlain)
+              .order('start_date', ascending: true);
+          return List<Map<String, dynamic>>.from(rows as List);
+        } catch (e3) {
+          debugPrint('[TournamentService] fetchTournaments (plain): $e3');
+          return [];
+        }
       }
     }
   }

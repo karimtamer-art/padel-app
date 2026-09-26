@@ -6319,6 +6319,10 @@ create unique index if not exists seasons_no_key on public.seasons (no);
 -- at most one live season at a time
 create unique index if not exists seasons_one_live_key
   on public.seasons ((status)) where status = 'live';
+-- NOTE: both of the above are REPLACED with region-scoped versions in the
+-- seasons-per-region block at the end of this file. They have to be created in
+-- their original shape here and rebuilt there, because `seasons.region_id` does
+-- not exist until the regions block — which is also at the end.
 
 -- ── points engine: what earns season points ─────────────────────────────────
 create table if not exists public.season_rules (
@@ -6464,27 +6468,23 @@ end $$;
 create or replace function public._award_season_points(p_match_id uuid)
 returns void language plpgsql security definer set search_path = public as $$
 declare
-  v_sid uuid; v_frozen boolean;
   v_win int; v_loss int; v_streak int; v_upset int;
   v_winner text; v_type text;
   v_avg_a numeric; v_avg_b numeric;
   v_upset_a boolean; v_upset_b boolean;
   r record; v_prev_wins int; v_won boolean; v_is_upset boolean;
+  v_sid uuid; v_frozen boolean;
 begin
-  select s.id, s.frozen into v_sid, v_frozen
-    from public.seasons s where s.status = 'live' limit 1;
-  if v_sid is null or v_frozen then return; end if;
-
+  -- The season is resolved PER PLAYER, inside the loop below, from their own
+  -- profiles.region_id — points are inserted per player and a player's ladder
+  -- is their own market's. It used to be read once here as
+  -- `where status = 'live' limit 1`, which was exact while only one season
+  -- could exist and silently picked an ARBITRARY region's once that changed.
+  -- See changes/2026-09-26_seasons_per_region.sql.
   select m.winner_team, m.match_type into v_winner, v_type
     from public.matches m where m.id = p_match_id;
   if v_winner is null then return; end if;
   if coalesce(v_type, 'ranked') <> 'ranked' then return; end if;  -- casual is unrated
-
-  select coalesce((select pts from public.season_rules where season_id = v_sid and code = 'win'), 0),
-         coalesce((select pts from public.season_rules where season_id = v_sid and code = 'loss'), 0),
-         coalesce((select pts from public.season_rules where season_id = v_sid and code = 'streak'), 0),
-         coalesce((select pts from public.season_rules where season_id = v_sid and code = 'upset'), 0)
-    into v_win, v_loss, v_streak, v_upset;
 
   select avg(coalesce((select rating from public.player_ratings where player_id = p.id), 2.0)) filter (where mp.team = 'a'),
          avg(coalesce((select rating from public.player_ratings where player_id = p.id), 2.0)) filter (where mp.team = 'b')
@@ -6500,6 +6500,20 @@ begin
     select mp.player_id, mp.team from public.match_players mp
      where mp.match_id = p_match_id
   loop
+    -- This player's OWN ladder.
+    v_sid := public._live_season(public._player_region(r.player_id));
+    if v_sid is null then continue; end if;
+    select s.frozen into v_frozen from public.seasons s where s.id = v_sid;
+    if coalesce(v_frozen, false) then continue; end if;
+
+    -- Read per season, not once per match: two regions may price a win
+    -- differently, and before the per-region change there was only one price.
+    select coalesce((select pts from public.season_rules where season_id = v_sid and code = 'win'), 0),
+           coalesce((select pts from public.season_rules where season_id = v_sid and code = 'loss'), 0),
+           coalesce((select pts from public.season_rules where season_id = v_sid and code = 'streak'), 0),
+           coalesce((select pts from public.season_rules where season_id = v_sid and code = 'upset'), 0)
+      into v_win, v_loss, v_streak, v_upset;
+
     v_won := (r.team = v_winner);
     v_is_upset := (r.team = 'a' and v_upset_a) or (r.team = 'b' and v_upset_b);
 
@@ -6553,11 +6567,18 @@ returns void language plpgsql security definer set search_path = public as $$
 declare
   v_sid uuid; v_frozen boolean; v_title int; v_podium int;
   v_final_round int; f record; m record;
-  v_champ uuid; v_runner uuid;
+  v_champ uuid; v_runner uuid; v_region text;
 begin
-  select s.id, s.frozen into v_sid, v_frozen
-    from public.seasons s where s.status = 'live' limit 1;
-  if v_sid is null or v_frozen then return; end if;
+  -- From the TOURNAMENT's region, not any player's: an event belongs to one
+  -- market, and its title must not land in two ladders because a visitor
+  -- entered. See changes/2026-09-26_seasons_per_region.sql.
+  select coalesce(t.region_id, 'EG') into v_region
+    from public.tournaments t where t.id = p_tournament_id;
+
+  v_sid := public._live_season(v_region);
+  if v_sid is null then return; end if;
+  select s.frozen into v_frozen from public.seasons s where s.id = v_sid;
+  if coalesce(v_frozen, false) then return; end if;
 
   select coalesce((select pts from public.season_rules where season_id = v_sid and code = 'tour_win'), 0),
          coalesce((select pts from public.season_rules where season_id = v_sid and code = 'tour_podium'), 0)
@@ -6731,16 +6752,20 @@ grant execute on function public.season_standings(uuid) to authenticated;
 -- (pg_cron below) or from the console; re-running the same day is a no-op.
 create or replace function public.snapshot_season_ranks()
 returns int language plpgsql security definer set search_path = public as $$
-declare v_sid uuid; v_n int := 0;
+declare v_sid uuid; v_n int := 0; v_this int;
 begin
-  select id into v_sid from public.seasons where status = 'live' limit 1;
-  if v_sid is null then return 0; end if;
-  insert into public.season_rank_snapshots (season_id, player_id, taken_on, rank, pts)
-  select v_sid, s.player_id, current_date, s.rank, s.pts
-    from public.season_standings(v_sid) s
-  on conflict (season_id, player_id, taken_on) do update
-    set rank = excluded.rank, pts = excluded.pts;
-  get diagnostics v_n = row_count;
+  -- EVERY live season, one per region (2026-09-26). Taking only "the" live one
+  -- would leave every other market with no trend data — and trend reads as 0
+  -- when a snapshot is missing, so nobody would notice it had stopped.
+  for v_sid in select id from public.seasons where status = 'live' loop
+    insert into public.season_rank_snapshots (season_id, player_id, taken_on, rank, pts)
+    select v_sid, s.player_id, current_date, s.rank, s.pts
+      from public.season_standings(v_sid) s
+    on conflict (season_id, player_id, taken_on) do update
+      set rank = excluded.rank, pts = excluded.pts;
+    get diagnostics v_this = row_count;
+    v_n := v_n + coalesce(v_this, 0);
+  end loop;
   return v_n;
 end $$;
 grant execute on function public.snapshot_season_ranks() to authenticated;
@@ -6763,9 +6788,16 @@ declare
   v_uid uuid := auth.uid();
   v_s record; v_board jsonb; v_me jsonb; v_rules jsonb; v_brackets jsonb;
   v_days int; v_progress numeric; v_span int;
+  v_region text;
 begin
+  -- The CALLER's ladder (2026-09-26). Unscoped, this returned whichever live
+  -- published season sorted first — so a player in one market would be shown
+  -- another market's board as their own.
+  v_region := coalesce(public._player_region(v_uid), 'EG');
+
   select * into v_s from public.seasons
-   where status = 'live' and published order by starts_on desc limit 1;
+   where status = 'live' and published and region_id = v_region
+   order by starts_on desc limit 1;
   if not found then return null; end if;
 
   v_days := greatest(0, v_s.ends_on - current_date);
@@ -6880,25 +6912,41 @@ begin
 end $$;
 grant execute on function public.admin_season_console(uuid) to authenticated;
 
+-- The 4-argument signature is DROPPED rather than left beside the new one. An
+-- overload would make the grant below name a signature that should no longer
+-- exist, and PostgREST cannot choose between two candidates when the client
+-- omits the new argument.
+drop function if exists public.admin_create_season(text, date, date, uuid);
+
 create or replace function public.admin_create_season(
-  p_name text, p_starts date, p_ends date, p_copy_from uuid default null)
+  p_name text, p_starts date, p_ends date, p_copy_from uuid default null,
+  p_region text default 'EG')
 returns text
 language plpgsql security definer set search_path = public as $$
-declare v_no int; v_id uuid; v_status text;
+declare v_no int; v_id uuid; v_status text; v_region text;
 begin
   if not public._is_admin() then return 'Not authorised.'; end if;
   if p_name is null or btrim(p_name) = '' then return 'Name the season.'; end if;
   if p_ends <= p_starts then return 'The season must end after it starts.'; end if;
 
-  select coalesce(max(no), 0) + 1 into v_no from public.seasons;
-  -- goes live immediately only if nothing else is live and it has already started
+  v_region := coalesce(nullif(btrim(p_region), ''), 'EG');
+  if not exists (select 1 from public.regions where id = v_region) then
+    return 'No such region: ' || v_region;
+  end if;
+
+  -- Counted WITHIN the region (2026-09-26), so each market runs Season 1, 2, 3.
+  select coalesce(max(no), 0) + 1 into v_no
+    from public.seasons where region_id = v_region;
+  -- goes live immediately only if nothing else is live IN THIS REGION and it
+  -- has already started
   v_status := case
     when p_starts <= current_date
-     and not exists (select 1 from public.seasons where status = 'live') then 'live'
+     and not exists (select 1 from public.seasons
+                      where status = 'live' and region_id = v_region) then 'live'
     else 'scheduled' end;
 
-  insert into public.seasons (no, name, starts_on, ends_on, status, published)
-  values (v_no, btrim(p_name), p_starts, p_ends, v_status, false)
+  insert into public.seasons (no, name, starts_on, ends_on, status, published, region_id)
+  values (v_no, btrim(p_name), p_starts, p_ends, v_status, false, v_region)
   returning id into v_id;
 
   if p_copy_from is not null then
@@ -6914,7 +6962,7 @@ begin
   end if;
   return null;
 end $$;
-grant execute on function public.admin_create_season(text, date, date, uuid) to authenticated;
+grant execute on function public.admin_create_season(text, date, date, uuid, text) to authenticated;
 
 create or replace function public.admin_set_season_flag(
   p_season_id uuid, p_flag text, p_value boolean)
@@ -6938,10 +6986,11 @@ grant execute on function public.admin_set_season_flag(uuid, text, boolean) to a
 create or replace function public.admin_close_season(p_season_id uuid)
 returns text
 language plpgsql security definer set search_path = public as $$
-declare v_champ uuid; v_n int := 0; v_next uuid; v_name text;
+declare v_champ uuid; v_n int := 0; v_next uuid; v_name text; v_region text;
 begin
   if not public._is_admin() then return 'Not authorised.'; end if;
-  select name into v_name from public.seasons where id = p_season_id;
+  select name, coalesce(region_id, 'EG') into v_name, v_region
+    from public.seasons where id = p_season_id;
   if v_name is null then return 'Season not found.'; end if;
 
   select st.player_id into v_champ
@@ -6962,8 +7011,12 @@ begin
       on b.season_id = p_season_id and st.rank between b.rank_from and b.rank_to;
   get diagnostics v_n = row_count;
 
+  -- The next season IN THE SAME REGION (2026-09-26). Unscoped, closing Egypt's
+  -- season would promote whichever scheduled season started soonest anywhere,
+  -- quietly starting another market's ladder early.
   select id into v_next from public.seasons
-   where status = 'scheduled' order by starts_on limit 1;
+   where status = 'scheduled' and region_id = v_region
+   order by starts_on limit 1;
   if v_next is not null then
     update public.seasons set status = 'live' where id = v_next;
   end if;
@@ -12150,4 +12203,81 @@ begin
   end loop;
   raise notice 'profiles.region_id and profiles.region_chosen are both writable by the client.';
 end $$;
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- One season ladder per region (2026-09-26).
+--
+-- This block sits at the END of the file, after the regions block, because
+-- everything in it needs `seasons.region_id` to already exist:
+--   * the two helpers are `language sql`, so their bodies ARE parsed at
+--     creation time (unlike the plpgsql functions above, whose bodies resolve
+--     at call time — which is why those could be edited in place where they
+--     already live)
+--   * the two indexes reference the column directly
+--
+-- The season ENGINE changes are in place above, at each function's original
+-- definition, rather than appended here as a second `create or replace`.
+-- migration_player_app.sql already carries a number of superseded bodies and
+-- `test/sql_raise_arity_test.dart` ratchets against new ones.
+--
+-- Full notes + verify block: supabase/changes/2026-09-26_seasons_per_region.sql
+-- ============================================================================
+
+-- "The live season" is defined exactly once, here.
+--
+-- Does NOT filter on `frozen`: viewing a frozen season is fine, awarding into
+-- one is not, so that check stays with the two award functions that care.
+-- `order by starts_on desc` keeps it deterministic even if the unique index
+-- below is ever dropped again.
+create or replace function public._live_season(p_region text)
+returns uuid language sql stable security definer set search_path = public as $$
+  select s.id from public.seasons s
+   where s.status = 'live'
+     and s.region_id = coalesce(nullif(btrim(p_region), ''), 'EG')
+   order by s.starts_on desc
+   limit 1;
+$$;
+
+-- Defaults to 'EG' for a missing profile for the same reason everything else
+-- does: Egypt is the only market that has actually run, so it is the right
+-- answer when there is no better one.
+create or replace function public._player_region(p_player uuid)
+returns text language sql stable security definer set search_path = public as $$
+  select coalesce(p.region_id, 'EG') from public.profiles p where p.id = p_player;
+$$;
+
+grant execute on function public._live_season(text)   to authenticated;
+grant execute on function public._player_region(uuid) to authenticated;
+
+-- The two indexes that forbade more than one ladder. Created in their original
+-- global shape earlier in this file (region_id did not exist yet) and rebuilt
+-- here. A database that somehow already has two live seasons in one region will
+-- fail the create — the correct outcome: fix the data, don't drop the guarantee.
+drop index if exists public.seasons_one_live_key;
+create unique index if not exists seasons_one_live_key
+  on public.seasons (region_id) where status = 'live';
+
+drop index if exists public.seasons_no_key;
+create unique index if not exists seasons_no_key
+  on public.seasons (region_id, no);
+
+do $$
+declare v_bad int; v_live int;
+begin
+  -- Anything still resolving the live season without a region is a lookup the
+  -- per-region change missed, and it would silently read another market's
+  -- ladder rather than fail.
+  select count(*) into v_bad
+    from pg_proc p
+   where p.pronamespace = 'public'::regnamespace
+     and p.prosrc like '%status = ''live'' limit 1%';
+  if v_bad > 0 then
+    raise warning 'seasons: % function(s) still resolve the live season without a region', v_bad;
+  end if;
+
+  select count(*) into v_live from public.seasons where status = 'live';
+  raise notice 'seasons per region ready: % live season(s).', v_live;
+end $$;
+
 notify pgrst, 'reload schema';

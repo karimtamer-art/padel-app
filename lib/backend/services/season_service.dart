@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'region_service.dart';
 
 /// Seasonal leaderboard + rewards.
 ///
@@ -42,18 +43,28 @@ class SeasonService {
     }
   }
 
-  /// All RPCs below return null on success, or a message to show the operator.
+  // All RPCs below return null on success, or a message to show the operator.
+
+  /// Creates a season in one region.
+  ///
+  /// [regionId] defaults to the caller's own region. A season belongs to exactly
+  /// one market (`seasons_one_live_key` is unique on `region_id where status =
+  /// 'live'`), and its `no` is counted within that region, so every market runs
+  /// its own Season 1, 2, 3. Sending the wrong region here would start a ladder
+  /// in a market nobody is playing in.
   static Future<String?> createSeason({
     required String name,
     required DateTime starts,
     required DateTime ends,
     String? copyFromSeasonId,
+    String? regionId,
   }) =>
       _call('admin_create_season', {
         'p_name': name,
         'p_starts': _date(starts),
         'p_ends': _date(ends),
         'p_copy_from': copyFromSeasonId,
+        'p_region': regionId ?? RegionService.now.id,
       });
 
   static Future<String?> setPublished(String seasonId, bool value) =>
