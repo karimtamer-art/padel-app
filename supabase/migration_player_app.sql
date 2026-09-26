@@ -5974,9 +5974,29 @@ create unique index if not exists match_tickets_tm_key
   on public.match_tickets (tournament_match_id)
   where tournament_match_id is not null;
 
+-- ...and a THIRD parent: an EVENT-wide thread for every entrant of one
+-- tournament (2026-09-26). Announcements, court changes, rain delays — what an
+-- organizer needs to tell a whole field, which a four-player thread can't carry.
+-- `organizer_broadcasts` was not the home for this: its RLS is owner-only, i.e.
+-- it is an audit log of push blasts, not something players read.
+-- Full notes: supabase/changes/2026-09-26_event_threads.sql
+alter table public.match_tickets
+  add column if not exists tournament_id uuid
+    references public.tournaments(id) on delete cascade;
+
+create unique index if not exists match_tickets_tournament_key
+  on public.match_tickets (tournament_id)
+  where tournament_id is not null;
+
+-- The table name now undersells it: it holds match threads AND event threads.
+-- Renaming would touch ticket_messages, ticket_reads, ticket_roster,
+-- ticket_inbox, mark_ticket_read, request_number, number_requests.ticket_id and
+-- three screens for no behavioural gain. Read `match_tickets` as "thread".
 alter table public.match_tickets drop constraint if exists match_tickets_one_parent_chk;
 alter table public.match_tickets add constraint match_tickets_one_parent_chk
-  check ((match_id is not null) <> (tournament_match_id is not null));
+  check ((match_id is not null)::int
+       + (tournament_match_id is not null)::int
+       + (tournament_id is not null)::int = 1);
 
 -- The four players of a ticket, whichever parent it has. ONE definition, so
 -- membership, the roster and the number-request guard can never disagree about
@@ -6000,6 +6020,19 @@ language sql stable security definer set search_path = public as $$
       (e2.player_id, 'b'), (e2.partner_id, 'b')
    ) as v(pid, team)
    where t.id = p_ticket
+     and v.pid is not null
+  union
+  -- the whole event: every non-withdrawn entrant plus their named partners.
+  -- `team` is null — it means nothing across an event, and ticket_roster orders
+  -- by it then by name, so everyone sorts alphabetically. Withdrawing leaves
+  -- the thread, because membership is derived rather than stored.
+  select v.pid, null::text
+    from public.match_tickets t
+    join public.tournament_entries e on e.tournament_id = t.tournament_id
+   cross join lateral (values (e.player_id), (e.partner_id)) as v(pid)
+   where t.id = p_ticket
+     and t.tournament_id is not null
+     and coalesce(e.status, '') <> 'withdrawn'
      and v.pid is not null;
 $$;
 grant execute on function public._ticket_players(uuid) to authenticated;
@@ -6043,6 +6076,15 @@ set search_path = public as $$
       from public.match_tickets t
       join public.tournament_matches tm on tm.id = t.tournament_match_id
       join public.tournaments tr        on tr.id = tm.tournament_id
+     where t.id = p_ticket
+       and coalesce(tr.status, '') <> 'cancelled'
+       and now() < (coalesce(tr.end_date, tr.start_date)::timestamptz
+                    + interval '48 hours'))
+      or exists (
+    -- an event thread lives on the same clock as its per-match threads
+    select 1
+      from public.match_tickets t
+      join public.tournaments tr on tr.id = t.tournament_id
      where t.id = p_ticket
        and coalesce(tr.status, '') <> 'cancelled'
        and now() < (coalesce(tr.end_date, tr.start_date)::timestamptz
@@ -6130,7 +6172,8 @@ returns table (
 )
 language sql stable security definer set search_path = public as $$
   with mine as (
-    select t.id as ticket_id, t.match_id, t.tournament_match_id, t.created_at
+    select t.id as ticket_id, t.match_id, t.tournament_match_id,
+           t.tournament_id, t.created_at
       from public.match_tickets t
      where public._ticket_member(t.id)
   )
@@ -6139,10 +6182,14 @@ language sql stable security definer set search_path = public as $$
     mine.match_id,
     mine.tournament_match_id,
     public._ticket_open(mine.ticket_id),
-    coalesce(m.match_type, 'tournament'),
-    coalesce(m.scheduled_at, tr.start_date::timestamptz),
-    coalesce(c.venue_name, tr.venue_name),
-    coalesce(c.name, tr.name),
+    case
+      when mine.tournament_id is not null then 'event'
+      when mine.tournament_match_id is not null then 'tournament'
+      else coalesce(m.match_type, 'casual')
+    end,
+    coalesce(m.scheduled_at, tr.start_date::timestamptz, evt.start_date::timestamptz),
+    coalesce(c.venue_name, tr.venue_name, evt.venue_name),
+    coalesce(c.name, tr.name, evt.name),
     lm.text,
     lm.sent_at,
     lp.name,
@@ -6156,6 +6203,7 @@ language sql stable security definer set search_path = public as $$
   left join public.courts c              on c.id  = m.court_id
   left join public.tournament_matches tm on tm.id = mine.tournament_match_id
   left join public.tournaments tr        on tr.id = tm.tournament_id
+  left join public.tournaments evt       on evt.id = mine.tournament_id
   left join public.ticket_reads r
          on r.ticket_id = mine.ticket_id and r.player_id = auth.uid()
   left join lateral (
@@ -9698,6 +9746,14 @@ begin
   if not public._ticket_member(p_ticket) then
     return 'Not a member of this ticket.';
   end if;
+  -- An event thread is not a request channel. Belt as well as braces:
+  -- ticket_roster already reports 'none' so the UI offers no Ask button, but
+  -- this RPC is reachable directly and is the actual boundary.
+  if exists (select 1 from public.match_tickets t
+              where t.id = p_ticket and t.tournament_id is not null) then
+    return 'Numbers are shared inside a match, not across a whole event.';
+  end if;
+
   -- Via the shared helper (2026-09-26): this used to join match_players
   -- directly, which answers "isn't in this match" for every target in a
   -- tournament thread.
@@ -9815,13 +9871,20 @@ returns table (
 language plpgsql stable security definer set search_path = public as $$
 #variable_conflict use_column
 declare
-  v_open boolean;
-  v_uid  uuid := auth.uid();
+  v_open  boolean;
+  v_uid   uuid := auth.uid();
+  v_event boolean;
 begin
   if not public._ticket_member(p_ticket) then
     raise exception 'Not a member of this ticket';
   end if;
   v_open := public._ticket_open(p_ticket);
+  -- An EVENT thread serves no numbers at all. Across a 64-entrant field "we are
+  -- in this together" is not the claim it is inside one match, and letting one
+  -- registration open a request channel to every other entrant is the same shape
+  -- as the hole closed on 2026-08-10. Numbers stay a per-match thing.
+  select (t.tournament_id is not null) into v_event
+    from public.match_tickets t where t.id = p_ticket;
 
   return query
   select
@@ -9840,11 +9903,14 @@ begin
         where t.id = p_ticket), false),
     (p.id = v_uid),
     -- A closed ticket hides numbers again, exactly as before; a swap that
-    -- happened inside it survives, but this thread stops serving it.
-    case when v_open and public._can_see_phone(v_uid, p.id)
+    -- happened inside it survives, but this thread stops serving it. An event
+    -- thread never serves one, whether or not a swap exists — that swap is still
+    -- honoured in the match thread it was made in.
+    case when v_open and not v_event and public._can_see_phone(v_uid, p.id)
          then p.phone else null end,
     case
       when p.id = v_uid then 'me'
+      when v_event then 'none'   -- an event thread is not a request channel
       when public._can_see_phone(v_uid, p.id) then 'shared'
       when exists (select 1 from public.number_requests r
                     where r.requester_id = v_uid and r.target_id = p.id
@@ -12452,6 +12518,70 @@ begin
     raise exception 'match_tickets: % row(s) do not have exactly one parent', v_bad;
   end if;
   raise notice 'match threads: % pickup, % tournament.', v_pickup, v_tour;
+end $$;
+
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Open the EVENT thread on the first entry (2026-09-26).
+--
+-- Mirrors how the match thread opens on the join that first puts players on both
+-- sides: the thread appears when there is somebody in it. Membership is DERIVED
+-- from tournament_entries, so withdrawing leaves the thread and nothing has to
+-- be cleaned up.
+-- Full notes: supabase/changes/2026-09-26_event_threads.sql
+-- ============================================================================
+create or replace function public.open_event_ticket()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(new.status, '') = 'withdrawn' then return new; end if;
+  insert into public.match_tickets (tournament_id)
+  values (new.tournament_id)
+  on conflict (tournament_id) where tournament_id is not null do nothing;
+  return new;
+end $$;
+
+drop trigger if exists trg_open_event_ticket on public.tournament_entries;
+create trigger trg_open_event_ticket
+  after insert on public.tournament_entries
+  for each row execute function public.open_event_ticket();
+
+-- Backfill: one thread per tournament that has an entrant and hasn't finished.
+insert into public.match_tickets (tournament_id)
+select tr.id
+  from public.tournaments tr
+ where coalesce(tr.status, '') <> 'cancelled'
+   and now() < (coalesce(tr.end_date, tr.start_date)::timestamptz + interval '48 hours')
+   and exists (select 1 from public.tournament_entries e
+                where e.tournament_id = tr.id
+                  and coalesce(e.status, '') <> 'withdrawn')
+on conflict (tournament_id) where tournament_id is not null do nothing;
+
+do $$
+declare v_pickup int; v_tm int; v_evt int; v_bad int; v_leak int;
+begin
+  select count(*) filter (where match_id is not null),
+         count(*) filter (where tournament_match_id is not null),
+         count(*) filter (where tournament_id is not null),
+         count(*) filter (where (match_id is not null)::int
+                              + (tournament_match_id is not null)::int
+                              + (tournament_id is not null)::int <> 1)
+    into v_pickup, v_tm, v_evt, v_bad
+    from public.match_tickets;
+  if v_bad > 0 then
+    raise exception 'match_tickets: % row(s) do not have exactly one parent', v_bad;
+  end if;
+
+  -- An event thread must never have produced a number request.
+  select count(*) into v_leak
+    from public.number_requests nr
+    join public.match_tickets t on t.id = nr.ticket_id
+   where t.tournament_id is not null;
+  if v_leak > 0 then
+    raise warning 'event threads: % number request(s) exist against an event thread', v_leak;
+  end if;
+
+  raise notice 'threads: % pickup, % tournament match, % event.', v_pickup, v_tm, v_evt;
 end $$;
 
 notify pgrst, 'reload schema';

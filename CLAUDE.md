@@ -39,7 +39,8 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   0.00–7.00 rating stays one global scale underneath.
 - **Store / commerce / P&L stay, Egypt-gated** by `regions.commerce_enabled`.
 - Rollout is phased: region scaffolding (**done**), the tournament-first surface
-  + one season per region (**done**), then tournament comms, then pickup removal.
+  + one season per region (**done**), tournament comms (**done**), then pickup
+  removal.
 
 ## Hard rules (do not break these)
 
@@ -200,6 +201,56 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     out in a follow-up, same treatment as `profiles.instapay_handle`.
   - Communities are still **city**-scoped only, not region-scoped. Deliberate,
     and a candidate for a follow-up.
+- **`match_tickets` is a THREAD with three possible parents** (2026-09-26,
+  `changes/2026-09-26_tournament_tickets.sql` then `..._event_threads.sql`).
+  Exactly one of `match_id` / `tournament_match_id` / `tournament_id` is set
+  (`match_tickets_one_parent_chk`): a pickup match, one tournament match, or a
+  whole event. **Read the table name as "thread"** — renaming it would touch
+  `ticket_messages`, `ticket_reads`, `ticket_roster`, `ticket_inbox`,
+  `mark_ticket_read`, `request_number`, `number_requests.ticket_id` and three
+  screens for no behavioural gain.
+  - **Why not a fake `matches` row per tournament match.** That was the obvious
+    route (materialise `finalize_tournament`'s mirror at draw time so tickets
+    work unchanged) and it is a **trap**: a mirror carries `status='full'` and
+    four real `match_players`, which is exactly what every PICKUP surface
+    selects. It would appear under "Your Pickup Matches", and `join_match`,
+    `leave_match`, `cancel_match` and the score RPCs would all accept it — a
+    player could leave a tournament match. Eight live surfaces would have needed
+    a `tournament_match_id is null` guard. The chosen design also leaves
+    `finalize_tournament` and `_settle_rating` **completely untouched**.
+  - **`_ticket_players(ticket)` is the single definition of who is in a thread**,
+    and it is what made this cheap: membership, the roster and the
+    number-request guard all read it, so they cannot disagree. Every RLS policy
+    on all three tables is unchanged, because everything already routed through
+    `_ticket_member` / `_ticket_open`. `ticket_roster` got *simpler* — one query
+    instead of a branch.
+  - ⚠️ **An EVENT thread serves NO phone numbers, deliberately.** Inside a
+    four-player match "we're in this together" justifies letting someone ASK.
+    Across a 64-entrant field it does not — one registration would become a
+    request channel to every other entrant, the same shape as the hole closed on
+    2026-08-10. So `ticket_roster` returns `phone` NULL and `share_state`
+    `'none'` for an event thread, and **`request_number` refuses it outright**
+    (belt and braces: the RPC is reachable directly and is the real boundary).
+    A swap made in a match thread is still honoured *there*. Don't "fix" this.
+  - `organizer_broadcasts` is **not** the event thread and was rejected as its
+    home: its RLS is `organizer_id = auth.uid() or _is_admin()`, i.e. an
+    organizer-only **audit log** of push blasts. Players never read it — they get
+    a `notifications` row and a mirrored community post.
+  - Threads open from **triggers**, not from the functions that could create
+    them: `trg_open_tournament_ticket` on `tournament_matches` (one trigger
+    instead of editing `generate_draw`, `_advance_winner`,
+    `record_bracket_winner`'s LB drop and `add_custom_match`), and
+    `trg_open_event_ticket` on `tournament_entries`. Event membership is
+    **derived**, so withdrawing leaves the thread with nothing to clean up.
+  - **Bug fixed here:** `open_match_ticket_on_join` was ungated on status, and
+    `finalize_tournament` inserts its four `match_players` rows with status
+    already `completed` — so it had been minting a dead thread for every
+    historical tournament match. Now gated; the delta retires the message-less
+    ones.
+  - `ticket_inbox` reports `match_type` `'event'` / `'tournament'` / `ranked` /
+    `casual`, with venue+name filled from the tournament, so the inbox and
+    `MatchTicketScreen` branch on that one string. An event thread has no VS, no
+    team split and no Ask button.
 - **One season ladder per region** (2026-09-26,
   `changes/2026-09-26_seasons_per_region.sql`). This was a **correctness** fix,
   not a feature, and it had to land before a second region is ever seeded:

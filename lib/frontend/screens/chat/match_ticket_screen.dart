@@ -169,9 +169,19 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
     return names.join(' & ');
   }
 
+  /// An EVENT-wide thread (every entrant of a tournament) rather than a thread
+  /// for one match. `ticket_inbox` reports match_type 'event' for these.
+  ///
+  /// They deliberately serve NO phone numbers: across a 64-entrant field "we are
+  /// in this together" is not the claim it is inside one match, so `ticket_roster`
+  /// returns share_state 'none' for everyone and `request_number` refuses. Without
+  /// this flag the UI would offer an Ask button on every row that always fails.
+  bool get _isEvent => widget.matchType == 'event';
+
   String get _matchLine {
     // 'tournament' comes from ticket_inbox for a thread hanging off a
     // tournament_matches row rather than a matches row (2026-09-26).
+    if (_isEvent) return 'Event · Everyone entered';
     final t = switch (widget.matchType) {
       'tournament' => 'Tournament',
       'ranked' => 'Competitive',
@@ -322,6 +332,19 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
   /// Players tab, which is where the numbers live.
   Widget _matchUp() {
     if (_roster.isEmpty) return const SizedBox(height: 58);
+    // No VS in an event thread — there are no two sides, just a field.
+    if (_isEvent) {
+      return GestureDetector(
+        onTap: () => setState(() => _tab = 1),
+        behavior: HitTestBehavior.opaque,
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.groups_outlined, size: 16, color: AppColors.heroFaint),
+          const SizedBox(width: 7),
+          Text('${_roster.length} player${_roster.length == 1 ? '' : 's'} entered',
+              style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 14)),
+        ]),
+      );
+    }
     return Row(children: [
       Expanded(child: _teamGroup(_myTeam, mine: true)),
       Padding(
@@ -486,17 +509,30 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
             ),
           ]),
           const SizedBox(height: 13),
-          _greetLine(Icons.groups_outlined,
-              'All four of you are in here — sort the ride, the balls, who pays the court.'),
-          _greetLine(Icons.call_outlined,
-              'Want to call someone? Ask for their number in Players. They decide, and accepting shares yours too.'),
-          _greetLine(Icons.lock_outline_rounded,
-              'This ticket closes once the match ends — save any number you want to keep.'),
+          if (_isEvent) ...[
+            _greetLine(Icons.campaign_outlined,
+                'Everyone entered in this event is in here — draws, court changes, '
+                'delays and questions.'),
+            _greetLine(Icons.groups_outlined,
+                'Your own match thread is separate, and that is where you sort the '
+                'ride and the balls.'),
+            _greetLine(Icons.lock_outline_rounded,
+                'Numbers are not shared across a whole event — only inside a match.'),
+          ] else ...[
+            _greetLine(Icons.groups_outlined,
+                'All four of you are in here — sort the ride, the balls, who pays the court.'),
+            _greetLine(Icons.call_outlined,
+                'Want to call someone? Ask for their number in Players. They decide, and accepting shares yours too.'),
+            _greetLine(Icons.lock_outline_rounded,
+                'This ticket closes once the match ends — save any number you want to keep.'),
+          ],
           const SizedBox(height: 13),
-          AppButton('Players and numbers',
+          AppButton(_isEvent ? 'Who has entered' : 'Players and numbers',
               full: true,
               height: 44,
-              icon: Icons.contact_phone_outlined,
+              icon: _isEvent
+                  ? Icons.groups_outlined
+                  : Icons.contact_phone_outlined,
               onPressed: () => setState(() => _tab = 1)),
         ]),
       );
@@ -615,21 +651,38 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
   Widget _playersTab() => ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
         children: [
-          Text('YOUR TEAM', style: AppText.kicker(AppColors.primary)),
-          const SizedBox(height: 8),
-          for (final p in _myTeam) _playerCard(p),
-          const SizedBox(height: 18),
-          Row(children: [
-            Text('OPPONENTS', style: AppText.kicker()),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text('keep for next time',
-                  style: AppText.small(AppColors.inkFaint)
-                      .copyWith(fontSize: 10.5)),
-            ),
-          ]),
-          const SizedBox(height: 8),
-          for (final p in _theirTeam) _playerCard(p),
+          // An event roster has no sides — `_ticket_players` returns a null team
+          // for an event thread, so splitting it would show an empty "your team"
+          // and file every other entrant under "opponents".
+          if (_isEvent) ...[
+            Row(children: [
+              Text('ENTERED', style: AppText.kicker(AppColors.primary)),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text('${_roster.length} player${_roster.length == 1 ? '' : 's'}',
+                    style: AppText.small(AppColors.inkFaint)
+                        .copyWith(fontSize: 10.5)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            for (final p in _roster) _playerCard(p),
+          ] else ...[
+            Text('YOUR TEAM', style: AppText.kicker(AppColors.primary)),
+            const SizedBox(height: 8),
+            for (final p in _myTeam) _playerCard(p),
+            const SizedBox(height: 18),
+            Row(children: [
+              Text('OPPONENTS', style: AppText.kicker()),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text('keep for next time',
+                    style: AppText.small(AppColors.inkFaint)
+                        .copyWith(fontSize: 10.5)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            for (final p in _theirTeam) _playerCard(p),
+          ],
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(13),
@@ -656,6 +709,12 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
   /// why not — deliberately worded so "hasn't shared" never reads as a snub.
   String _subtitleFor(Map<String, dynamic> p, String phone) {
     if (phone.isNotEmpty) return phone;
+    // An event roster is a list of who has entered, not a contact list — saying
+    // "Ask to swap numbers" here would advertise something the server refuses.
+    if (_isEvent) {
+      final lvl = p['level'];
+      return lvl == null ? 'Entered' : 'Entered · Level $lvl';
+    }
     if (!widget.isOpen) return 'Hidden — ticket closed';
     switch (p['share_state'] as String?) {
       case 'me':
@@ -738,7 +797,11 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
               }),
               const SizedBox(width: 7),
               _roundBtn(Icons.call_rounded, filled: true, onTap: () => _call(phone)),
-            ] else if (widget.isOpen && p['share_state'] == 'none') ...[
+            // No Ask in an event thread: request_number refuses it, so offering
+            // the button would be a control that always errors.
+            ] else if (!_isEvent &&
+                widget.isOpen &&
+                p['share_state'] == 'none') ...[
               const SizedBox(width: 8),
               AppButton('Ask',
                   height: 32,
@@ -746,7 +809,9 @@ class _MatchTicketScreenState extends State<MatchTicketScreen> {
                   onPressed: _asking == p['player_id']
                       ? null
                       : () => _askForNumber(p)),
-            ] else if (widget.isOpen && p['share_state'] == 'pending') ...[
+            ] else if (!_isEvent &&
+                widget.isOpen &&
+                p['share_state'] == 'pending') ...[
               const SizedBox(width: 8),
               const AppTag('ASKED', color: AppColors.gold),
             ],

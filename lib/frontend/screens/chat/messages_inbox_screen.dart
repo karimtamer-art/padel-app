@@ -229,8 +229,9 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> with AutoRefr
     // 'tournament' is a thread on a tournament_matches row (2026-09-26); it has
     // no matches row at all, so match_type comes from ticket_inbox's coalesce.
     final kind = (t['match_type'] as String?) ?? 'casual';
-    final isTournament = kind == 'tournament';
+    final isTournament = kind == 'tournament' || kind == 'event';
     final label = switch (kind) {
+      'event' => 'Event announcements',
       'tournament' => 'Tournament match',
       'ranked' => 'Competitive match',
       _ => 'Casual match',
