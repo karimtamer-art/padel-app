@@ -26,10 +26,8 @@ import 'package:padel_clay/backend/services/ticket_service.dart';
 import 'package:padel_clay/backend/services/season_service.dart';
 import 'package:padel_clay/backend/services/sponsor_service.dart';
 import 'package:padel_clay/frontend/feature_flags.dart';
-import 'matchmaking_hero.dart';
 import '../leaderboard/season_leaderboard_screen.dart';
 import '../detail/match_detail_screen.dart';
-import '../detail/join_match_sheet.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import '../profile/notifications_screen.dart';
 import '../profile/recent_form_screen.dart';
@@ -40,14 +38,6 @@ import '../chat/messages_inbox_screen.dart';
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onSeeStore;
   final VoidCallback? onSeeTournaments;
-
-  /// Opens the create-match sheet.
-  ///
-  /// Used to be the shell's centre FAB, which is gone in a tournament-first app.
-  /// Pickup is DEMOTED, not removed, so this lives in Home's pickup section
-  /// until Phase 3 takes pickup out entirely.
-  final VoidCallback? onCreateMatch;
-
   final ValueChanged<Product>? onAddToCart;
   final PlayerProfile profile;
   final String displayName;
@@ -60,7 +50,6 @@ class HomeScreen extends StatefulWidget {
     super.key,
     this.onSeeStore,
     this.onSeeTournaments,
-    this.onCreateMatch,
     this.onAddToCart,
     this.profile = PlayerProfile.fresh,
     this.displayName = '',
@@ -73,11 +62,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
+  // The player's own pickup matches that are still in flight. Pickup is gone
+  // (Phase 4) — nothing new can be created or joined — but a match booked
+  // before that still has to be played, scored and confirmed from here.
   List<Map<String, dynamic>> _myMatches = [];
-  // Open matches from other players I'm allowed to see (mm_candidates) —
-  // joinable straight from Home, no radar needed.
-  List<Map<String, dynamic>> _joinable = [];
-  String? _joining; // match_id currently being joined
   List<Map<String, dynamic>> _tournaments = [];
   List<Map<String, dynamic>> _featured = [];
   Community? _community;
@@ -94,19 +82,12 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   int _unread = 0;
   int _dmUnread = 0; // unread direct messages → Messages icon badge
   int _communityUnread = 0; // unread community channel messages → card badge
-  // Matches in the player's rating band near them (the "N near you" teaser).
-  int _bandCount = 0;
   // Most recent completed-but-unacked match → the "MATCH COMPLETE" hero.
   Map<String, dynamic>? _resultHero;
   bool _loading = true;
   // Local latch so the one-time placement reveal disappears the instant it's
   // dismissed (the persisted flag catches the next launch).
   bool _revealDismissed = false;
-  // The player tapped "Find a Match" → the hero morphs into the searching radar.
-  bool _searching = false;
-  // Chosen day + time-range window for a scheduled search (null = quick/now).
-  DateTime? _searchFrom;
-  DateTime? _searchTo;
   RealtimeChannel? _notifChannel;
 
   static SupabaseClient get _db => Supabase.instance.client;
@@ -116,7 +97,6 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
     super.initState();
     _loadData();
     _subscribeNotifications();
-    _restoreSearching();
   }
 
   @override
@@ -189,13 +169,11 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
     if (!silent && mounted) setState(() => _loading = true);
     await Future.wait([
       _fetchMatches(),
-      _fetchJoinable(),
       _fetchTournaments(),
       _fetchUnread(),
       _fetchDmUnread(),
       _fetchFeatured(),
       if (Features.community) _fetchCommunity(),
-      _fetchBandCount(),
       _fetchResultHero(),
       _fetchSeason(),
       _fetchForm(),
@@ -283,45 +261,6 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
     } catch (_) {}
   }
 
-  /// Open matches hosted by other players that I'm allowed to see. Casual ones
-  /// come from anybody (unrated → no band/placement gate); competitive stays
-  /// inside my rating band. Server-side rules live in `mm_candidates`.
-  Future<void> _fetchJoinable() async {
-    final rows = await MatchService.fetchBandCandidates(limit: 10);
-    if (mounted) _joinable = rows;
-  }
-
-  /// Candidate rows come back flat from the RPC; reshape them into the same
-  /// map `_UpcomingMatchCard` reads for my own matches.
-  static Map<String, dynamic> _asMatch(Map<String, dynamic> c) => {
-        'id': c['match_id'],
-        'match_type': c['match_type'],
-        'scheduled_at': c['scheduled_at'],
-        'courts': {'name': c['court_name'], 'venue_name': c['venue_name']},
-      };
-
-  /// Join straight from the card: same solo-or-with-a-partner question the
-  /// radar asks, then `mm_accept` (capacity + band re-checked server-side).
-  Future<void> _joinCandidate(Map<String, dynamic> c) async {
-    final id = c['match_id'] as String?;
-    if (id == null || _joining != null) return;
-    final seats = 4 - ((c['players'] as num?)?.toInt() ?? 0);
-    final choice = await showJoinMatchSheet(context, slotsLeft: seats);
-    if (choice == null || !mounted) return;
-    setState(() => _joining = id);
-    final err = await MatchService.acceptCandidate(id, partnerId: choice.partnerId);
-    if (!mounted) return;
-    setState(() => _joining = null);
-    if (err != null) {
-      AppToast.show(context, err, kind: ToastKind.error);
-      _loadData(silent: true); // it may have filled up — refresh the row
-      return;
-    }
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => MatchDetailScreen(matchId: id)));
-    if (mounted) _loadData(silent: true);
-  }
-
   Future<void> _fetchTournaments() async {
     // Region-scoped by default inside the service, so a player only ever sees
     // events in their own market.
@@ -348,52 +287,6 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
       (entered ? mine : rest).add(t);
     }
     if (mounted) _tournaments = [...mine, ...rest].take(5).toList();
-  }
-
-  // Matchmaking is now the home hero itself (MatchmakingHero), not a screen.
-  // The search is ticket-backed so it survives the app closing (background push
-  // brings the player back to the resumed radar).
-  // Quick auto-match now (no window), or a scheduled search when from/to are set.
-  void _startSearch({DateTime? from, DateTime? to}) {
-    setState(() {
-      _searchFrom = from;
-      _searchTo = to;
-      _searching = true;
-    });
-    MatchService.startSearch();
-  }
-
-  // "Choose a day & time" → pick a window first, then search scoped to it.
-  Future<void> _scheduleSearch() async {
-    final w = await showMatchWhenPicker(context, from: _searchFrom, to: _searchTo);
-    if (w == null || !mounted) return;
-    _startSearch(from: w.from, to: w.to);
-  }
-
-  void _stopSearch() {
-    setState(() => _searching = false);
-    MatchService.cancelSearch();
-  }
-
-  Future<void> _onMatchAccepted(String matchId) async {
-    setState(() => _searching = false);
-    MatchService.cancelSearch();
-    await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => MatchDetailScreen(matchId: matchId)));
-    _loadData(silent: true);
-  }
-
-  /// On launch, resume the radar if a fresh search ticket exists (e.g. the
-  /// player tapped a "Match found" push). Runs once.
-  Future<void> _restoreSearching() async {
-    if (await MatchService.isSearching()) {
-      if (mounted) setState(() => _searching = true);
-    }
-  }
-
-  String get _searchLevelLabel {
-    final r = widget.profile.ranking;
-    return r.placed ? 'Div ${RankingScale.divisionFor(r.level).key}' : 'Placement';
   }
 
   /// Dismiss the one-time placement reveal: hide it now, persist that it's been
@@ -453,67 +346,6 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
     _loadData();
   }
 
-  /// Redeem a private match's invite code. The code is the only way into a
-  /// private match — it's in no list and RLS won't serve the row — so a wrong
-  /// one has to fail clearly rather than silently.
-  Future<void> _joinWithCode() async {
-    final ctrl = TextEditingController();
-    final code = await showDialog<String>(
-      context: context,
-      builder: (dCtx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Text('Join with a code', style: AppText.cardTitle()),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('Enter the invite code the host sent you.',
-              style: AppText.body(AppColors.inkSoft).copyWith(height: 1.4)),
-          const SizedBox(height: 14),
-          TextField(
-            controller: ctrl,
-            autofocus: true,
-            textCapitalization: TextCapitalization.characters,
-            textInputAction: TextInputAction.go,
-            onSubmitted: (v) => Navigator.pop(dCtx, v),
-            style: AppText.bodyStrong(AppColors.ink)
-                .copyWith(fontSize: 18, letterSpacing: 2),
-            decoration: InputDecoration(
-              hintText: 'PDL-AB12C',
-              hintStyle: AppText.bodyStrong(AppColors.inkFaint)
-                  .copyWith(fontSize: 18, letterSpacing: 2),
-              filled: true,
-              fillColor: AppColors.field,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none),
-            ),
-          ),
-        ]),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dCtx),
-            child: Text('Cancel', style: AppText.bodyStrong(AppColors.inkSoft)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dCtx, ctrl.text),
-            child: Text('Join', style: AppText.bodyStrong(AppColors.primary)),
-          ),
-        ],
-      ),
-    );
-    if (code == null || code.trim().isEmpty || !mounted) return;
-
-    final (err, id) = await MatchService.joinByCode(code);
-    if (!mounted) return;
-    if (err != null || id == null) {
-      AppToast.show(context, err ?? 'Could not join that match.',
-          kind: ToastKind.error);
-      return;
-    }
-    AppToast.show(context, "You're in — see you on court.");
-    if (!mounted) return;
-    await _openMatch(context, id);
-  }
-
   Future<void> _openTournament(BuildContext c, String id) async {
     await Navigator.of(c).push(MaterialPageRoute(
         builder: (_) => TournamentDetailScreen(tournamentId: id)));
@@ -533,11 +365,6 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
       TicketService.unreadCount(),
     ]);
     if (mounted) _dmUnread = counts[0] + counts[1];
-  }
-
-  Future<void> _fetchBandCount() async {
-    final n = await MatchService.countCandidates();
-    if (mounted) _bandCount = n;
   }
 
   Future<void> _fetchResultHero() async {
@@ -660,22 +487,12 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
                   profile: widget.profile,
                 ),
                 // The top hero slot is never empty for a placed player: it
-                // cycles searching → reveal → result → live → next-match →
-                // book-next as their state changes.
-                if (_searching)
-                  MatchmakingHero(
-                    initials: widget.initials.isNotEmpty ? widget.initials : 'P',
-                    levelLabel: _searchLevelLabel,
-                    onAccepted: _onMatchAccepted,
-                    onCancel: _stopSearch,
-                    initialFrom: _searchFrom,
-                    initialTo: _searchTo,
-                  )
-                else if (!widget.profile.ranking.placed)
+                // cycles reveal → result → live → next-match → next-event as
+                // their state changes.
+                if (!widget.profile.ranking.placed)
                   _PlacementWelcome(
                     ranking: widget.profile.ranking,
                     onBrowseTournaments: widget.onSeeTournaments ?? () {},
-                    onFindMatch: _startSearch,
                   )
                 // Just placed and hasn't seen the celebration → one-time reveal.
                 else if (!widget.profile.placementRevealed && !_revealDismissed)
@@ -709,9 +526,7 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
                   _NextEventHero(
                     ranking: widget.profile.ranking,
                     openTournaments: _tournaments.length,
-                    bandCount: _bandCount,
                     onBrowseTournaments: widget.onSeeTournaments ?? () {},
-                    onFindMatch: _startSearch,
                   ),
                 // Tournaments LEAD the page now (2026-09-26) — they were below
                 // Recent Form, the season card, the community block and pickup.
@@ -756,51 +571,16 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
                     else
                       _communityCodePrompt(),
                   ],
-                // ── Pickup, demoted ──────────────────────────────────────────
-                // Below tournaments, the season card and the community block
-                // now, and hidden entirely when the player has no pickup match
-                // on — a player who only enters tournaments should never see a
-                // retiring feature take up a slot. Reachable, not promoted;
-                // Phase 3 removes it outright. The "Create" action is here
-                // because the shell's centre FAB is gone.
-                // `_myMatches` only, deliberately not `_joinable`: the section
-                // shows a player their OWN pickup commitments. Advertising other
-                // people's open matches to someone who doesn't use pickup is
-                // promotion, which is the opposite of demoting it. Discovery is
-                // still one tap away behind "Find".
+                // ── Pickup, winding down ─────────────────────────────────────
+                // Pickup is retired (Phase 4): nothing here creates, finds or
+                // joins a match any more. The section survives only so a match
+                // booked before the switch can still be opened, scored and
+                // confirmed, and it disappears once the player has none left.
                 if (_myMatches.isNotEmpty) ...[
                   const SizedBox(height: AppSpacing.section),
-                  SectionHeader('Your Pickup Matches',
-                      action: 'Find', onAction: _startSearch),
+                  const SectionHeader('Your Pickup Matches'),
                   _upcomingMatches(context),
                 ],
-                // Under the pickup section, not under the hero: someone handed a
-                // private code has to SEE where it goes, but it no longer earns
-                // a place directly below the most valuable space on the page.
-                const SizedBox(height: 16),
-                _InviteCodeRow(onTap: _joinWithCode),
-                // Both pickup paths the retired centre FAB and the old hero used
-                // to own: create a match outright, or pick a day/time window and
-                // let matchmaking search it. Kept as quiet text links so pickup
-                // stays reachable without competing with the tournament hero.
-                const SizedBox(height: 12),
-                Padding(
-                  padding: AppSpacing.screenH,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (widget.onCreateMatch != null)
-                        _pickupLink(Icons.add_circle_outline_rounded,
-                            'Create a match', widget.onCreateMatch!),
-                      if (widget.onCreateMatch != null)
-                        Text('  ·  ',
-                            style: AppText.small(AppColors.inkFaint)
-                                .copyWith(fontSize: 12.5)),
-                      _pickupLink(Icons.event_rounded, 'Schedule a search',
-                          _scheduleSearch),
-                    ],
-                  ),
-                ),
                 // No store outside the regions that have one — otherwise this
                 // strip's "Shop" action points at a tab that isn't there.
                 if (RegionService.now.commerceEnabled) ...[
@@ -1215,19 +995,6 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
 
   // ── Upcoming Matches ─────────────────────────────────────────────────────
 
-  /// A quiet text link in the demoted pickup area.
-  Widget _pickupLink(IconData icon, String label, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 15, color: AppColors.inkFaint),
-          const SizedBox(width: 6),
-          Text(label,
-              style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 12.5)),
-        ]),
-      );
-
   Widget _upcomingMatches(BuildContext context) {
     if (_loading) {
       return SizedBox(
@@ -1258,54 +1025,16 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
         ),
       );
     }
-    if (_myMatches.isEmpty && _joinable.isEmpty) {
-      return Padding(
-        padding: AppSpacing.screenH,
-        child: AppCard(
-          child: Row(children: [
-            Container(
-              width: 38, height: 38,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  color: AppColors.field, borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.sports_tennis_rounded,
-                  size: 19, color: AppColors.inkFaint),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('No upcoming matches',
-                    style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
-                const SizedBox(height: 2),
-                Text('Find a match and book a court to get started.',
-                    style: AppText.small().copyWith(fontSize: 12, height: 1.4)),
-              ]),
-            ),
-            const SizedBox(width: 8),
-            AppButton('Find', onPressed: _startSearch),
-          ]),
-        ),
-      );
-    }
+    // Only built when `_myMatches` is non-empty, so there is no empty state.
     return SizedBox(
       height: 224,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: AppSpacing.screenH,
         children: [
-          // Mine first (open them), then open matches from other players that
-          // can be joined right here.
           for (final m in _myMatches)
             _UpcomingMatchCard(m,
                 onOpen: () => _openMatch(context, m['id'] as String)),
-          for (final c in _joinable)
-            _UpcomingMatchCard(
-              _asMatch(c),
-              onOpen: () => _joinCandidate(c),
-              onJoin: () => _joinCandidate(c),
-              playersOverride: (c['players'] as num?)?.toInt() ?? 0,
-              busy: _joining == c['match_id'],
-            ),
         ],
       ),
     );
@@ -1479,14 +1208,7 @@ class _SponsorChip extends StatelessWidget {
 class _UpcomingMatchCard extends StatelessWidget {
   final Map<String, dynamic> match;
   final VoidCallback onOpen;
-  /// Set for a match the player is NOT in yet → the action becomes "Join
-  /// Match" instead of "View Match".
-  final VoidCallback? onJoin;
-  /// `mm_candidates` returns a flat seat count instead of the players list.
-  final int? playersOverride;
-  final bool busy;
-  const _UpcomingMatchCard(this.match,
-      {required this.onOpen, this.onJoin, this.playersOverride, this.busy = false});
+  const _UpcomingMatchCard(this.match, {required this.onOpen});
 
   static const _months = ['Jan','Feb','Mar','Apr','May','Jun',
                           'Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1526,8 +1248,7 @@ class _UpcomingMatchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ranked = match['match_type'] == 'ranked';
     final court = match['courts'] as Map?;
-    final players =
-        playersOverride ?? (match['match_players'] as List?)?.length ?? 0;
+    final players = (match['match_players'] as List?)?.length ?? 0;
     final filled = players.clamp(0, 4);
     final lat = (court?['lat'] as num?)?.toDouble();
     final lng = (court?['lng'] as num?)?.toDouble();
@@ -1573,14 +1294,10 @@ class _UpcomingMatchCard extends StatelessWidget {
                 style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
           ]),
           const SizedBox(height: 12),
-          // Mine → open it. Someone else's open match → join it from here.
           Row(children: [
             Expanded(
-                child: AppButton(
-                    onJoin == null ? 'View Match' : (busy ? 'Joining…' : 'Join Match'),
-                    full: true,
-                    height: 44,
-                    onPressed: busy ? null : (onJoin ?? onOpen))),
+                child: AppButton('View Match',
+                    full: true, height: 44, onPressed: onOpen)),
             if (hasLoc) ...[
               const SizedBox(width: 8),
               GestureDetector(
@@ -1841,13 +1558,9 @@ class _PlacementWelcome extends StatelessWidget {
   /// pointing them at the feature being retired.
   final VoidCallback onBrowseTournaments;
 
-  /// Pickup, kept as the secondary route while it still exists.
-  final VoidCallback onFindMatch;
-
   const _PlacementWelcome({
     required this.ranking,
     required this.onBrowseTournaments,
-    required this.onFindMatch,
   });
 
   @override
@@ -1936,16 +1649,6 @@ class _PlacementWelcome extends StatelessWidget {
                 height: 48,
                 icon: Icons.emoji_events_rounded,
                 onPressed: onBrowseTournaments),
-            const SizedBox(height: 8),
-            Center(
-              child: GestureDetector(
-                onTap: onFindMatch,
-                behavior: HitTestBehavior.opaque,
-                child: Text('Or find a pickup match',
-                    style: AppText.small(AppColors.heroFaint)
-                        .copyWith(fontSize: 12.5)),
-              ),
-            ),
           ],
         ),
       ),
@@ -1955,64 +1658,21 @@ class _PlacementWelcome extends StatelessWidget {
 
 // ── Book-next hero (placed player, nothing booked) ───────────────────────────
 
-/// "Got a code?" — the only door into a private match. Deliberately quiet: it
-/// matters enormously to the few people holding a code and not at all to
-/// everyone else, so it reads as a row rather than competing with the hero.
-class _InviteCodeRow extends StatelessWidget {
-  final VoidCallback onTap;
-  const _InviteCodeRow({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: AppColors.field,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.line),
-        ),
-        child: Row(children: [
-          const Icon(Icons.vpn_key_outlined, size: 18, color: AppColors.gold),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Got an invite code?',
-                  style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 13.5)),
-              const SizedBox(height: 1),
-              Text('Join a private match someone set up',
-                  style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
-            ]),
-          ),
-          const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
-        ]),
-      ),
-    );
-  }
-}
-
-/// Default hero for a placed player with nothing booked.
+// Default hero for a placed player with nothing booked.
 ///
 /// Replaced `_BookNextHero` (2026-09-26). That one led with "Book your next
 /// game" and two pickup CTAs, which is the wrong first thing to say in a
 /// tournament-first app — the hero is the most valuable space on Home and it was
-/// pointing at the feature being retired.
-///
-/// Pickup is DEMOTED, not removed: the quick-match path survives as a secondary
-/// row here and in Home's pickup section, until Phase 3 removes pickup outright.
+/// pointing at the feature being retired. Its secondary "find a pickup match"
+/// row went with Phase 4, when pickup itself was retired.
 class _NextEventHero extends StatelessWidget {
   final Ranking ranking;
   final int openTournaments; // how many are open in this player's region
-  final int bandCount; // pickup matches near their level
   final VoidCallback onBrowseTournaments;
-  final VoidCallback onFindMatch; // quick auto-match now (pickup, secondary)
   const _NextEventHero({
     required this.ranking,
     required this.onBrowseTournaments,
-    required this.onFindMatch,
     this.openTournaments = 0,
-    this.bandCount = 0,
   });
 
   @override
@@ -2114,32 +1774,6 @@ class _NextEventHero extends StatelessWidget {
               Center(
                 child: Text('Entry fees, formats and draws — all in one place',
                     style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 10.5)),
-              ),
-              // Pickup, demoted to a secondary row. Kept because a player
-              // mid-way through organising games should not lose the ability in
-              // the release that re-centres Home.
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: onFindMatch,
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  height: 48,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.07),
-                    borderRadius: AppRadius.btnR,
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
-                  ),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    const Icon(Icons.bolt_rounded, size: 17, color: AppColors.gold),
-                    const SizedBox(width: 8),
-                    Text(
-                        bandCount > 0
-                            ? 'Or find a pickup match · $bandCount nearby'
-                            : 'Or find a pickup match',
-                        style: AppText.bodyStrong(AppColors.heroInk).copyWith(fontSize: 14)),
-                  ]),
-                ),
               ),
             ]),
           ),

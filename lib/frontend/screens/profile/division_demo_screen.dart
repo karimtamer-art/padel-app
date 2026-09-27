@@ -46,8 +46,8 @@ class _DivisionDemoScreenState extends State<DivisionDemoScreen> {
           child: ProfileScreen(
             key: ValueKey(_fresh),
             profile: profile,
-            onFindMatch: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('→ open Create-a-Match / placement flow')),
+            onBrowseTournaments: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('→ open the Tournaments tab')),
             ),
           ),
         ),

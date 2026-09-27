@@ -10,11 +10,8 @@ import '../tournaments/tournaments_screen.dart';
 import '../store/store_screen.dart';
 import '../store/cart_screen.dart';
 import '../profile/profile_screen.dart';
-import '../create/create_match_sheet.dart';
-import '../detail/match_detail_screen.dart';
 
-/// Root scaffold: 4 tabs + a raised center "Create" action.
-/// Nav order: Home · Tournaments · (Create) · Store · You
+/// Root scaffold: Home · Tournaments · Store (commerce regions only) · You.
 ///
 /// [profile] selects the account state shown across Home + Profile — pass
 /// [PlayerProfile.fresh] for a player who just signed up (unranked + empty
@@ -92,7 +89,7 @@ class _RootScaffoldState extends State<RootScaffold> {
   /// `regions.commerce_enabled`, i.e. by DATA rather than by a build flag.
   bool get _commerce => RegionService.now.commerceEnabled;
 
-  /// Nav slot id → IndexedStack page. Slot 2 is the Create FAB and has no page.
+  /// Nav slot id → IndexedStack page. Slot 2 was the retired Create FAB.
   ///
   /// The slot ids are STABLE (Store is always 3, You is always 4) so that
   /// `onSeeStore` and the refresh conditions below keep meaning one thing; only
@@ -100,25 +97,7 @@ class _RootScaffoldState extends State<RootScaffold> {
   Map<int, int> get _slotToPage =>
       _commerce ? const {0: 0, 1: 1, 3: 2, 4: 3} : const {0: 0, 1: 1, 4: 2};
 
-  Future<void> _openCreate() async {
-    final matchId = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => CreateMatchSheet(
-        myName: widget.displayName,
-        myInitials: widget.initials,
-      ),
-    );
-    if (!mounted) return;
-    // A match may have been created even when the sheet closes without "View"
-    // (Done / Create-another) — refresh Home either way so it shows up.
-    setState(() => _homeRefresh++);
-    if (matchId == null) return;
-    await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => MatchDetailScreen(matchId: matchId)));
-    if (mounted) setState(() => _homeRefresh++);
-  }
+  void _seeTournaments() => setState(() => _tab = 1);
 
   @override
   Widget build(BuildContext context) {
@@ -132,10 +111,7 @@ class _RootScaffoldState extends State<RootScaffold> {
             key: const ValueKey('home'),
             refreshTick: _homeRefresh,
             onSeeStore: () => setState(() => _tab = 3),
-            onSeeTournaments: () => setState(() => _tab = 1),
-            // The create-match sheet used to hang off the centre FAB. With the
-            // FAB gone, Home's demoted pickup section is the only way in.
-            onCreateMatch: _openCreate,
+            onSeeTournaments: _seeTournaments,
             onAddToCart: _addToCart,
             profile: widget.profile,
             displayName: widget.displayName,
@@ -149,7 +125,8 @@ class _RootScaffoldState extends State<RootScaffold> {
           ProfileScreen(
             profile: widget.profile,
             refreshTick: _profileRefresh,
-            onFindMatch: _openCreate,
+            // Placement is earned in tournaments now that pickup is retired.
+            onBrowseTournaments: _seeTournaments,
             onSignOut: widget.onSignOut,
             onReorder: _reorder,
             displayName: widget.displayName,
@@ -192,9 +169,8 @@ class _NavBar extends StatelessWidget {
   /// Slot **2 was the raised "Create" FAB and is gone** (2026-09-26): in a
   /// tournament-first app a player has nothing to create — tournaments are made
   /// in the admin console, and `AuthGate` sends staff there rather than here, so
-  /// nobody who sees this bar could ever have used it for that. Creating a
-  /// pickup match moved into Home's demoted pickup section, which is the only
-  /// remaining way in until Phase 3 removes pickup outright.
+  /// nobody who sees this bar could ever have used it for that. Pickup itself
+  /// was retired in Phase 4, so there is no create-match path anywhere.
   ///
   /// Slot ids stay STABLE (Store is still 3, You is still 4) so `onSeeStore` and
   /// the refresh conditions keep meaning one thing. The pill divides by

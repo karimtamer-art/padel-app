@@ -13,10 +13,13 @@ import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import '../chat/dm_chat_screen.dart';
-import 'join_match_sheet.dart';
 
 /// Live match detail — lobby + player-submitted result flow, driven by the
-/// `matches` row status:
+/// `matches` row status.
+///
+/// Pickup is retired (Phase 4): nobody can join from here any more, and
+/// invites can't be accepted. What's left lets a match booked before the switch
+/// finish — leave, cancel (host), submit, confirm, dispute:
 ///
 ///   open / full ──(time passes, player submits)──► pending_confirm
 ///   pending_confirm ──(other team confirms)──► completed (ELO settles)
@@ -136,13 +139,6 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
   /// doesn't make a 2v2.
   bool get _full => _players.length >= 4;
 
-  /// The invite waiting on me for this match, if any.
-  Map<String, dynamic>? get _myInvite {
-    for (final i in _invites) {
-      if (i['is_me'] == true) return i;
-    }
-    return null;
-  }
   bool get _isHost => _uid != null && _match?['created_by'] == _uid;
 
   bool get _iSubmitted {
@@ -213,51 +209,6 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
     }
   }
 
-  Future<void> _answerInvite(bool accept) async {
-    final id = _myInvite?['invite_id'] as String?;
-    if (id == null) return;
-    if (!accept) {
-      final sure = await showDialog<bool>(
-        context: context,
-        builder: (c) => AlertDialog(
-          backgroundColor: AppColors.surface,
-          title: Text('Decline this invite?', style: AppText.bodyStrong()),
-          content: Text(
-              'The spot opens up for anyone else. You can still join later if it '
-              'is still free.',
-              style: AppText.small().copyWith(height: 1.45)),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(c, false),
-                child: Text('Keep it', style: AppText.bodyStrong())),
-            TextButton(
-                onPressed: () => Navigator.pop(c, true),
-                child: Text('Decline',
-                    style: AppText.bodyStrong(AppColors.danger))),
-          ],
-        ),
-      );
-      if (sure != true || !mounted) return;
-    }
-    await _run(() => MatchService.respondToInvite(id, accept: accept),
-        ok: accept
-            ? "You're in! See you on court."
-            : 'Declined — the spot is open again.');
-  }
-
-  Future<void> _join() async {
-    // Held slots aren't free slots — offering them would let someone pick a
-    // partner for a seat the server will refuse.
-    final choice = await showJoinMatchSheet(context,
-        slotsLeft: (4 - _players.length - _invites.length).clamp(0, 4));
-    if (choice == null || !mounted) return;
-    await _run(
-        () => MatchService.joinMatch(widget.matchId, partnerId: choice.partnerId),
-        ok: choice.solo
-            ? "You're in! See you on court."
-            : "You're in — we've asked your partner and we're holding their spot.");
-  }
-
   Future<void> _leave() async {
     final sure = await showDialog<bool>(
       context: context,
@@ -322,25 +273,6 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
   Future<void> _confirm(bool yes) =>
       _run(() => MatchService.confirmResult(widget.matchId, yes),
           ok: yes ? 'Result confirmed — rankings updated.' : 'Result rejected.');
-
-  void _copyInvite() {
-    final code = _match?['invite_code'] as String? ?? '';
-    if (code.isEmpty) return;
-    Clipboard.setData(ClipboardData(text: code));
-    _snack('Invite code copied');
-  }
-
-  void _share() {
-    final code = (_match?['invite_code'] as String? ?? '').trim();
-    final when = _fmtWhen();
-    // A public match has no code, and promising one that isn't there sends the
-    // reader looking for something that doesn't exist.
-    Clipboard.setData(ClipboardData(
-        text: code.isEmpty
-            ? 'Join my padel match on Padel Rivals — $when.'
-            : 'Join my padel match on Padel Rivals — $when. Invite code: $code'));
-    _snack('Match details copied — paste anywhere to share');
-  }
 
   String _fmtWhen() {
     final dt = _when;
@@ -440,8 +372,6 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
             const SizedBox(width: 12),
             Text('${_comp ? 'COMPETITIVE' : 'CASUAL'} · DOUBLES',
                 style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 11)),
-            const Spacer(),
-            _glassBtn(Icons.ios_share_rounded, _share),
           ]),
         ),
         Padding(
@@ -563,8 +493,6 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
     final court = _match?['courts'] as Map?;
     final courtName = court?['venue_name'] as String? ??
         court?['name'] as String? ?? 'To be agreed';
-    // Empty for a public match — public matches carry no code at all now.
-    final code = (_match?['invite_code'] as String? ?? '').trim();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: Column(children: [
@@ -621,31 +549,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
             ],
           ]),
         ),
-        // Only a private match has a code, and it is the ONLY way in — so it
-        // gets the gold treatment and says what it's for. A public match used
-        // to show a code here that did nothing at all.
-        if (_inMatch && code.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          AppCard(
-            color: AppColors.gold.withValues(alpha: 0.08),
-            child: Row(children: [
-              const Icon(Icons.vpn_key_outlined, size: 20, color: AppColors.gold),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Invite code', style: AppText.bodyStrong().copyWith(fontSize: 13)),
-                  Text(code,
-                      style: AppText.bodyStrong(AppColors.ink)
-                          .copyWith(fontSize: 15, letterSpacing: 2)),
-                  const SizedBox(height: 2),
-                  Text('Private match — share this and they can join',
-                      style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11)),
-                ]),
-              ),
-              AppButton('Copy', height: 32, variant: AppBtnVariant.ghost, onPressed: _copyInvite),
-            ]),
-          ),
-        ],
+        // The private-match invite code card is gone with pickup (Phase 4):
+        // a code only ever let someone new join.
       ]),
     );
   }
@@ -1384,32 +1289,9 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> with AutoRefresh<
   Widget _footer() {
     Widget? content;
 
-    if (!_inMatch && _myInvite != null && _status == 'open') {
-      // I was asked to partner up. Answering is the only thing to do here —
-      // accepting is what actually puts me in the match.
-      content = Row(children: [
-        Expanded(
-          child: AppButton(_busy ? '…' : 'Decline',
-              full: true, height: 52, variant: AppBtnVariant.ghost,
-              onPressed: _busy ? null : () => _answerInvite(false)),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 2,
-          child: AppButton(_busy ? 'Joining…' : 'Accept invite',
-              full: true, height: 52, icon: Icons.check_rounded,
-              onPressed: _busy ? null : () => _answerInvite(true)),
-        ),
-      ]);
-    } else if (!_inMatch && _status == 'open') {
-      final noSeats = _players.length + _invites.length >= 4;
-      content = AppButton(
-          _busy
-              ? 'Joining…'
-              : (noSeats ? 'Every spot is taken' : 'Join Match'),
-          full: true, height: 52, icon: Icons.sports_tennis_rounded,
-          onPressed: (_busy || noSeats) ? null : _join);
-    } else if (_view == 1 && _inMatch && _full) {
+    // No Join and no Accept-invite footer any more (Phase 4) — a player who
+    // isn't in the match can only look at it.
+    if (_view == 1 && _inMatch && _full) {
       // Score/confirm only for a full 2v2.
       if ((_status == 'open' || _status == 'full' || _status == 'in_progress') && _ended) {
         content = AppButton(_busy ? 'Submitting…' : 'Submit Score',

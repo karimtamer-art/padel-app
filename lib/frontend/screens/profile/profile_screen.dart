@@ -22,7 +22,7 @@ import 'help_support_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final PlayerProfile profile;
-  final VoidCallback? onFindMatch;
+  final VoidCallback? onBrowseTournaments;
   final Future<void> Function()? onSignOut;
   final void Function(List<CartLine>)? onReorder;
   final String displayName;
@@ -37,7 +37,7 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     this.profile = PlayerProfile.fresh,
-    this.onFindMatch,
+    this.onBrowseTournaments,
     this.onSignOut,
     this.onReorder,
     this.displayName = '',
@@ -143,7 +143,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
               _hero(context),
               DivisionCard(
                   ranking: _profile.ranking,
-                  onPlayPlacement: widget.onFindMatch),
+                  onPlayPlacement: widget.onBrowseTournaments),
               _statsRow(),
               _ratingHistory(),
               _recent(context),
@@ -375,7 +375,9 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
                   textAlign: TextAlign.center,
                   style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
               const SizedBox(height: 14),
-              AppButton('Find a Match', icon: Icons.search_rounded, onPressed: widget.onFindMatch),
+              AppButton('Browse Tournaments',
+                  icon: Icons.emoji_events_rounded,
+                  onPressed: widget.onBrowseTournaments),
             ]),
           )
         else

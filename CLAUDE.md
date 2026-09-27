@@ -40,7 +40,32 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
 - **Store / commerce / P&L stay, Egypt-gated** by `regions.commerce_enabled`.
 - Rollout is phased: region scaffolding (**done**), the tournament-first surface
   + one season per region (**done**), tournament comms (**done**), then pickup
-  removal.
+  removal — itself three steps:
+  - **4a, client (done 2026-09-27).** The app offers no way to create, find,
+    join, join-by-code or accept an invite to a pickup match.
+    `create_match_sheet.dart`, `matchmaking_hero.dart` and
+    `join_match_sheet.dart` are deleted, along with their `MatchService`
+    methods. Kept on purpose so in-flight matches can **drain**: Home's "Your
+    Pickup Matches" list (only while the player has one), the live/next-match
+    heroes, and `MatchDetailScreen` minus Join/Accept/Share/invite code — i.e.
+    view, leave, host-cancel, submit, confirm, dispute. `_ResultHero` /
+    `_PlacementReveal` stay; they read completed matches, tournament ones
+    included. Profile's placement CTAs point at the Tournaments tab.
+  - **4b, server (next).** One delta: `app_settings.pickup_open = false`, and
+    `create_match`, `join_match`, `join_match_by_code`, `mm_accept`,
+    `mm_start_search` and accepting via `respond_match_invite` refuse with
+    "Pickup matches have ended — join a tournament instead." Old builds still
+    have the buttons; only the server can actually close the door. Submit /
+    confirm / dispute and `expire_stale_matches` (which also auto-settles 48h
+    pending_confirm) stay live. In-flight matches are left to finish, not
+    cancelled. No minimum-build bump.
+  - **4c, cleanup (weeks later, once no open/full/pending_confirm pickup match
+    remains).** Drop the pickup RPCs, `mm_*` helpers and their triggers; KEEP
+    the tables (history). `matchmaking_config.dart` is already dead. Update
+    `sql_raise_arity_test.dart` and the `join_match` ↔ `rating_prior()` parity
+    check, and rewrite the pickup sections of this file in the past tense.
+  - Community "match requests" (`create_match_request`) are undecided — not
+    part of 4a/4b.
 
 ## Hard rules (do not break these)
 

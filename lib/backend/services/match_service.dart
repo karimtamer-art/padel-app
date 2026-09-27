@@ -2,10 +2,15 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/ranking_scale.dart' show flattenRatings;
 
-/// All match I/O for the player app: browse, create, join, leave,
-/// detail, and the result flow (submit → confirm/dispute → ELO settle).
+/// Match I/O for the player app: detail, leave/cancel, and the result flow
+/// (submit → confirm/dispute → rating settle).
 ///
-/// Heavy lifting (capacity checks, ELO maths) happens in Postgres RPCs —
+/// Pickup is retired (Phase 4): create, join, join-by-code, matchmaking and
+/// invite answers are gone from the client. What stays lets a match booked
+/// before the switch finish, and serves the result hero and partner search
+/// (tournament registration uses [searchPlayers]).
+///
+/// Heavy lifting (capacity checks, rating maths) happens in Postgres RPCs —
 /// see `supabase/migration_player_app.sql` — so results can't be forged
 /// or double-applied from the client.
 class MatchService {
@@ -25,54 +30,6 @@ class MatchService {
       // avatar_url IS fine to embed — it's a public bucket URL, unlike phone.
       '  profiles(id, name, username, avatar_url, '
       '           player_ratings(rating, level, tier)))';
-
-  // ── Matchmaking discovery (band-gatekept) ──────────────────────────────────
-
-  /// Candidate matches inside the caller's rating band (+ city + time window),
-  /// via the SECURITY DEFINER `mm_candidates` RPC. There is NO public browse —
-  /// this is the only way to see a match you're not already in. Returns flat
-  /// rows: match_id, scheduled_at, match_type, court_name, venue_name, city,
-  /// creator_id/name/rating/level, players, center_rating, level_match_pct.
-  ///
-  /// Optional [from]/[to] restrict candidates to matches scheduled inside that
-  /// window (the player's chosen day + time range). When both are null the
-  /// server uses its default rolling window (next `mm_time_window_hours`).
-  static Future<List<Map<String, dynamic>>> fetchBandCandidates(
-      {int limit = 10, DateTime? from, DateTime? to}) async {
-    try {
-      final rows = await _db.rpc('mm_candidates', params: {
-        'p_limit': limit,
-        'p_from': from?.toUtc().toIso8601String(),
-        'p_to': to?.toUtc().toIso8601String(),
-      });
-      return List<Map<String, dynamic>>.from(rows as List);
-    } catch (e) {
-      debugPrint('[MatchService] fetchBandCandidates: $e');
-      return [];
-    }
-  }
-
-  /// The single best candidate for the caller, or null. Powers the "Match
-  /// found" card (Phase 2).
-  static Future<Map<String, dynamic>?> findCandidate() async {
-    final rows = await fetchBandCandidates(limit: 1);
-    return rows.isEmpty ? null : rows.first;
-  }
-
-  /// Count of matches in the caller's band — the home "N matches near you"
-  /// teaser. Band-filtered, not a public count.
-  static Future<int> countCandidates({DateTime? from, DateTime? to}) async {
-    try {
-      final n = await _db.rpc('mm_count_candidates', params: {
-        'p_from': from?.toUtc().toIso8601String(),
-        'p_to': to?.toUtc().toIso8601String(),
-      });
-      return (n as num?)?.toInt() ?? 0;
-    } catch (e) {
-      debugPrint('[MatchService] countCandidates: $e');
-      return 0;
-    }
-  }
 
   /// The caller's most recent completed-but-unacked match for the "MATCH
   /// COMPLETE" home hero, or null. Fields: match_id, won, my_team, score_team_a,
@@ -94,50 +51,6 @@ class MatchService {
       await _db.rpc('mm_ack_result', params: {'p_match_id': matchId});
     } catch (e) {
       debugPrint('[MatchService] ackResult: $e');
-    }
-  }
-
-  // ── Background search ticket ────────────────────────────────────────────────
-
-  /// Persist that the player is searching (a ticket) so matchmaking keeps
-  /// running server-side while the app is closed and pushes when a match
-  /// appears. Best-effort.
-  static Future<void> startSearch() async {
-    try {
-      await _db.rpc('mm_start_search');
-    } catch (e) {
-      debugPrint('[MatchService] startSearch: $e');
-    }
-  }
-
-  /// Stop searching (drop the ticket). Best-effort.
-  static Future<void> cancelSearch() async {
-    try {
-      await _db.rpc('mm_cancel_search');
-    } catch (e) {
-      debugPrint('[MatchService] cancelSearch: $e');
-    }
-  }
-
-  /// Whether the player has a fresh active search ticket — used on launch to
-  /// resume the radar hero after a background push. TTL mirrors
-  /// `mm_ticket_ttl_hours` (default 6h).
-  static Future<bool> isSearching() async {
-    final uid = _uid;
-    if (uid == null) return false;
-    try {
-      final row = await _db
-          .from('matchmaking_tickets')
-          .select('created_at')
-          .eq('player_id', uid)
-          .maybeSingle();
-      if (row == null) return false;
-      final ts = DateTime.tryParse(row['created_at'] as String? ?? '');
-      if (ts == null) return true;
-      return DateTime.now().difference(ts) < const Duration(hours: 6);
-    } catch (e) {
-      debugPrint('[MatchService] isSearching: $e');
-      return false;
     }
   }
 
@@ -196,18 +109,6 @@ class MatchService {
     }
   }
 
-  /// Invites waiting on ME. Dead ones (match started, filled or cancelled) are
-  /// filtered server-side.
-  static Future<List<Map<String, dynamic>>> myInvites() async {
-    try {
-      final rows = await _db.rpc('my_match_invites');
-      return List<Map<String, dynamic>>.from(rows as List);
-    } catch (e) {
-      debugPrint('[MatchService] myInvites: $e');
-      return [];
-    }
-  }
-
   /// A co-player's phone number, or null when you're not entitled to it.
   ///
   /// Postgres decides: you must share a match with them AND either have swapped
@@ -222,53 +123,6 @@ class MatchService {
       debugPrint('[MatchService] playerPhone: $e');
       return null;
     }
-  }
-
-  /// Accept or decline a partner invite. Returns an error message or null.
-  /// Accepting is what actually inserts the match_players row.
-  static Future<String?> respondToInvite(String inviteId,
-      {required bool accept}) async {
-    try {
-      final res = await _db.rpc('respond_match_invite',
-          params: {'p_invite': inviteId, 'p_accept': accept});
-      return res as String?;
-    } on PostgrestException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
-  /// Active courts for the create flow. Only public courts are offered to
-  /// players — organizer courts (is_public = false) stay inside the community.
-  /// Falls back to the unfiltered query on pre-migration DBs without is_public.
-  static Future<List<Map<String, dynamic>>> fetchCourts() async {
-    List rows;
-    // Select * (not a named column list) so a stale PostgREST schema cache
-    // can't 400 the whole query on a newly-added column (area/city/indoor);
-    // the tile reads those fields defensively. Mirrors the admin courts fetch.
-    try {
-      rows = await _db
-          .from('courts')
-          .select('*')
-          .eq('is_public', true)
-          // postgrest's .order() defaults to DESCENDING, so this listed the
-          // catalogue Z→A. Invisible at three courts, obvious at 185.
-          .order('venue_name', ascending: true);
-    } catch (_) {
-      try {
-        rows = await _db
-            .from('courts')
-            .select('*')
-            .order('venue_name', ascending: true);
-      } catch (e) {
-        debugPrint('[MatchService] fetchCourts: $e');
-        return [];
-      }
-    }
-    return List<Map<String, dynamic>>.from(rows)
-        .where((c) => c['in_maintenance'] != true)
-        .toList();
   }
 
   /// Player search for the partner picker (excludes self + admins).
@@ -302,8 +156,6 @@ class MatchService {
 
   // ── Create / join / leave ────────────────────────────────────────────────
 
-  /// Creates the match and adds the creator (+ optional partner) to team A.
-  /// Returns `(error, matchId)`.
   /// Fires whenever the roster of [matchId] changes — someone joins, leaves,
   /// or an invited partner accepts.
   ///
@@ -322,93 +174,6 @@ class MatchService {
         .stream(primaryKey: ['id'])
         .eq('match_id', matchId)
         .map((rows) => List<Map<String, dynamic>>.from(rows));
-  }
-
-  /// Joins the private match behind [code]. Returns `(error, matchId)` — the
-  /// id is non-null whenever you end up in the match, including when you were
-  /// already in it, so pasting the same code twice navigates instead of
-  /// failing.
-  ///
-  /// The server normalises the code (case, spacing, an optional `PDL-`) and
-  /// answers "no match with that code" for wrong, expired and already-started
-  /// alike, so this can't be used to probe which codes exist.
-  static Future<(String?, String?)> joinByCode(String code,
-      {String? partnerId}) async {
-    if (_uid == null) return ('Not signed in.', null);
-    try {
-      final rows = await _db.rpc('join_match_by_code',
-          params: {'p_code': code, 'p_partner_id': partnerId});
-      final list = List<Map<String, dynamic>>.from(rows as List);
-      if (list.isEmpty) return ('Could not join that match.', null);
-      final row = list.first;
-      return (row['error'] as String?, row['match_id'] as String?);
-    } on PostgrestException catch (e) {
-      return (e.message, null);
-    } catch (e) {
-      debugPrint('[MatchService] joinByCode: $e');
-      return ('Could not join that match. Please try again.', null);
-    }
-  }
-
-  static Future<(String?, String?)> createMatch({
-    required bool competitive,
-    required DateTime scheduledAt,
-    String? courtId,
-    String? partnerId,
-    required bool open,
-    double minRating = 0,
-  }) async {
-    final uid = _uid;
-    if (uid == null) return ('Not signed in.', null);
-    try {
-      // Atomic: matches + match_players are inserted together server-side, so a
-      // match can never be created without its creator/partner. (Direct client
-      // match_players inserts are blocked by RLS — hence the RPC.)
-      final id = await _db.rpc('create_match', params: {
-        'p_competitive': competitive,
-        'p_scheduled_at': scheduledAt.toUtc().toIso8601String(),
-        'p_court_id': courtId,
-        'p_partner_id': partnerId,
-        'p_min_rating': minRating,
-        'p_open': open,
-      });
-      return (null, id as String?);
-    } on PostgrestException catch (e) {
-      return (e.message, null);
-    } catch (e) {
-      return (e.toString(), null);
-    }
-  }
-
-  /// Accept a surfaced matchmaking candidate — race-safe join that re-checks the
-  /// band server-side. Returns an error message or null. Use this from the
-  /// matchmaking flow instead of [joinMatch] (which is the plain capacity join).
-  /// [partnerId] brings a chosen partner onto your side (both take one team);
-  /// null joins solo and pairs you with a random player.
-  static Future<String?> acceptCandidate(String matchId, {String? partnerId}) async {
-    try {
-      final res = await _db.rpc('mm_accept',
-          params: {'p_match_id': matchId, 'p_partner_id': partnerId});
-      return res as String?;
-    } on PostgrestException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
-  /// Race-safe join via RPC. Returns an error message or null.
-  /// [partnerId] brings a chosen partner onto your side; null joins solo.
-  static Future<String?> joinMatch(String matchId, {String? partnerId}) async {
-    try {
-      final res = await _db.rpc('join_match',
-          params: {'p_match_id': matchId, 'p_partner_id': partnerId});
-      return res as String?;
-    } on PostgrestException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
   }
 
   /// Host (or admin) cancels their own match. Returns an error or null.
