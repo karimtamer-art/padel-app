@@ -51,14 +51,22 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     view, leave, host-cancel, submit, confirm, dispute. `_ResultHero` /
     `_PlacementReveal` stay; they read completed matches, tournament ones
     included. Profile's placement CTAs point at the Tournaments tab.
-  - **4b, server (next).** One delta: `app_settings.pickup_open = false`, and
-    `create_match`, `join_match`, `join_match_by_code`, `mm_accept`,
-    `mm_start_search` and accepting via `respond_match_invite` refuse with
-    "Pickup matches have ended — join a tournament instead." Old builds still
-    have the buttons; only the server can actually close the door. Submit /
-    confirm / dispute and `expire_stale_matches` (which also auto-settles 48h
-    pending_confirm) stay live. In-flight matches are left to finish, not
-    cancelled. No minimum-build bump.
+  - **4b, server (written 2026-09-27, `changes/2026-09-27_pickup_closed.sql`).**
+    One switch, `app_settings.pickup_open` (seeded `'false'` with `do nothing`,
+    so a re-run never overrides a hand-set value; absent reads as OPEN). Three
+    BEFORE INSERT guards — `trg_guard_pickup_match` on `matches`,
+    `trg_guard_pickup_player` on `match_players`, `trg_guard_pickup_search` on
+    `matchmaking_tickets` — refuse with "Pickup matches have ended — join a
+    tournament instead." **Guards on the tables, not edits to the RPCs**: every
+    pickup path (`create_match`, `join_match`, `join_match_by_code`, all four
+    `mm_accept`s, `respond_match_invite` accept, `mm_start_search`) ends in one
+    of those inserts, the raise rolls back any invite written first, and no
+    function body changed. Rows carrying `tournament_match_id` (what
+    `finalize_tournament` writes) pass. Updates/deletes never hit the guards,
+    so leave / cancel / submit / confirm / dispute and `expire_stale_matches`
+    keep draining in-flight matches. Old builds still have the buttons — the
+    server is what actually closes the door. No minimum-build bump. Reopen by
+    setting the value to `'true'`.
   - **4c, cleanup (weeks later, once no open/full/pending_confirm pickup match
     remains).** Drop the pickup RPCs, `mm_*` helpers and their triggers; KEEP
     the tables (history). `matchmaking_config.dart` is already dead. Update
