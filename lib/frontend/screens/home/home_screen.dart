@@ -1563,10 +1563,11 @@ class _PlacementWelcome extends StatelessWidget {
     required this.onBrowseTournaments,
   });
 
+  // Shown only before the first rated match since 2026-10-05: the level
+  // appears after ONE match (RankingScale.revealAfter), so the old five-step
+  // placement progress bar is gone.
   @override
   Widget build(BuildContext context) {
-    final total = RankingScale.placementTotal;
-    final done = ranking.placement.clamp(0, total);
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 0),
       child: Container(
@@ -1597,53 +1598,16 @@ class _PlacementWelcome extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            Text('Play your first match',
+            Text('Play your first tournament',
                 style: AppText.stat(22, AppColors.heroInk)
                     .copyWith(height: 1.1, letterSpacing: -0.5)),
             const SizedBox(height: 6),
             Text(
-                'Play $total placement matches to unlock your division and rating. '
-                'Tournament results count.',
+                'Your level and division appear after your first tournament '
+                'match, and sharpen with every match after that.',
                 style: AppText.small(AppColors.heroFaint)
                     .copyWith(fontSize: 13, height: 1.5)),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-              decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.07),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Column(children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Placement progress',
-                        style: AppText.small(AppColors.heroFaint)
-                            .copyWith(fontSize: 11)),
-                    Text('$done / $total',
-                        style: AppText.bodyStrong(AppColors.heroInk)
-                            .copyWith(fontSize: 11)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(children: [
-                  for (int i = 0; i < total; i++) ...[
-                    if (i > 0) const SizedBox(width: 5),
-                    Expanded(
-                      child: Container(
-                        height: 6,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(3),
-                          color: i < done
-                              ? AppColors.primary
-                              : Colors.white.withValues(alpha: 0.14),
-                        ),
-                      ),
-                    ),
-                  ],
-                ]),
-              ]),
-            ),
-            const SizedBox(height: 14),
             AppButton('Browse Tournaments',
                 full: true,
                 height: 48,
@@ -2407,7 +2371,7 @@ class _PlacementReveal extends StatelessWidget {
             child: Column(children: [
               const Align(
                 alignment: Alignment.centerLeft,
-                child: AppTag('Placement Complete', color: AppColors.gold, solid: true),
+                child: AppTag('Your Level Is In', color: AppColors.gold, solid: true),
               ),
               const SizedBox(height: 18),
               // Pop-in division badge.

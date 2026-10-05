@@ -13,7 +13,7 @@ class DivisionCard extends StatelessWidget {
   final Ranking ranking;
   final EdgeInsetsGeometry margin;
 
-  /// Tapped on the unranked CTA ("Play Placement Match").
+  /// Tapped on the unranked CTA ("Find a Tournament").
   final VoidCallback? onPlayPlacement;
 
   const DivisionCard({
@@ -260,20 +260,12 @@ class DivisionCard extends StatelessWidget {
   }
 
   // ── UNRANKED / PLACEMENT ──────────────────────────────────────────────────
+  // Only a player with NO rated match lands here since 2026-10-05 — the level
+  // shows from the first match (RankingScale.revealAfter), so there is no
+  // placement progress left to draw. Early levels carry the PROVISIONAL pill.
   Widget _unranked(BuildContext context) {
-    final total = RankingScale.placementTotal;
-    final done = ranking.placement.clamp(0, total);
-    final remaining = total - done;
-    final pct = done / total;
-    // Placement finds a first useful level, it does not settle one — the
-    // reliability figure on the placed card is where confidence is stated.
-    final help = done == 0
-        ? 'Play $total placement matches to find your starting level.'
-        : remaining == 1
-            ? 'One more match to find your level and unlock your division.'
-            : remaining > 0
-                ? 'Play $remaining more ${remaining == 1 ? 'match' : 'matches'} to unlock your level.'
-                : 'All placement matches done — calculating your level.';
+    const help = 'Play your first tournament match and your level appears '
+        'straight away. It settles as you play more.';
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -288,7 +280,7 @@ class DivisionCard extends StatelessWidget {
             Row(children: [
               Icon(Icons.lock_outline_rounded, size: 15, color: _faint),
               const SizedBox(width: 6),
-              Text('Placement in progress', style: AppText.bodyStrong(_faint).copyWith(fontSize: 12.5)),
+              Text('No rated match yet', style: AppText.bodyStrong(_faint).copyWith(fontSize: 12.5)),
             ]),
           ]),
         ),
@@ -310,55 +302,14 @@ class DivisionCard extends StatelessWidget {
         ]),
       ]),
       _hr(),
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('PLACEMENT MATCHES', style: _kick),
-        RichText(
-          text: TextSpan(
-              style: AppText.small(_faint).copyWith(fontSize: 12, fontWeight: FontWeight.w700),
-              children: [
-                TextSpan(text: '$done', style: const TextStyle(color: _gold, fontWeight: FontWeight.w800)),
-                TextSpan(text: ' / $total'),
-              ]),
-        ),
-      ]),
-      const SizedBox(height: 11),
-      Row(children: [
-        for (int i = 0; i < total; i++) ...[
-          if (i > 0) const SizedBox(width: 7),
-          Expanded(child: _placementDot(i, done)),
-        ],
-      ]),
-      const SizedBox(height: 11),
-      _bar(pct),
-      const SizedBox(height: 11),
       Text(help, style: AppText.small(_faint).copyWith(fontSize: 12, height: 1.45, fontWeight: FontWeight.w500)),
       const SizedBox(height: 14),
       _goldButton(
-        label: remaining > 0 ? 'Play Placement Match' : 'See Your Division',
-        icon: Icons.play_arrow_rounded,
+        label: 'Find a Tournament',
+        icon: Icons.emoji_events_rounded,
         onTap: onPlayPlacement,
       ),
     ]);
-  }
-
-  Widget _placementDot(int i, int done) {
-    final filled = i < done;
-    return Container(
-      height: 34,
-      alignment: Alignment.center,
-      decoration: filled
-          ? BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              gradient: _goldGrad,
-              boxShadow: [BoxShadow(color: _gold.withValues(alpha: 0.4), blurRadius: 12, offset: const Offset(0, 4))])
-          : BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              color: _cream.withValues(alpha: 0.05),
-              border: Border.all(color: _cream.withValues(alpha: 0.13))),
-      child: filled
-          ? const Icon(Icons.check_rounded, size: 15, color: _ink)
-          : Text('${i + 1}', style: AppText.bodyStrong(_faint).copyWith(fontSize: 12, fontWeight: FontWeight.w800)),
-    );
   }
 
   Widget _goldButton({required String label, required IconData icon, VoidCallback? onTap}) =>

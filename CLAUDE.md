@@ -128,9 +128,21 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
        flatten it at the boundary with `flattenRatings` (and `_flattenMatch`
        for the three-deep `matchCols` embed) so every screen keeps reading
        `row['rating']` flat. Don't push the nesting into the UI.
-   - **Placement ≠ confidence.** `placement_played >= 5` reveals the rating;
-     `is_provisional` (`sigma > 0.58 or competitive_matches < 20`) is the
-     separate confidence flag. Don't conflate them on a new surface.
+   - **Placement ≠ confidence ≠ reveal.** Since 2026-10-05 the level is SHOWN
+     after the first rated match — `placement_played >= RankingScale.revealAfter`
+     (= 1), not `>= 5`. The engine's 5-match placement stage (staged K, W floor
+     1.00, `placement_played` counting to 5) is **unchanged**: it is now an
+     invisible fast-calibration phase. A Ranking Lab run that day showed
+     removing the stage from the engine instead makes ratings worse at every
+     horizon (MAE 0.73→0.78 at 10 matches, 0.46→0.54 at 50), so only the
+     reveal moved. `is_provisional` (`sigma > 0.58 or competitive_matches < 20`)
+     is the separate confidence flag, and the PROVISIONAL pill is what marks a
+     young level. Pure client change — no SQL; settlement already wrote
+     `player_ratings.rating` from match 1. Still on the old `< 5` meaning, on
+     purpose: the admin Players screen ("Unranked · In placement", Skip
+     placement), broadcast `ranked`/`unranked` audiences, the pickup
+     matchmaker, and the lab's `displayMinMatches` / `RatingEngineV3F5.isRevealed`
+     (engine spec, pinned by the parity test).
    - **There is no second engine.** Rating engine v2, its SQL rollback path
      and its Dart reference were all removed on 2026-08-14
      (`changes/2026-08-14_drop_rating_engine_v2.sql`). `_settle_rating` no

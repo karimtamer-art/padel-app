@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
@@ -52,8 +52,8 @@ class HelpSupportScreen extends StatelessWidget {
   static const _faqs = [
     ('How is my level calculated?',
         'Your level is a single number from 0 to 7. Every confirmed competitive match moves it based on who won, how strong the other pair was and how close the games were — beating stronger opponents moves you more than beating weaker ones. In doubles, each pair is judged on the average of its two levels. Casual matches never affect it.'),
-    ('What are placement matches?',
-        'You start unranked. Play 5 competitive matches and the app gives you a level. During placement your level moves in bigger steps so it can find your real standard quickly, then it settles down.'),
+    ('When do I get a level?',
+        'After your first rated tournament match. For your first five matches your level moves in bigger steps so it can find your real standard quickly, then it settles down — that is why a new level is marked provisional.'),
     ('Why does my level say "provisional"?',
         'Because the app isn\'t confident about it yet — that\'s the reliability figure on your profile. It rises every time you play a competitive match and falls if you go quiet for a while. Once you\'ve played enough, the provisional label disappears.'),
     ('How do divisions and tiers work?',

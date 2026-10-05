@@ -42,6 +42,16 @@ class RankingScale {
   /// placement count for every player-facing surface — sourced from the engine
   /// so a screen can never disagree with settlement about it.
   static const int placementTotal = RatingEngineV3F5.placementMatches;
+
+  /// Rated matches before a level is SHOWN (2026-10-05). Was [placementTotal];
+  /// now a player sees their level after their first tournament match. This
+  /// is display only — the engine still runs its 5-match placement stage
+  /// (bigger K) underneath, and `placement_played` still counts to 5. Ranking
+  /// Lab run the same day: dropping placement from the engine instead made
+  /// ratings worse at every horizon (MAE 0.46 → 0.54 at 50 matches), so the
+  /// stage stays and only the reveal moved. Early levels are flagged by the
+  /// existing PROVISIONAL pill, not by hiding them.
+  static const int revealAfter = 1;
   static const double maxLevel = 7.0;
 
   static double _clamp(double v, double a, double b) =>

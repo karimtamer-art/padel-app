@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:padel_clay/frontend/theme/app_spacing.dart';
@@ -90,7 +90,7 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 290),
           child: Text(
-            'Complete your first placement matches and start your ranking journey.',
+            'Play your first tournament match and your level appears straight away.',
             textAlign: TextAlign.center,
             style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 15, height: 1.55),
           ),
@@ -118,10 +118,10 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Placement: 5 matches',
+                Text('Your level: after 1 match',
                     style: AppText.bodyStrong().copyWith(fontSize: 14, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 1),
-                Text("We'll seed your ELO & division after these.",
+                Text('It sharpens with every match you play.',
                     style: AppText.small().copyWith(fontSize: 12)),
               ]),
             ),

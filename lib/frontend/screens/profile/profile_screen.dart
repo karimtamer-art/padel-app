@@ -297,7 +297,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
                   Text('No rating yet', style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
                   const SizedBox(height: 2),
                   Text(
-                      'Your rating is revealed after 5 placement matches — the chart fills in from there.',
+                      'Your rating appears after your first tournament match — the chart fills in from there.',
                       style: AppText.small().copyWith(fontSize: 12, height: 1.45)),
                 ]),
               ),
@@ -371,7 +371,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutoRefresh<ProfileS
               const SizedBox(height: 12),
               Text('No matches yet', style: AppText.bodyStrong().copyWith(fontSize: 14)),
               const SizedBox(height: 4),
-              Text('Play your placement matches to start building your match history.',
+              Text('Play your first tournament to start building your match history.',
                   textAlign: TextAlign.center,
                   style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
               const SizedBox(height: 14),

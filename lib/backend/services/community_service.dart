@@ -111,14 +111,14 @@ class CommunityService {
     }
   }
 
-  /// Tier label for a member, or 'Unranked' until placement is complete.
+  /// Tier label for a member, or 'Unranked' until their level is shown.
   ///
-  /// A player in placement HAS a stored tier — it is derived from a rating
-  /// that is not public yet — so showing it would leak the hidden estimate and
-  /// contradict every other surface, which says Unranked. The placement count
-  /// is the authority, exactly as it is on the profile and in the lobby.
+  /// A player with no rated match yet still HAS a stored tier (derived from
+  /// the prior), so showing it would contradict every other surface, which
+  /// says Unranked. [RankingScale.revealAfter] is the authority, exactly as it
+  /// is on the profile.
   static String? _tierOf(String? tier, double? level, int placementPlayed) {
-    if (placementPlayed < RankingScale.placementTotal) return 'Unranked';
+    if (placementPlayed < RankingScale.revealAfter) return 'Unranked';
     final t = tier?.trim();
     if (t != null && t.isNotEmpty) {
       return t[0].toUpperCase() + t.substring(1).toLowerCase();

@@ -407,7 +407,7 @@ class ProfileService {
 
       final compMatches =
           (profileRow['competitive_matches'] as num?)?.toInt() ?? 0;
-      final ranking = placementPlayed < RankingScale.placementTotal
+      final ranking = placementPlayed < RankingScale.revealAfter
           ? Ranking.placement(placementPlayed)
           : Ranking.placed(
               level: level,
