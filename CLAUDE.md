@@ -67,8 +67,16 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     keep draining in-flight matches. Old builds still have the buttons — the
     server is what actually closes the door. No minimum-build bump. Reopen by
     setting the value to `'true'`.
+    **Applied to live 2026-10-05** — verified `pickup_open = 'false'`, all
+    three guards present, and zero in-flight pickup matches the same day.
+    (A first run that day silently didn't apply — `_pickup_open()` was missing
+    — so verify with the three checks, don't trust "Success".)
   - **4c, cleanup (weeks later, once no open/full/pending_confirm pickup match
-    remains).** Drop the pickup RPCs, `mm_*` helpers and their triggers; KEEP
+    remains).** The drain condition was already met on 2026-10-05; what 4c now
+    waits on is **old builds**. They still show the pickup buttons, which today
+    get 4b's friendly refusal — drop the RPCs and the same tap gets a raw
+    "function not found". So wait until 1.5.0+14 is live on both stores and
+    has spread (or set `update_min_build_*` to 14 first). Drop the pickup RPCs, `mm_*` helpers and their triggers; KEEP
     the tables (history). `matchmaking_config.dart` is already dead. Update
     `sql_raise_arity_test.dart` and the `join_match` ↔ `rating_prior()` parity
     check, and rewrite the pickup sections of this file in the past tense.
