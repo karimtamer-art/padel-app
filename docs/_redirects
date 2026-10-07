@@ -1,0 +1,3 @@
+# Cloudflare Pages redirects. 302 (not 301) so a changed target takes effect
+# immediately instead of being cached in browsers.
+/whatsapp https://chat.whatsapp.com/G5Qhis94M9N611c8ztJbYP 302
