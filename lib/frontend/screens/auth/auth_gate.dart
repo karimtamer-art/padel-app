@@ -128,6 +128,15 @@ class _AuthGateState extends State<AuthGate> {
         profile = await widget.profileService.fetch(user.id);
       }
       if (!mounted) return;
+      // The name Apple just gave us may not have reached the row yet (the
+      // write runs after the session exists). Use it rather than ask again;
+      // onboarding's save then writes it.
+      final appleName = AuthService.appleProvidedName;
+      if (profile != null &&
+          !OnboardingProfile.isUsableName(profile.name) &&
+          OnboardingProfile.isUsableName(appleName)) {
+        profile = profile.copyWith(name: appleName!.trim());
+      }
       _existing = profile ?? const OnboardingProfile();
       _isStaff = profile?.isStaff ?? false;
       // Resolve the region BEFORE anything paints. It decides the currency, the
@@ -236,6 +245,7 @@ class _AuthGateState extends State<AuthGate> {
           displayName: _displayName,
           profileService: widget.profileService,
           initial: _existing,
+          askName: !AuthService.signedInWithApple,
           onCompleted: _resolve,
           onSignOut: _signOut,
         ),

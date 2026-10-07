@@ -190,18 +190,24 @@ class AuthService {
       throw const AuthException('Apple did not return an identity token.');
     }
 
+    // Apple only returns the user's name on the FIRST authorization. Stashed
+    // BEFORE the session exists: signInWithIdToken fires the auth event that
+    // sends AuthGate to read the profile, and that read raced the write below —
+    // so a name Apple had just handed us could still be asked for again, which
+    // App Review rejects (guideline 4.0, Sign in with Apple design).
+    final name = [cred.givenName, cred.familyName]
+        .where((p) => (p ?? '').trim().isNotEmpty)
+        .join(' ')
+        .trim();
+    appleProvidedName = name.isEmpty ? null : name;
+
     await _db.auth.signInWithIdToken(
       provider: OAuthProvider.apple,
       idToken: idToken,
       nonce: rawNonce,
     );
 
-    // Apple only returns the user's name on the FIRST authorization. If we got
-    // one and the profile has no name yet, persist it (best-effort).
-    final name = [cred.givenName, cred.familyName]
-        .where((p) => (p ?? '').trim().isNotEmpty)
-        .join(' ')
-        .trim();
+    // If the profile has no name yet, persist it (best-effort).
     if (name.isNotEmpty) {
       final uid = _db.auth.currentUser?.id;
       if (uid != null) {
@@ -215,6 +221,16 @@ class AuthService {
       }
     }
   }
+
+  /// The name from the last Apple credential, for this process only. AuthGate
+  /// reads it when the profile row doesn't carry the name yet — see
+  /// [signInWithApple] for the race it closes.
+  static String? appleProvidedName;
+
+  /// True when the current user signs in with Apple. Apple forbids asking such
+  /// a user for a name or email after sign-in, so onboarding skips its name
+  /// step for them.
+  static bool get signedInWithApple => currentProviders.contains('apple');
 
   /// Cryptographically-random nonce for the Apple sign-in exchange.
   static String _generateNonce([int length = 32]) {

@@ -38,6 +38,12 @@ class OnboardingFlow extends StatefulWidget {
   final VoidCallback onCompleted;
   final Future<void> Function()? onSignOut;
 
+  /// False for a Sign in with Apple account. App Review rejects asking such a
+  /// player for a name after sign-in — Apple already offered it, and the player
+  /// may have declined to share it (guideline 4.0). Without the step, a missing
+  /// name falls back to the username they pick; Edit Profile can change it.
+  final bool askName;
+
   const OnboardingFlow({
     super.key,
     required this.userId,
@@ -46,6 +52,7 @@ class OnboardingFlow extends StatefulWidget {
     this.displayName = '',
     this.initial = const OnboardingProfile(),
     this.onSignOut,
+    this.askName = true,
   });
 
   @override
@@ -78,11 +85,11 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   /// Extras (photo + bio) is the same judgement: offered while setting an
   /// account up, skipped for someone already complete, who has a photo already
   /// and didn't come here for that.
-  late final List<_Step> _steps = _buildSteps(widget.initial);
+  late final List<_Step> _steps = _buildSteps(widget.initial, widget.askName);
 
-  static List<_Step> _buildSteps(OnboardingProfile p) {
+  static List<_Step> _buildSteps(OnboardingProfile p, bool askName) {
     final steps = <_Step>[
-      if (!OnboardingProfile.isUsableName(p.name)) _Step.name,
+      if (askName && !OnboardingProfile.isUsableName(p.name)) _Step.name,
       // isGeneratedUsername is still consulted, and is no longer the only
       // signal: it catches a `player<hex>` handle on a database that predates
       // the username_chosen column, where handleSettled has to assume settled.
@@ -224,6 +231,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   }
 
   Future<void> _submit() async {
+    // No name step (Apple) and no name: show the handle they just chose rather
+    // than leave name NULL, which renders as "Player" on brackets and chats.
+    final handle = (_draft.username ?? '').trim().toLowerCase();
+    if (!_steps.contains(_Step.name) &&
+        !OnboardingProfile.isUsableName(_draft.name) &&
+        _usernameRe.hasMatch(handle)) {
+      _draft = _draft.copyWith(name: handle);
+    }
     // isValid mirrors the server's onboarding_completed, which doesn't include
     // name/username — so the steps we added need checking separately or they
     // could be walked past.
