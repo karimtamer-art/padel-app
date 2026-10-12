@@ -7,6 +7,7 @@ import '../chat/dm_chat_screen.dart';
 import '../detail/match_detail_screen.dart';
 import '../tournaments/tournament_detail_screen.dart';
 import 'my_orders_screen.dart';
+import '../assessments/assessment_centers_screen.dart';
 import 'settings_common.dart';
 
 class _Notif {
@@ -32,6 +33,7 @@ class _Notif {
         'match' => (Icons.sports_tennis_outlined, AppColors.success),
         'tournament' => (Icons.emoji_events_outlined, AppColors.warn),
         'broadcast' => (Icons.campaign_outlined, AppColors.primary),
+        'assessment' => (Icons.fact_check_outlined, AppColors.warn),
         _ => (Icons.notifications_none_rounded, AppColors.primary),
       };
 }
@@ -215,6 +217,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return n.data?['tournament_id'] is String;
       case 'order':
       case 'admin_order':
+      case 'assessment':
         return true;
       default:
         return false;
@@ -253,6 +256,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case 'admin_order':
         Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const MyOrdersScreen()));
+        return;
+      case 'assessment':
+        Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const AssessmentCentersScreen()));
         return;
     }
   }

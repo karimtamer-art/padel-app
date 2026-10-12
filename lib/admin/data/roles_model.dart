@@ -10,7 +10,7 @@
 //
 // Section ids here MUST match the ids the console switches on in
 // admin_console.dart (`dashboard, reports, players, matches, tournaments,
-// courts, store, used_rackets, promotions, sponsors, payments, requests,
+// courts, assessments, store, used_rackets, promotions, sponsors, payments, requests,
 // broadcasts`) plus `team`.
 // ============================================================================
 import 'package:flutter/material.dart';
@@ -51,6 +51,7 @@ const List<Section> kSections = [
   Section('tournaments', 'Tournaments', Icons.emoji_events_outlined, 'Operations', 'Brackets & entries'),
   Section('formats', 'Format Builder', Icons.auto_awesome_rounded, 'Operations', 'Design tournament formats'),
   Section('courts', 'Courts', Icons.place_outlined, 'Operations', 'Partner clubs'),
+  Section('assessments', 'Assessments', Icons.fact_check_outlined, 'Operations', 'Centers & bookable slots'),
   Section('store', 'Store & Orders', Icons.shopping_bag_outlined, 'Commerce', 'Catalogue & orders'),
   Section('used_rackets', 'Used rackets', Icons.sports_tennis_rounded, 'Commerce', 'Bought & sold second-hand'),
   Section('promotions', 'Promotions', Icons.local_offer_outlined, 'Commerce', 'Banners & sales'),
@@ -88,7 +89,7 @@ class RoleDef {
 
 const List<String> _allIds = [
   'dashboard', 'reports', 'players', 'matches', 'tournaments', 'formats', 'courts',
-  'store', 'used_rackets', 'promotions', 'sponsors', 'payments', 'requests',
+  'assessments', 'store', 'used_rackets', 'promotions', 'sponsors', 'payments', 'requests',
   'broadcasts', 'team',
 ];
 

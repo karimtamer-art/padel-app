@@ -25,6 +25,7 @@ import 'package:padel_clay/backend/services/dm_service.dart';
 import 'package:padel_clay/backend/services/ticket_service.dart';
 import 'package:padel_clay/backend/services/season_service.dart';
 import 'package:padel_clay/backend/services/sponsor_service.dart';
+import 'package:padel_clay/backend/services/assessment_service.dart';
 import 'package:padel_clay/frontend/feature_flags.dart';
 import '../leaderboard/season_leaderboard_screen.dart';
 import '../detail/match_detail_screen.dart';
@@ -33,6 +34,7 @@ import '../profile/notifications_screen.dart';
 import '../profile/recent_form_screen.dart';
 import '../community/community_hub_screen.dart';
 import '../sponsors/sponsors_screen.dart';
+import '../assessments/assessment_centers_screen.dart';
 import '../chat/messages_inbox_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -77,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   List<FormMatch> _form = const [];
   // Active partners → the "Our Partners" logo strip. Empty hides the section.
   List<Sponsor> _sponsors = const [];
+  AssessmentOverview _assessment = AssessmentOverview.empty;
   List<MemberLite> _communityMembers = [];
   int _communityEventsWeek = 0;
   int _unread = 0;
@@ -178,6 +181,7 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
       _fetchSeason(),
       _fetchForm(),
       _fetchSponsors(),
+      _fetchAssessment(),
     ]);
     if (mounted) setState(() => _loading = false);
     // After the matches land, so it watches whichever one the hero now shows.
@@ -192,6 +196,11 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   Future<void> _fetchSponsors() async {
     final s = await SponsorService.fetchActive(limit: 8);
     if (mounted) _sponsors = s;
+  }
+
+  Future<void> _fetchAssessment() async {
+    final a = await AssessmentService.overview();
+    if (mounted) _assessment = a;
   }
 
   Future<void> _fetchForm() async {
@@ -528,6 +537,20 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
                     openTournaments: _tournaments.length,
                     onBrowseTournaments: widget.onSeeTournaments ?? () {},
                   ),
+                // Hidden until the console has a live center (or I hold a
+                // booking) — also the state on a DB without the delta.
+                if (_assessment.centers.isNotEmpty ||
+                    _assessment.myBooking != null) ...[
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: AppSpacing.screenH,
+                    child: _AssessmentRow(
+                      overview: _assessment,
+                      onTap: () => refreshOnReturn(
+                          const AssessmentCentersScreen()),
+                    ),
+                  ),
+                ],
                 // Tournaments LEAD the page now (2026-09-26) — they were below
                 // Recent Form, the season card, the community block and pickup.
                 const SizedBox(height: 24),
@@ -1621,6 +1644,72 @@ class _PlacementWelcome extends StatelessWidget {
 }
 
 // ── Book-next hero (placed player, nothing booked) ───────────────────────────
+
+/// Entry to the in-person level assessment centers — a quiet row under the
+/// hero; once booked it shows the booking instead of the pitch.
+class _AssessmentRow extends StatelessWidget {
+  final AssessmentOverview overview;
+  final VoidCallback onTap;
+  const _AssessmentRow({required this.overview, required this.onTap});
+
+  static const _wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _mo = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final mine = overview.myBooking;
+    final String title, sub;
+    if (mine != null) {
+      final d = mine.startsAt;
+      final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+      final mm = d.minute.toString().padLeft(2, '0');
+      title = 'Your level assessment';
+      sub = '${overview.centerOf(mine.centerId)?.name ?? 'Booked'} · '
+          '${_wd[d.weekday - 1]} ${d.day} ${_mo[d.month - 1]}, '
+          '$h:$mm ${d.hour < 12 ? 'AM' : 'PM'}';
+    } else {
+      final n = overview.openSlots.length;
+      title = 'Get your level assessed';
+      sub = n == 0
+          ? 'See our assessment centers'
+          : '$n open slot${n == 1 ? '' : 's'} at our assessment centers';
+    }
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.field,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: mine != null
+                  ? AppColors.success.withValues(alpha: 0.55)
+                  : AppColors.line),
+        ),
+        child: Row(children: [
+          Icon(mine != null ? Icons.event_available_outlined : Icons.fact_check_outlined,
+              size: 18, color: mine != null ? AppColors.success : AppColors.primary),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title,
+                  style: AppText.bodyStrong(AppColors.ink).copyWith(fontSize: 13.5)),
+              const SizedBox(height: 1),
+              Text(sub,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 11.5)),
+            ]),
+          ),
+          const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkFaint),
+        ]),
+      ),
+    );
+  }
+}
 
 // Default hero for a placed player with nothing booked.
 ///

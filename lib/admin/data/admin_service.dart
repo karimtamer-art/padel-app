@@ -1126,6 +1126,144 @@ class AdminService {
     return _db.storage.from(_sponsorBucket).getPublicUrl(path);
   }
 
+  // ── Assessment centers + slots ────────────────────────────────
+  //
+  // Centers and slots are plain table writes guarded by RLS
+  // (`_can_edit('assessments')`). BOOKING is not: players go through
+  // book_assessment_slot, the one conditional update that closes a slot. The
+  // console only ever releases a booking through its RPC, so the player hears
+  // about it.
+
+  /// Every center, live and hidden. Empty on a DB without the
+  /// 2026-10-12_assessment_centers delta, so the section shows its empty state.
+  static Future<List<Map<String, dynamic>>> fetchAssessmentCenters() async {
+    try {
+      final res = await _db
+          .from('assessment_centers')
+          .select('*')
+          .order('sort_order', ascending: true)
+          .order('name', ascending: true);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] fetchAssessmentCenters: $e');
+      return [];
+    }
+  }
+
+  /// Slots from [since] on (default: start of today), ascending, with the
+  /// booker's name + phone embedded as `profiles`.
+  static Future<List<Map<String, dynamic>>> fetchAssessmentSlots(
+      {DateTime? since}) async {
+    final now = DateTime.now();
+    final from = since ?? DateTime(now.year, now.month, now.day);
+    try {
+      final res = await _db
+          .from('assessment_slots')
+          .select('*, profiles!assessment_slots_booked_by_fkey(name, phone)')
+          .gte('starts_at', from.toUtc().toIso8601String())
+          .order('starts_at', ascending: true);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('[AdminService] fetchAssessmentSlots: $e');
+      return [];
+    }
+  }
+
+  /// Insert or update one center. Returns an error string, or null on success.
+  static Future<String?> saveAssessmentCenter({
+    String? id,
+    required String name,
+    String? area,
+    String? address,
+    String? mapUrl,
+    String? phone,
+    String? description,
+    num? priceEgp,
+    bool isActive = true,
+    int sortOrder = 0,
+  }) async {
+    String? blank(String? s) =>
+        (s == null || s.trim().isEmpty) ? null : s.trim();
+    final row = {
+      'name': name.trim(),
+      'area': blank(area),
+      'address': blank(address),
+      'map_url': blank(mapUrl),
+      'phone': blank(phone),
+      'description': blank(description),
+      'price_egp': priceEgp,
+      'is_active': isActive,
+      'sort_order': sortOrder,
+    };
+    try {
+      if (id == null) {
+        await _db.from('assessment_centers').insert(row);
+      } else {
+        await _db.from('assessment_centers').update(row).eq('id', id);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[AdminService] saveAssessmentCenter: $e');
+      return "Couldn't save that center.";
+    }
+  }
+
+  static Future<void> setAssessmentCenterActive(String id, bool active) async {
+    await _db
+        .from('assessment_centers')
+        .update({'is_active': active}).eq('id', id);
+  }
+
+  /// Deletes the center AND all its slots (FK cascade).
+  static Future<void> deleteAssessmentCenter(String id) async {
+    await _db.from('assessment_centers').delete().eq('id', id);
+  }
+
+  /// Publishes one slot per entry in [starts]. A time that already exists at
+  /// this center is skipped (unique index), not duplicated. Returns how many
+  /// were new, or throws.
+  static Future<int> addAssessmentSlots(
+      String centerId, List<DateTime> starts, int durationMin) async {
+    if (starts.isEmpty) return 0;
+    final rows = [
+      for (final s in starts)
+        {
+          'center_id': centerId,
+          'starts_at': s.toUtc().toIso8601String(),
+          'duration_min': durationMin,
+        }
+    ];
+    final res = await _db
+        .from('assessment_slots')
+        .upsert(rows, onConflict: 'center_id,starts_at', ignoreDuplicates: true)
+        .select('id');
+    return (res as List).length;
+  }
+
+  /// Deletes an OPEN slot. A booked one must be released first, so a player is
+  /// never silently dropped — the `is` filter makes that true even if the
+  /// console's list was stale.
+  static Future<bool> deleteOpenAssessmentSlot(String id) async {
+    final res = await _db
+        .from('assessment_slots')
+        .delete()
+        .eq('id', id)
+        .isFilter('booked_by', null)
+        .select('id');
+    return (res as List).isNotEmpty;
+  }
+
+  /// Cancels a player's booking and reopens the slot; the player is notified.
+  static Future<String?> releaseAssessmentSlot(String id) async {
+    try {
+      await _db.rpc('admin_release_assessment_slot', params: {'p_slot': id});
+      return null;
+    } on PostgrestException catch (e) {
+      debugPrint('[AdminService] releaseAssessmentSlot: ${e.message}');
+      return e.message;
+    }
+  }
+
   // ── Orders ────────────────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> fetchOrders(
@@ -1367,6 +1505,7 @@ class AdminService {
         'admin_report' => 'reports',
         'admin_tournament' => 'tournaments',
         'admin_community' => 'community',
+        'admin_assessment' => 'assessments',
         _ => null,
       };
 
@@ -1376,6 +1515,7 @@ class AdminService {
     'reports': ['admin_report'],
     'tournaments': ['admin_tournament'],
     'community': ['admin_community'],
+    'assessments': ['admin_assessment'],
   };
 
   /// Unread admin-alert counts grouped by nav section ('payments' / 'requests'
