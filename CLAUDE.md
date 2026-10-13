@@ -743,6 +743,29 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   Never derive one from the other. Tier ids (`title/gold/silver/partner`) are
   mirrored in `SponsorTier` and `sponsors_tier_chk` — change both. See
   `supabase/changes/2026-08-06_sponsors.sql`.
+- **Assessment centers** (added 2026-10-12,
+  `changes/2026-10-12_assessment_centers.sql`, **run on live 2026-10-12**):
+  in-person level-assessment venues (`assessment_centers`) and bookable times
+  (`assessment_slots`, `booked_by` NULL = open). Console section id
+  **`assessments`** — a real RBAC id, so it lives in `kSections` + `_allIds`
+  AND in SQL `_role_default`; super admin by default, grantable.
+  - **A slot is ONE seat and the server closes it.** `book_assessment_slot` is
+    one conditional UPDATE (`where booked_by is null and starts_at > now()`), so
+    two simultaneous taps can't both win. Never add a client-side "is it free?"
+    check before it, and never give players a write grant — the two RPCs
+    (`book_assessment_slot`, `cancel_assessment_booking`) are their only path.
+  - The slots SELECT policy shows a player only **open future slots + their
+    own**; a taken slot disappears from everyone else's list, which is both the
+    "closes automatically" UX and why nobody can see who booked what.
+  - **One upcoming booking per player** (advisory-locked per user). Cancelling
+    before the start reopens the slot. Staff release a booking only through
+    `admin_release_assessment_slot`, which notifies the player (`type =
+    'assessment'`); bookings/cancels alert admins as `admin_assessment`.
+  - **No money, no rating.** `price_egp` is a label paid at the center (rule 8)
+    and never reaches `_finance_core`. An assessment's outcome still goes
+    through the existing admin rating tools (rule 2).
+  - Player entry is a row under the Home hero, hidden until a center is live
+    (`AssessmentService.overview()` returns empty on a DB without the delta).
 - **The domain, the email stack, and the legal site** (set up 2026-08-08).
   `padel-rivals.com` is registered at GoDaddy but its **DNS lives at
   Cloudflare** — nameservers were moved, so GoDaddy's DNS panel is now a
