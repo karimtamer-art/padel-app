@@ -3,84 +3,228 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Padel Rivals</title>
-<meta name="description" content="Padel Rivals — matches, rankings and tournaments for padel in Egypt. Privacy policy, terms of agreement, account deletion and support.">
-<meta name="color-scheme" content="light dark">
-<meta property="og:title" content="Padel Rivals">
-<meta property="og:description" content="Matches, rankings and tournaments for padel in Egypt.">
+<title>Padel Rivals — Register for a tournament</title>
+<meta name="description" content="Register your pair for the next Padel Rivals tournament in Egypt. No app needed — pay by InstaPay or at the venue, and we confirm you on WhatsApp.">
+<meta property="og:title" content="Padel Rivals — Tournament registration">
+<meta property="og:description" content="Register your pair in two minutes. No app needed.">
 <meta property="og:type" content="website">
-<link rel="stylesheet" href="style.css">
+<meta property="og:image" content="https://padel-rivals.com/logo.jpg">
+<meta name="theme-color" content="#F3EADB">
+<link rel="icon" href="logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="home.css">
 </head>
 <body>
 
-<header class="masthead">
-  <div class="inner">
-    <a class="brand" href="index.html">
-      <span class="mark">P</span>
-      <span class="name">Padel Rivals</span>
-    </a>
-    <nav>
-      <a href="privacy.html">Privacy</a>
-      <a href="terms.html">Terms</a>
-      <a href="delete-account.html">Delete account</a>
-    </nav>
-  </div>
+<header class="top wrap">
+  <a class="brand" href="/">
+    <img src="logo.jpg" alt="" width="44" height="44">
+    <span>PADEL RIVALS</span>
+  </a>
+  <nav>
+    <a href="#how">How it works</a>
+    <a href="#faq">Questions</a>
+    <a class="js-whatsapp" href="/whatsapp">WhatsApp</a>
+    <a class="pill" href="#register">Register now</a>
+  </nav>
 </header>
 
-<main class="page">
+<main>
 
-  <section class="hero">
-    <h1>Padel Rivals</h1>
-    <p>Find a match at your level, settle the score, and climb the season
-       leaderboard. Padel, in Egypt, properly ranked.</p>
-  </section>
+<section class="hero wrap" id="register">
+  <div class="pitch">
+    <span class="kicker">Registration open</span>
+    <h1>Join the next <em>Padel Rivals</em> tournament.</h1>
+    <p class="lead">Register your pair right here in two minutes. No app needed — we confirm your spot personally on WhatsApp.</p>
 
-  <div class="cards">
-
-    <a class="card" href="privacy.html">
-      <h2>Privacy Policy</h2>
-      <p>What we collect, why, who can see it, how long we keep it, and the
-         rights you have under Egyptian Personal Data Protection Law
-         No. 151 of 2020.</p>
-      <span class="go">Read the policy &rarr;</span>
-    </a>
-
-    <a class="card" href="terms.html">
-      <h2>Terms of Agreement</h2>
-      <p>The rules of the service — accounts, ratings and leaderboards, the
-         marketplace, tournaments and paid entries, conduct, and the law that
-         governs all of it.</p>
-      <span class="go">Read the terms &rarr;</span>
-    </a>
-
-    <a class="card" href="delete-account.html">
-      <h2>Delete your account</h2>
-      <p>Remove your account and its data permanently — from inside the app in
-         three taps, or by email if you no longer have the app installed.</p>
-      <span class="go">How to delete &rarr;</span>
-    </a>
-
-    <a class="card" href="mailto:help@padel-rivals.com">
-      <h2>Support</h2>
-      <p>A problem with a match, an order, a tournament entry, or your account?
-         Email us and a person will read it.</p>
-      <span class="go">help@padel-rivals.com &rarr;</span>
-    </a>
-
+    <ul class="trust">
+      <li>
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+        <div><strong>We never ask for card details</strong><span>Pay by InstaPay to our official account, or pay at the venue.</span></div>
+      </li>
+      <li>
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/></svg></span>
+        <div><strong>A real person confirms you</strong><span>Our team messages you on WhatsApp before the event.</span></div>
+      </li>
+      <li>
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></span>
+        <div><strong>Changed your plans?</strong><span>Withdraw before the tournament's start date and your entry fee is refunded.</span></div>
+      </li>
+    </ul>
   </div>
+
+  <div class="card" id="form-card">
+    <ol class="steps" aria-label="Registration progress">
+      <li class="on" data-step="1"><i></i><span>1 · Your details</span></li>
+      <li data-step="2"><i></i><span>2 · Payment</span></li>
+      <li data-step="3"><i></i><span>3 · Confirmed</span></li>
+    </ol>
+
+    <!-- Loading / no-events states -->
+    <div id="state-loading" class="state">Loading tournaments…</div>
+    <div id="state-empty" class="state" hidden>
+      <h2>No open tournaments right now</h2>
+      <p>New events are announced in our WhatsApp group first.</p>
+      <a class="btn" href="/whatsapp">Join the WhatsApp group</a>
+    </div>
+
+    <!-- Step 1 -->
+    <form id="step1" hidden novalidate>
+      <div class="field">
+        <label for="f-tournament">Tournament *</label>
+        <select id="f-tournament" required>
+          <option value="">Choose a tournament</option>
+        </select>
+        <p id="t-info" class="note" hidden></p>
+      </div>
+
+      <h3 class="group">You</h3>
+      <div class="grid">
+        <div class="field">
+          <label for="f-name">Full name *</label>
+          <input id="f-name" type="text" autocomplete="name" maxlength="80" required>
+        </div>
+        <div class="field">
+          <label for="f-phone">WhatsApp number *</label>
+          <input id="f-phone" type="tel" autocomplete="tel" placeholder="+20 10 0000 0000" maxlength="20" required>
+        </div>
+        <div class="field">
+          <label for="f-email">Email</label>
+          <input id="f-email" type="email" autocomplete="email" maxlength="120">
+        </div>
+        <div class="field">
+          <label for="f-level">Your level *</label>
+          <select id="f-level" required disabled><option value="">Choose a tournament first</option></select>
+        </div>
+      </div>
+
+      <h3 class="group">Your partner</h3>
+      <div class="grid">
+        <div class="field">
+          <label for="f-pname">Partner's name *</label>
+          <input id="f-pname" type="text" maxlength="80" required>
+        </div>
+        <div class="field">
+          <label for="f-pphone">Partner's phone</label>
+          <input id="f-pphone" type="tel" placeholder="+20 10 0000 0000" maxlength="20">
+        </div>
+        <div class="field">
+          <label for="f-plevel">Partner's level *</label>
+          <select id="f-plevel" required disabled><option value="">Choose a tournament first</option></select>
+        </div>
+      </div>
+
+      <div class="alert" role="alert" hidden></div>
+      <button class="btn" type="submit">Continue to payment</button>
+    </form>
+
+    <!-- Step 2 -->
+    <form id="step2" hidden novalidate>
+      <div class="due">
+        <div><span>Entry fee for your pair</span><strong id="due-amount"></strong></div>
+        <span id="due-names"></span>
+      </div>
+
+      <fieldset id="pay-choice">
+        <legend>How would you like to pay? *</legend>
+        <label class="option" id="opt-instapay">
+          <input type="radio" name="pay" value="instapay">
+          <span><strong>InstaPay now</strong><small>Locks your spot right away.</small></span>
+        </label>
+        <label class="option">
+          <input type="radio" name="pay" value="venue">
+          <span><strong>Pay cash at the venue</strong><small>We hold your spot; paid entries get priority if the draw fills up.</small></span>
+        </label>
+      </fieldset>
+
+      <div id="instapay-box" hidden>
+        <div class="payto">
+          <span>Send the fee to our official InstaPay</span>
+          <strong id="ip-handle"></strong>
+          <small id="ip-name"></small>
+        </div>
+        <div class="field">
+          <label for="f-sender">Name on the InstaPay transfer *</label>
+          <input id="f-sender" type="text" maxlength="80">
+        </div>
+        <div class="field">
+          <label for="f-proof">Screenshot of the transfer *</label>
+          <input id="f-proof" type="file" accept="image/*">
+        </div>
+      </div>
+
+      <label class="agree">
+        <input type="checkbox" id="f-agree">
+        <span>I agree to the <a href="/terms" target="_blank" rel="noopener">terms</a> and to be contacted on WhatsApp about this tournament. *</span>
+      </label>
+
+      <div class="alert" role="alert" hidden></div>
+      <div class="row">
+        <button class="btn ghost" type="button" id="back">Back</button>
+        <button class="btn grow" type="submit" id="submit">Complete registration</button>
+      </div>
+    </form>
+
+    <!-- Step 3 -->
+    <div id="step3" class="done" hidden>
+      <span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></span>
+      <h2 id="done-title">You're registered!</h2>
+      <p id="done-text"></p>
+      <a class="btn green js-whatsapp" href="/whatsapp">Message us on WhatsApp</a>
+      <button class="link" type="button" id="again">Register another pair</button>
+    </div>
+
+    <noscript><p class="state">Please enable JavaScript to register, or message us on <a href="/whatsapp">WhatsApp</a>.</p></noscript>
+  </div>
+</section>
+
+<section class="dark" id="how">
+  <div class="wrap">
+    <h2>How registration works</h2>
+    <div class="cols">
+      <div class="stepcard"><b>01</b><h3>Fill in the form</h3><p>Your details and your partner's — that's all we need.</p></div>
+      <div class="stepcard"><b>02</b><h3>Pay your way</h3><p>InstaPay to our official account, or cash at the venue.</p></div>
+      <div class="stepcard"><b>03</b><h3>Get confirmed</h3><p>Our team messages you on WhatsApp, then sends the draw before the event.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="faq narrow" id="faq">
+  <h2>Questions</h2>
+  <details open><summary>Do I need to download the app?</summary><p>No. You can register and pay here. The app is optional — it shows your bracket, results and level.</p></details>
+  <details><summary>How do I know the InstaPay account is really yours?</summary><p>Only pay to the InstaPay address shown on this page at padel-rivals.com — never to one sent in a private message. Unsure? Message us on WhatsApp first.</p></details>
+  <details><summary>What if I can't make it?</summary><p>If you withdraw before the tournament's start date, your entry fee is refunded the same way you paid. Withdrawing on or after the start date forfeits the fee. See our <a href="/terms">terms</a>.</p></details>
+  <details><summary>What do the levels mean?</summary><p>Levels go from D (newer players) up to A (strongest), each split into Low, Mid and Upper. Each tournament only lists the levels it's open to.</p></details>
+  <details><summary>I don't have a partner yet.</summary><p>Message us on WhatsApp and we'll try to pair you with a player at your level.</p></details>
+</section>
+
+<section class="wrap">
+  <div class="app">
+    <div class="app-text">
+      <img src="logo.jpg" alt="Padel Rivals logo" width="72" height="72">
+      <div><strong>Want to follow your bracket live?</strong><span>Optional: get the free app for results, rankings and your level.</span></div>
+    </div>
+    <div class="row">
+      <a class="btn dark-btn" href="https://apps.apple.com/app/id6786002098">App Store</a>
+      <a class="btn dark-btn" href="https://play.google.com/store/apps/details?id=com.padelegypt.app">Google Play</a>
+    </div>
+  </div>
+</section>
 
 </main>
 
-<footer class="foot">
+<footer class="foot wrap">
+  <span>© <span id="year">2026</span> Padel Rivals · Cairo, Egypt</span>
   <nav>
-    <a href="index.html">Home</a> &nbsp;&middot;&nbsp;
-    <a href="privacy.html">Privacy Policy</a> &nbsp;&middot;&nbsp;
-    <a href="terms.html">Terms of Agreement</a> &nbsp;&middot;&nbsp;
-    <a href="delete-account.html">Delete your account</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <a href="/delete-account">Delete account</a>
+    <a href="mailto:help@padel-rivals.com">help@padel-rivals.com</a>
   </nav>
-  <p>Padel Rivals &middot; Cairo, Egypt &middot;
-     <a href="mailto:help@padel-rivals.com">help@padel-rivals.com</a></p>
 </footer>
 
+<script src="home.js"></script>
 </body>
 </html>

@@ -766,6 +766,33 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     through the existing admin rating tools (rule 2).
   - Player entry is a row under the Home hero, hidden until a center is live
     (`AssessmentService.overview()` returns empty on a DB without the delta).
+- **Web registration on the homepage** (2026-10-20,
+  `changes/2026-10-20_web_registrations.sql`). `docs/index.html` is now the
+  landing page: a pair registers for a tournament **without the app or an
+  account** (`home.js` + `home.css`; the old link hub's links live in the
+  footer). Built because players didn't trust the app enough to download and
+  pay in it.
+  - **The site is `anon`, and anon touches no table.** It calls exactly two
+    SECURITY DEFINER RPCs — `web_open_tournaments()` and `web_register()` — and
+    makes one insert-only upload to the PRIVATE `web-payment-proofs` bucket
+    (no select/update for anon, so it can't list, read or overwrite a proof).
+    `web_register` refuses a proof path that isn't actually in the bucket.
+  - **`web_registrations` is NOT `tournament_entries`**, on purpose: an entry's
+    `player_id` is a real profile and every bracket/ticket/settlement path
+    assumes it. A web pair is a lead staff confirm on WhatsApp, then add to the
+    draw by hand — same as a cash entry today. Capacity counts BOTH tables.
+  - **Levels are padel categories** `D Low … A Upper` (`web_levels()`), stored
+    as `tournaments.min_category` / `max_category`, NULL = no limit that side.
+    A website label only — they never touch `min_rating`/`max_rating` or the
+    rating engine (rule 2). Set them per event in the table editor until the
+    console has a field for them.
+  - Payment: InstaPay screenshot or cash at the venue (rule 8). The InstaPay
+    handle, account name and direct WhatsApp number are the `CONFIG` block at
+    the top of `docs/home.js`; an empty handle hides the InstaPay option.
+    `entry_fee` is per player, so the page and RPC charge `entry_fee * 2`.
+  - Each registration alerts staff as `admin_tournament` (bell + push). Staff
+    read/update rows via `_is_admin()` or `_has_access('tournaments')`.
+  - The anon key in `home.js` is the app's public key — fine to commit.
 - **The domain, the email stack, and the legal site** (set up 2026-08-08).
   `padel-rivals.com` is registered at GoDaddy but its **DNS lives at
   Cloudflare** — nameservers were moved, so GoDaddy's DNS panel is now a
