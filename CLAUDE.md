@@ -780,7 +780,7 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   - **`web_registrations` is NOT `tournament_entries`**, on purpose: an entry's
     `player_id` is a real profile and every bracket/ticket/settlement path
     assumes it. A web pair is a lead staff confirm on WhatsApp, then add to the
-    draw by hand — same as a cash entry today. Capacity counts BOTH tables.
+    draw by hand, like any staff-added entry. Capacity counts BOTH tables.
   - **"Find me a partner"** (2026-10-21): a solo player registers with
     `needs_partner = true` and no partner fields, pays only their own share
     (`entry_fee`, not `* 2`), and staff pair two solos by hand on WhatsApp.
@@ -791,9 +791,12 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     A website label only — they never touch `min_rating`/`max_rating` or the
     rating engine (rule 2). Set them per event in the table editor until the
     console has a field for them.
-  - Payment: InstaPay screenshot or cash at the venue (rule 8). The InstaPay
-    handle, account name and direct WhatsApp number are the `CONFIG` block at
-    the top of `docs/home.js`; an empty handle hides the InstaPay option.
+  - **Payment is InstaPay ONLY** (2026-10-21 — no cash at the venue, no
+    gateway, rule 8). A paid event always needs a sender name + screenshot;
+    `web_register` ignores `p_pay_method` and the CHECK allows only
+    `instapay` / `free`. The InstaPay handle, account name and direct WhatsApp
+    number are the `CONFIG` block at the top of `docs/home.js`; while the
+    handle is empty the site refuses paid events (free ones still register).
     `entry_fee` is per player, so the page and RPC charge `entry_fee * 2`.
   - Each registration alerts staff as `admin_tournament` (bell + push). Staff
     read/update rows via `_is_admin()` or `_has_access('tournaments')`.

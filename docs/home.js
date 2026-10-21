@@ -10,7 +10,8 @@
     supabaseUrl: 'https://lxihwifpcufhieppfeza.supabase.co',
     // The public anon key (same one the app ships; safe to expose — RLS guards the data).
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4aWh3aWZwY3VmaGllcHBmZXphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMzAzOTEsImV4cCI6MjA5NTkwNjM5MX0.7afCxV225wcNDa5njZz4KAIRTo3eOeMj0099NPF94oQ',
-    // Leave instapayHandle empty to offer "pay at venue" only.
+    // Payment is InstaPay only. Until instapayHandle is set, paid tournaments
+    // can't be registered for on the site (free ones still can).
     instapayHandle: '',          // e.g. 'padelrivals@instapay'
     instapayName: '',            // name the account is registered to
     // Direct WhatsApp for confirmations, digits only with country code (e.g. '201000000000').
@@ -177,6 +178,8 @@
     else if (!val('f-level')) err = 'Please choose your level.';
     else if (!isSolo() && val('f-pname').length < 2) err = "Please enter your partner's name.";
     else if (!isSolo() && !val('f-plevel')) err = "Please choose your partner's level.";
+    else if (Number(current.entry_fee) > 0 && !CONFIG.instapayHandle)
+      err = 'Online payment for this tournament opens soon. Message us on WhatsApp to reserve your spot.';
     showError(f, err);
     if (err) return;
 
@@ -185,22 +188,15 @@
     $('due-label').textContent = solo ? 'Your entry fee (your share)' : 'Entry fee for your pair';
     $('due-amount').textContent = free ? 'Free' : money(current.entry_fee * (solo ? 1 : 2));
     $('due-names').textContent = solo ? val('f-name') + ' · partner to be matched' : val('f-name') + ' & ' + val('f-pname');
-    $('pay-choice').hidden = free;
-    $('opt-instapay').hidden = !CONFIG.instapayHandle;
-    if (!CONFIG.instapayHandle) {
-      document.querySelector('input[name=pay][value=venue]').checked = true;
-    }
-    onPayChange();
+    $('instapay-box').hidden = free;
     showError($('step2'), '');
     showStep(2);
   }
 
+  // InstaPay only: a paid event is always 'instapay', a free one 'free'.
   function payMethod() {
-    if (!(Number(current && current.entry_fee) > 0)) return 'free';
-    var c = document.querySelector('input[name=pay]:checked');
-    return c ? c.value : '';
+    return Number(current && current.entry_fee) > 0 ? 'instapay' : 'free';
   }
-  function onPayChange() { $('instapay-box').hidden = payMethod() !== 'instapay'; }
 
   // ── Step 2 → 3 ───────────────────────────────────────────────────────
   function step2Submit(e) {
@@ -209,8 +205,7 @@
     var pay = payMethod();
     var file = $('f-proof').files && $('f-proof').files[0];
     var err = '';
-    if (!pay) err = 'Please choose how you want to pay.';
-    else if (pay === 'instapay' && val('f-sender').length < 2) err = 'Please enter the name on the InstaPay transfer.';
+    if (pay === 'instapay' && val('f-sender').length < 2) err = 'Please enter the name on the InstaPay transfer.';
     else if (pay === 'instapay' && !file) err = 'Please upload a screenshot of the transfer.';
     else if (pay === 'instapay' && file.size > MAX_PROOF_BYTES) err = 'That screenshot is over 5 MB. Please use a smaller image.';
     else if (!$('f-agree').checked) err = 'Please accept the terms to continue.';
@@ -243,9 +238,7 @@
       var phone = val('f-phone');
       var text = pay === 'instapay'
         ? 'We received your payment screenshot. Our team will check it and confirm your spot on WhatsApp at ' + phone + '.'
-        : pay === 'venue'
-          ? 'Your spot is held. We will message you on WhatsApp at ' + phone + ' with the details — bring the entry fee to the venue.'
-          : 'We will message you on WhatsApp at ' + phone + ' to confirm your spot.';
+        : 'We will message you on WhatsApp at ' + phone + ' to confirm your spot.';
       if (solo) text += " We're finding you a partner at your level and will introduce you both before the event.";
       $('done-title').textContent = "You're registered, " + first + '!';
       $('done-text').textContent = text;
@@ -278,7 +271,6 @@
     $('f-tournament').addEventListener('change', onTournament);
     $('step1').addEventListener('submit', step1Submit);
     $('step2').addEventListener('submit', step2Submit);
-    document.querySelectorAll('input[name=pay]').forEach(function (r) { r.addEventListener('change', onPayChange); });
     document.querySelectorAll('input[name=haspartner]').forEach(function (r) { r.addEventListener('change', onPartnerChange); });
     $('back').addEventListener('click', function () { showStep(1); });
     $('again').addEventListener('click', reset);

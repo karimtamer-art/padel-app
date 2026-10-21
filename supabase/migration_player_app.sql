@@ -12987,9 +12987,9 @@ notify pgrst, 'reload schema';
 --     purpose. tournament_entries.player_id is a real profile, and every
 --     bracket/ticket/settlement path assumes it. A web pair is a lead that
 --     staff confirm by WhatsApp and then enter into the draw by hand
---     (organizer guest-partner flow), exactly as cash entries are today.
+--     (organizer guest-partner flow), as staff-added entries are today.
 --   * Capacity counts BOTH tables, so the website can't oversell a draw.
---   * Payment is InstaPay screenshot or cash at venue (rule 8: no gateway).
+--   * Payment is InstaPay screenshot ONLY (no cash, no gateway — rule 8).
 --     The proof goes to a PRIVATE bucket anon can insert into but never
 --     read, list or overwrite; web_register() refuses a proof path that
 --     doesn't exist in that bucket.
@@ -13037,7 +13037,7 @@ create table if not exists public.web_registrations (
   partner_name    text,
   partner_phone   text,
   partner_level   text,
-  pay_method      text not null,            -- instapay | venue | free
+  pay_method      text not null,            -- instapay | free
   amount_due      numeric(10,2) not null default 0,
   instapay_sender text,
   proof_path      text,                     -- object name in web-payment-proofs
@@ -13060,7 +13060,7 @@ exception when others then null; end $$;
 do $$ begin
   alter table public.web_registrations drop constraint if exists web_registrations_pay_chk;
   alter table public.web_registrations add constraint web_registrations_pay_chk
-    check (pay_method in ('instapay', 'venue', 'free'));
+    check (pay_method in ('instapay', 'free'));
   alter table public.web_registrations drop constraint if exists web_registrations_status_chk;
   alter table public.web_registrations add constraint web_registrations_status_chk
     check (status in ('pending', 'confirmed', 'rejected', 'cancelled'));
@@ -13224,10 +13224,7 @@ begin
   if v_due <= 0 then
     v_pay := 'free';
   else
-    v_pay := coalesce(p_pay_method, '');
-    if v_pay not in ('instapay', 'venue') then
-      raise exception 'Please choose how you want to pay.';
-    end if;
+    v_pay := 'instapay';                       -- InstaPay only; p_pay_method is ignored
   end if;
 
   if v_pay = 'instapay' then
@@ -13266,7 +13263,6 @@ begin
               else v_name || ' & ' || v_pname end
            || ' · ' || coalesce(v_t.name, 'tournament')
            || ' · ' || case v_pay when 'instapay' then 'InstaPay EGP ' || v_due::text
-                                  when 'venue' then 'pays at venue'
                                   else 'free entry' end
            || ' · WhatsApp ' || btrim(p_phone),
          jsonb_build_object('tournament_id', p_tournament, 'web_registration_id', v_id, 'admin', true)
