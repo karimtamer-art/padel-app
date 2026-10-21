@@ -108,6 +108,15 @@
     select.disabled = !levels;
   }
   function val(id) { return $(id).value.trim(); }
+  function isSolo() {
+    var c = document.querySelector('input[name=haspartner]:checked');
+    return !!c && c.value === 'no';
+  }
+  function onPartnerChange() {
+    var solo = isSolo();
+    $('partner-fields').hidden = solo;
+    $('solo-note').hidden = !solo;
+  }
 
   // ── Load tournaments ─────────────────────────────────────────────────
   function load() {
@@ -143,7 +152,9 @@
     }
     var parts = ['Open to ' + rangeText(current)];
     if (CATEGORY[current.category]) parts.push(CATEGORY[current.category] + ' event');
-    parts.push(Number(current.entry_fee) > 0 ? money(current.entry_fee * 2) + ' per pair' : 'Free entry');
+    parts.push(Number(current.entry_fee) > 0
+      ? money(current.entry_fee * 2) + ' per pair (' + money(current.entry_fee) + ' each)'
+      : 'Free entry');
     if (current.spots_left !== null && current.spots_left <= 8) {
       parts.push(current.spots_left === 0 ? 'Full' : current.spots_left + ' spots left');
     }
@@ -164,14 +175,16 @@
     else if (val('f-name').length < 2) err = 'Please enter your full name.';
     else if (val('f-phone').replace(/\D/g, '').length < 10) err = 'Please enter a valid WhatsApp number.';
     else if (!val('f-level')) err = 'Please choose your level.';
-    else if (val('f-pname').length < 2) err = "Please enter your partner's name.";
-    else if (!val('f-plevel')) err = "Please choose your partner's level.";
+    else if (!isSolo() && val('f-pname').length < 2) err = "Please enter your partner's name.";
+    else if (!isSolo() && !val('f-plevel')) err = "Please choose your partner's level.";
     showError(f, err);
     if (err) return;
 
+    var solo = isSolo();
     var free = !(Number(current.entry_fee) > 0);
-    $('due-amount').textContent = free ? 'Free' : money(current.entry_fee * 2);
-    $('due-names').textContent = val('f-name') + ' & ' + val('f-pname');
+    $('due-label').textContent = solo ? 'Your entry fee (your share)' : 'Entry fee for your pair';
+    $('due-amount').textContent = free ? 'Free' : money(current.entry_fee * (solo ? 1 : 2));
+    $('due-names').textContent = solo ? val('f-name') + ' · partner to be matched' : val('f-name') + ' & ' + val('f-pname');
     $('pay-choice').hidden = free;
     $('opt-instapay').hidden = !CONFIG.instapayHandle;
     if (!CONFIG.instapayHandle) {
@@ -208,6 +221,7 @@
     btn.disabled = true;
     btn.textContent = 'Sending…';
 
+    var solo = isSolo();
     var proof = pay === 'instapay' ? uploadProof(file, current.id) : Promise.resolve(null);
     proof.then(function (path) {
       return rpc('web_register', {
@@ -216,21 +230,25 @@
         p_phone: val('f-phone'),
         p_email: val('f-email') || null,
         p_level: val('f-level'),
-        p_partner_name: val('f-pname'),
-        p_partner_phone: val('f-pphone') || null,
-        p_partner_level: val('f-plevel'),
+        p_partner_name: solo ? null : val('f-pname'),
+        p_partner_phone: solo ? null : (val('f-pphone') || null),
+        p_partner_level: solo ? null : val('f-plevel'),
         p_pay_method: pay,
         p_sender: pay === 'instapay' ? val('f-sender') : null,
-        p_proof_path: path
+        p_proof_path: path,
+        p_needs_partner: solo
       });
     }).then(function () {
       var first = val('f-name').split(/\s+/)[0];
-      $('done-title').textContent = "You're registered, " + first + '!';
-      $('done-text').textContent = pay === 'instapay'
-        ? 'We received your payment screenshot. Our team will check it and confirm your spot on WhatsApp at ' + val('f-phone') + '.'
+      var phone = val('f-phone');
+      var text = pay === 'instapay'
+        ? 'We received your payment screenshot. Our team will check it and confirm your spot on WhatsApp at ' + phone + '.'
         : pay === 'venue'
-          ? 'Your spot is held. We will message you on WhatsApp at ' + val('f-phone') + ' with the details — bring the entry fee to the venue.'
-          : 'We will message you on WhatsApp at ' + val('f-phone') + ' to confirm your spot.';
+          ? 'Your spot is held. We will message you on WhatsApp at ' + phone + ' with the details — bring the entry fee to the venue.'
+          : 'We will message you on WhatsApp at ' + phone + ' to confirm your spot.';
+      if (solo) text += " We're finding you a partner at your level and will introduce you both before the event.";
+      $('done-title').textContent = "You're registered, " + first + '!';
+      $('done-text').textContent = text;
       showStep(3);
     }).catch(function (ex) {
       showError(f, ex.message);
@@ -245,6 +263,7 @@
     $('step2').reset();
     current = null;
     onTournament();
+    onPartnerChange();
     showStep(1);
   }
 
@@ -260,6 +279,7 @@
     $('step1').addEventListener('submit', step1Submit);
     $('step2').addEventListener('submit', step2Submit);
     document.querySelectorAll('input[name=pay]').forEach(function (r) { r.addEventListener('change', onPayChange); });
+    document.querySelectorAll('input[name=haspartner]').forEach(function (r) { r.addEventListener('change', onPartnerChange); });
     $('back').addEventListener('click', function () { showStep(1); });
     $('again').addEventListener('click', reset);
     load();

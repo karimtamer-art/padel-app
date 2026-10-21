@@ -37,12 +37,16 @@
   <div class="pitch">
     <span class="kicker">Registration open</span>
     <h1>Join the next <em>Padel Rivals</em> tournament.</h1>
-    <p class="lead">Register your pair right here in two minutes. No app needed — we confirm your spot personally on WhatsApp.</p>
+    <p class="lead">Register with your partner — or on your own and we'll find you one. Two minutes, no app needed, and we confirm your spot personally on WhatsApp.</p>
 
     <ul class="trust">
       <li>
         <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
         <div><strong>We never ask for card details</strong><span>Pay by InstaPay to our official account, or pay at the venue.</span></div>
+      </li>
+      <li>
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M19 8v6M16 11h6"/></svg></span>
+        <div><strong>No partner? We'll find you one</strong><span>Register on your own and we'll pair you with a player at your level.</span></div>
       </li>
       <li>
         <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/></svg></span>
@@ -101,7 +105,19 @@
       </div>
 
       <h3 class="group">Your partner</h3>
-      <div class="grid">
+      <fieldset class="seg">
+        <legend class="sr-only">Do you have a partner?</legend>
+        <label class="option">
+          <input type="radio" name="haspartner" value="yes" checked>
+          <span><strong>I have a partner</strong><small>Register as a pair.</small></span>
+        </label>
+        <label class="option">
+          <input type="radio" name="haspartner" value="no">
+          <span><strong>Find me a partner</strong><small>We'll pair you with a player at your level.</small></span>
+        </label>
+      </fieldset>
+      <p id="solo-note" class="note" hidden>We'll match you with a player in this tournament's level range and introduce you both on WhatsApp before the event. You only pay your own share.</p>
+      <div class="grid" id="partner-fields">
         <div class="field">
           <label for="f-pname">Partner's name *</label>
           <input id="f-pname" type="text" maxlength="80" required>
@@ -123,7 +139,7 @@
     <!-- Step 2 -->
     <form id="step2" hidden novalidate>
       <div class="due">
-        <div><span>Entry fee for your pair</span><strong id="due-amount"></strong></div>
+        <div><span id="due-label">Entry fee for your pair</span><strong id="due-amount"></strong></div>
         <span id="due-names"></span>
       </div>
 
@@ -197,7 +213,7 @@
   <details><summary>How do I know the InstaPay account is really yours?</summary><p>Only pay to the InstaPay address shown on this page at padel-rivals.com — never to one sent in a private message. Unsure? Message us on WhatsApp first.</p></details>
   <details><summary>What if I can't make it?</summary><p>If you withdraw before the tournament's start date, your entry fee is refunded the same way you paid. Withdrawing on or after the start date forfeits the fee. See our <a href="/terms">terms</a>.</p></details>
   <details><summary>What do the levels mean?</summary><p>Levels go from D (newer players) up to A (strongest), each split into Low, Mid and Upper. Each tournament only lists the levels it's open to.</p></details>
-  <details><summary>I don't have a partner yet.</summary><p>Message us on WhatsApp and we'll try to pair you with a player at your level.</p></details>
+  <details><summary>I don't have a partner yet.</summary><p>No problem — choose "Find me a partner" in the form. We'll match you with another player at your level, introduce you both on WhatsApp before the event, and you only pay your own share. If we can't find you a partner in time, your fee is refunded in full.</p></details>
 </section>
 
 <section class="wrap">

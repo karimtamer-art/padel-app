@@ -781,6 +781,11 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     `player_id` is a real profile and every bracket/ticket/settlement path
     assumes it. A web pair is a lead staff confirm on WhatsApp, then add to the
     draw by hand — same as a cash entry today. Capacity counts BOTH tables.
+  - **"Find me a partner"** (2026-10-21): a solo player registers with
+    `needs_partner = true` and no partner fields, pays only their own share
+    (`entry_fee`, not `* 2`), and staff pair two solos by hand on WhatsApp.
+    Capacity counts two solos as one pair (`ceil(solos / 2)`). `web_register`
+    went 11 → 12 args (`p_needs_partner`); the old signature is DROPPED.
   - **Levels are padel categories** `D Low … A Upper` (`web_levels()`), stored
     as `tournaments.min_category` / `max_category`, NULL = no limit that side.
     A website label only — they never touch `min_rating`/`max_rating` or the

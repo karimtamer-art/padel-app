@@ -57,9 +57,10 @@ create table if not exists public.web_registrations (
   phone_digits    text not null,
   email           text,
   level           text not null,
-  partner_name    text not null,
+  needs_partner   boolean not null default false,  -- solo: staff find them a partner
+  partner_name    text,
   partner_phone   text,
-  partner_level   text not null,
+  partner_level   text,
   pay_method      text not null,            -- instapay | venue | free
   amount_due      numeric(10,2) not null default 0,
   instapay_sender text,
@@ -69,6 +70,17 @@ create table if not exists public.web_registrations (
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now()
 );
+-- "Find me a partner" (2026-10-21). These keep a database that already ran
+-- the first version of this file in step with the create above.
+alter table public.web_registrations add column if not exists needs_partner boolean not null default false;
+alter table public.web_registrations alter column partner_name drop not null;
+alter table public.web_registrations alter column partner_level drop not null;
+do $$ begin
+  alter table public.web_registrations drop constraint if exists web_registrations_partner_chk;
+  alter table public.web_registrations add constraint web_registrations_partner_chk
+    check (needs_partner or (partner_name is not null and partner_level is not null));
+exception when others then null; end $$;
+
 do $$ begin
   alter table public.web_registrations drop constraint if exists web_registrations_pay_chk;
   alter table public.web_registrations add constraint web_registrations_pay_chk
@@ -137,7 +149,10 @@ begin
               else greatest(0, t.capacity
                 - (select count(*) from public.tournament_entries e
                     where e.tournament_id = t.id and e.status not in ('withdrawn', 'cancelled'))
-                - (select count(*) from public.web_registrations w
+                -- a pair takes a slot; two solo players make one pair
+                - (select count(*) filter (where not w.needs_partner)
+                          + ceil(count(*) filter (where w.needs_partner) / 2.0)
+                     from public.web_registrations w
                     where w.tournament_id = t.id and w.status in ('pending', 'confirmed'))
                 )::int
          end
@@ -154,8 +169,13 @@ end $$;
 revoke all on function public.web_open_tournaments() from public;
 grant execute on function public.web_open_tournaments() to anon, authenticated;
 
--- 5. Write: register a pair ----------------------------------------------------
+-- 5. Write: register a pair, or a solo player who needs a partner --------------
 -- Errors are RAISEd with a sentence the website shows as-is.
+-- p_needs_partner = true: no partner fields; they pay their own share
+-- (entry_fee) and staff match them with another solo player in range.
+-- The 11-argument first version is DROPPED, not left beside this one, so the
+-- grant names one live signature and PostgREST never has two to choose from.
+drop function if exists public.web_register(uuid, text, text, text, text, text, text, text, text, text, text);
 create or replace function public.web_register(
   p_tournament     uuid,
   p_name           text,
@@ -167,7 +187,8 @@ create or replace function public.web_register(
   p_partner_level  text,
   p_pay_method     text,
   p_sender         text default null,
-  p_proof_path     text default null)
+  p_proof_path     text default null,
+  p_needs_partner  boolean default false)
 returns uuid
 language plpgsql security definer set search_path = public as $$
 declare
@@ -180,6 +201,7 @@ declare
   v_id      uuid;
   v_name    text := btrim(coalesce(p_name, ''));
   v_pname   text := btrim(coalesce(p_partner_name, ''));
+  v_solo    boolean := coalesce(p_needs_partner, false);
 begin
   select * into v_t from public.web_open_tournaments() o where o.id = p_tournament;
   if not found then
@@ -189,7 +211,7 @@ begin
   if length(v_name) < 2 or length(v_name) > 80 then
     raise exception 'Please enter your full name.';
   end if;
-  if length(v_pname) < 2 or length(v_pname) > 80 then
+  if not v_solo and (length(v_pname) < 2 or length(v_pname) > 80) then
     raise exception 'Please enter your partner''s name.';
   end if;
   if length(v_digits) < 10 or length(v_digits) > 15 then
@@ -202,7 +224,8 @@ begin
   v_lo := coalesce(array_position(v_lv, v_t.min_category), 1);
   v_hi := coalesce(array_position(v_lv, v_t.max_category), array_length(v_lv, 1));
   if coalesce(array_position(v_lv, p_level), 0) not between v_lo and v_hi
-     or coalesce(array_position(v_lv, p_partner_level), 0) not between v_lo and v_hi then
+     or (not v_solo
+         and coalesce(array_position(v_lv, p_partner_level), 0) not between v_lo and v_hi) then
     raise exception 'Both players must be within this tournament''s levels.';
   end if;
 
@@ -220,7 +243,8 @@ begin
     raise exception 'Too many attempts. Please wait a few minutes and try again.';
   end if;
 
-  v_due := coalesce(v_t.entry_fee, 0) * 2;   -- entry_fee is per player
+  -- entry_fee is per player: a pair pays two, a solo player their own share
+  v_due := coalesce(v_t.entry_fee, 0) * case when v_solo then 1 else 2 end;
   if v_due <= 0 then
     v_pay := 'free';
   else
@@ -242,12 +266,15 @@ begin
   end if;
 
   insert into public.web_registrations
-    (tournament_id, name, phone, phone_digits, email, level,
+    (tournament_id, name, phone, phone_digits, email, level, needs_partner,
      partner_name, partner_phone, partner_level, pay_method, amount_due,
      instapay_sender, proof_path)
   values
     (p_tournament, v_name, btrim(p_phone), v_digits, nullif(btrim(coalesce(p_email, '')), ''),
-     p_level, v_pname, nullif(btrim(coalesce(p_partner_phone, '')), ''), p_partner_level,
+     p_level, v_solo,
+     case when v_solo then null else v_pname end,
+     case when v_solo then null else nullif(btrim(coalesce(p_partner_phone, '')), '') end,
+     case when v_solo then null else p_partner_level end,
      v_pay, v_due,
      case when v_pay = 'instapay' then btrim(p_sender) end,
      case when v_pay = 'instapay' then p_proof_path end)
@@ -256,9 +283,12 @@ begin
   -- Alert staff (bell + push), same shape as the app's tournament alerts.
   insert into public.notifications (user_id, type, title, body, data)
   select uid, 'admin_tournament',
-         case when v_pay = 'instapay' then 'Website entry — payment to verify'
+         case when v_solo then 'Website entry — needs a partner'
+              when v_pay = 'instapay' then 'Website entry — payment to verify'
               else 'New website entry' end,
-         v_name || ' & ' || v_pname || ' · ' || coalesce(v_t.name, 'tournament')
+         case when v_solo then v_name || ' (' || p_level || ', no partner yet)'
+              else v_name || ' & ' || v_pname end
+           || ' · ' || coalesce(v_t.name, 'tournament')
            || ' · ' || case v_pay when 'instapay' then 'InstaPay EGP ' || v_due::text
                                   when 'venue' then 'pays at venue'
                                   else 'free entry' end
@@ -271,11 +301,14 @@ begin
 
   return v_id;
 end $$;
-revoke all on function public.web_register(uuid, text, text, text, text, text, text, text, text, text, text) from public;
-grant execute on function public.web_register(uuid, text, text, text, text, text, text, text, text, text, text) to anon, authenticated;
+revoke all on function public.web_register(uuid, text, text, text, text, text, text, text, text, text, text, boolean) from public;
+grant execute on function public.web_register(uuid, text, text, text, text, text, text, text, text, text, text, boolean) to anon, authenticated;
 
 -- ── verify ──────────────────────────────────────────────────────────────────
 -- select * from public.web_open_tournaments();          -- open events
 -- select id, name, min_category, max_category from public.tournaments
 --  order by start_date desc limit 10;                    -- set levels here
 -- select count(*) from public.web_registrations;        -- 0 on first run
+-- select tournament_id, level, name, phone, created_at   -- solo players to match
+--   from public.web_registrations
+--  where needs_partner and status = 'pending' order by tournament_id, level;
