@@ -12,11 +12,13 @@
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4aWh3aWZwY3VmaGllcHBmZXphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMzAzOTEsImV4cCI6MjA5NTkwNjM5MX0.7afCxV225wcNDa5njZz4KAIRTo3eOeMj0099NPF94oQ',
     // Payment is InstaPay only. Until instapayHandle is set, paid tournaments
     // can't be registered for on the site (free ones still can).
-    instapayHandle: '',          // e.g. 'padelrivals@instapay'
+    instapayHandle: 'padelrivals@instapay',
     instapayName: '',            // name the account is registered to
+    // InstaPay payment link: opens InstaPay with our account filled in. Empty = no button.
+    instapayLink: 'https://ipn.eg/S/padelrivals/instapay/5xVoTL',
     // Direct WhatsApp for confirmations, digits only with country code (e.g. '201000000000').
     // Empty = links go to the community group at /whatsapp.
-    whatsappNumber: ''
+    whatsappNumber: '201501800943'
   };
   var LEVELS = ['D Low', 'D Mid', 'D Upper', 'C Low', 'C Mid', 'C Upper',
                 'B Low', 'B Mid', 'B Upper', 'A Low', 'A Mid', 'A Upper'];
@@ -267,6 +269,7 @@
     if (CONFIG.instapayHandle) {
       $('ip-handle').textContent = CONFIG.instapayHandle;
       $('ip-name').textContent = (CONFIG.instapayName ? 'Account name: ' + CONFIG.instapayName + ' · ' : '') + 'Only pay to this address.';
+      if (CONFIG.instapayLink) { $('ip-link').href = CONFIG.instapayLink; $('ip-link').hidden = false; }
     }
     $('f-tournament').addEventListener('change', onTournament);
     $('step1').addEventListener('submit', step1Submit);
