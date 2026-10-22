@@ -950,6 +950,20 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     'B Low', 'B Mid', 'B Upper', 'A Low', 'A Mid', 'A Upper',
   ];
 
+  /// What padel-rivals.com shows for a level range. Display-only mirror of
+  /// SQL _web_level_from_min / _web_level_from_max (the server decides who
+  /// may register): each category is a 0.5 band from 1.0, the min takes the
+  /// band it falls in, the max the band that ends at it (2.5–4.5 → C Low to
+  /// B Low).
+  static String _webRangeText(double min, double? max) {
+    final lo = min <= 1.0 ? 0 : (((min - 1.0) / 0.5).floor()).clamp(0, 11);
+    final hi = (max == null || max >= 7.0)
+        ? 11
+        : ((((max - 1.0) / 0.5).ceil()) - 1).clamp(0, 11);
+    if (lo == 0 && hi == 11) return 'all levels';
+    return '${_webLevels[lo]} to ${_webLevels[hi]}';
+  }
+
   void _form(Map<String, dynamic>? t) {
     final isNew = t == null;
     final nameC = TextEditingController(text: t?['name'] ?? '');
@@ -973,10 +987,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     bool sponsored = t?['sponsored'] as bool? ?? false;
     bool regClosed = t?['registration_closed'] as bool? ?? false;
     String category = t?['category'] as String? ?? 'open';
-    // Website levels (padel-rivals.com form) — null = no limit on that side.
-    // Mirrors web_levels() in SQL; tournaments_web_category_chk enforces it.
-    String? webMin = t?['min_category'] as String?;
-    String? webMax = t?['max_category'] as String?;
     // One save per sheet: a second tap while the first is in flight used to
     // create the tournament twice.
     var saving = false;
@@ -1028,11 +1038,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             adminToast(context, 'Pick a start time.', ok: false);
             return;
           }
-          if (webMin != null && webMax != null &&
-              _webLevels.indexOf(webMin!) > _webLevels.indexOf(webMax!)) {
-            adminToast(context, 'Website level "from" must be below "to".', ok: false);
-            return;
-          }
           saving = true;
           final data = <String, dynamic>{
             'name': nameC.text.trim(),
@@ -1058,8 +1063,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'sponsored': sponsored,
             'registration_closed': regClosed,
             'category': category,
-            'min_category': webMin,
-            'max_category': webMax,
             'cancel_reason': status == 'cancelled'
                 ? (reasonC.text.trim().isEmpty ? null : reasonC.text.trim())
                 : null,
@@ -1207,37 +1210,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                             style: AdminText.body(),
                           ),
                         ),
-                    ],
-                  ),
-                ),
-              ),
-            ]);
-          }
-
-          Widget webLevelDrop(String label, String? current, void Function(String?) onChange) {
-            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: AdminText.small(AdminColors.inkFaint)),
-              const SizedBox(height: 5),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AdminColors.surfaceAlt,
-                  borderRadius: AdminUI.fieldR,
-                  border: Border.all(color: AdminColors.line),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String?>(
-                    value: _webLevels.contains(current) ? current : null,
-                    isExpanded: true,
-                    dropdownColor: AdminColors.surface,
-                    style: AdminText.body(),
-                    onChanged: onChange,
-                    items: [
-                      DropdownMenuItem<String?>(
-                          value: null, child: Text('Any', style: AdminText.body())),
-                      for (final l in _webLevels)
-                        DropdownMenuItem<String?>(
-                            value: l, child: Text(l, style: AdminText.body())),
                     ],
                   ),
                 ),
@@ -1515,21 +1487,11 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               Text('Any player level can register.',
                   style: AdminText.small(AdminColors.inkFaint)),
             ],
-            const SizedBox(height: 16),
-            // ── Website levels ────────────────────────────────────
-            Text('Website levels', style: AdminText.strong(AdminColors.inkSoft)),
-            const SizedBox(height: 7),
-            Row(children: [
-              Expanded(child: webLevelDrop('From', webMin,
-                  (v) => setSheet(() => webMin = v))),
-              const SizedBox(width: 12),
-              Expanded(child: webLevelDrop('To', webMax,
-                  (v) => setSheet(() => webMax = v))),
-            ]),
             const SizedBox(height: 6),
-            Text('Which levels can register on padel-rivals.com (D Low … A Upper). '
-                'Separate from the app\'s level range above — set both. '
-                'Any = no limit on that side.',
+            Text(
+                'Website (padel-rivals.com): ${_webRangeText(
+                    eligMode == 'open' ? 0 : minLevel,
+                    eligMode == 'range' ? maxLevel : null)}',
                 style: AdminText.small(AdminColors.inkFaint)),
           ]);
         }),

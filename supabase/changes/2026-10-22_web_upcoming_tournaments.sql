@@ -1,5 +1,7 @@
 -- ============================================================
 -- 2026-10-22 · Website: "Coming soon" tournaments
+-- ⚠️ Run 2026-10-22_one_level_setting.sql after this one; it redefines this
+-- function to read levels from min_rating/max_rating.
 -- ============================================================
 -- web_open_tournaments() hides an event until its registration_opens day, so
 -- an announced tournament was invisible on padel-rivals.com — it read as "the

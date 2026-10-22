@@ -12994,10 +12994,12 @@ notify pgrst, 'reload schema';
 --     read, list or overwrite; web_register() refuses a proof path that
 --     doesn't exist in that bucket.
 --
--- Levels are padel categories, D Low (lowest) .. A Upper (highest), stored
--- on tournaments as min_category / max_category. NULL = no limit on that
--- side. These are a WEBSITE label only — they do not touch min_rating /
--- max_rating or the rating engine (rule 2).
+-- Levels are padel categories, D Low (lowest) .. A Upper (highest). Since
+-- 2026-10-22 they are DERIVED from the tournament's min_rating / max_rating
+-- (one setting, set in the console): each category is a 0.5 band of the
+-- 0-7 scale, D Low = 1.0-1.5 … A Upper = 6.5-7.0. The min_category /
+-- max_category columns this first added are dropped. Read-only use of the
+-- rating columns; nothing here touches the rating engine (rule 2).
 --
 -- Safe to re-run.
 -- ============================================================
@@ -13012,17 +13014,28 @@ returns text[] language sql immutable as $$
 $$;
 grant execute on function public.web_levels() to anon, authenticated;
 
-alter table public.tournaments add column if not exists min_category text;
-alter table public.tournaments add column if not exists max_category text;
-do $$ begin
-  alter table public.tournaments drop constraint if exists tournaments_web_category_chk;
-  alter table public.tournaments add constraint tournaments_web_category_chk check (
-    (min_category is null or min_category = any (public.web_levels()))
-    and (max_category is null or max_category = any (public.web_levels()))
-    and (min_category is null or max_category is null
-         or array_position(public.web_levels(), min_category)
-            <= array_position(public.web_levels(), max_category)));
-exception when others then null; end $$;
+-- Category bands from the 0-7 level range. Band i (1..12) covers
+-- [0.5 + 0.5*i, 1.0 + 0.5*i). Min level → the band it falls in (2.5 → C Low);
+-- max level → the band that ENDS at it (4.5 → B Low, 4.7 → B Mid), so the
+-- website never offers a category wholly above the app's limit.
+-- No limit (min <= 1.0, max null or >= 7.0) → NULL, which reads as "any".
+create or replace function public._web_level_from_min(p numeric)
+returns text language sql immutable as $$
+  select case when p is null or p <= 1.0 then null
+              else (public.web_levels())[least(12, greatest(1, floor((p - 1.0) / 0.5)::int + 1))]
+         end;
+$$;
+create or replace function public._web_level_from_max(p numeric)
+returns text language sql immutable as $$
+  select case when p is null or p >= 7.0 then null
+              else (public.web_levels())[least(12, greatest(1, ceil((p - 1.0) / 0.5)::int))]
+         end;
+$$;
+
+-- The hand-set category columns (2026-10-20) were a second level setting that
+-- could disagree with the app's. Dropped; their CHECK goes with them.
+alter table public.tournaments drop column if exists min_category;
+alter table public.tournaments drop column if exists max_category;
 
 -- 2. Table ---------------------------------------------------------------------
 create table if not exists public.web_registrations (
@@ -13120,7 +13133,7 @@ begin
   return query
   select t.id, t.name, t.venue_name, t.start_date, t.start_time,
          coalesce(t.entry_fee, 0)::numeric, coalesce(t.category, 'open'),
-         t.min_category, t.max_category,
+         public._web_level_from_min(t.min_rating), public._web_level_from_max(t.max_rating),
          case when coalesce(t.capacity, 0) <= 0 then null
               else greatest(0, t.capacity
                 - (select count(*) from public.tournament_entries e
@@ -13278,8 +13291,8 @@ grant execute on function public.web_register(uuid, text, text, text, text, text
 
 -- ── verify ──────────────────────────────────────────────────────────────────
 -- select * from public.web_open_tournaments();          -- open events
--- select id, name, min_category, max_category from public.tournaments
---  order by start_date desc limit 10;                    -- set levels here
+-- select id, name, min_rating, max_rating from public.tournaments
+--  order by start_date desc limit 10;                    -- levels: set in the console
 -- select count(*) from public.web_registrations;        -- 0 on first run
 -- select tournament_id, level, name, phone, created_at   -- solo players to match
 --   from public.web_registrations
@@ -13312,7 +13325,8 @@ begin
   return query
   select t.id, t.name, t.venue_name, t.start_date, t.start_time,
          coalesce(t.entry_fee, 0)::numeric, coalesce(t.category, 'open'),
-         t.min_category, t.max_category, t.registration_opens
+         public._web_level_from_min(t.min_rating), public._web_level_from_max(t.max_rating),
+         t.registration_opens
     from public.tournaments t
    where coalesce(t.status, 'auto') not in ('cancelled', 'completed', 'in_progress')
      and coalesce(t.region_id, 'EG') = 'EG'

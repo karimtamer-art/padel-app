@@ -786,13 +786,19 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     (`entry_fee`, not `* 2`), and staff pair two solos by hand on WhatsApp.
     Capacity counts two solos as one pair (`ceil(solos / 2)`). `web_register`
     went 11 → 12 args (`p_needs_partner`); the old signature is DROPPED.
-  - **Levels are padel categories** `D Low … A Upper` (`web_levels()`), stored
-    as `tournaments.min_category` / `max_category`, NULL = no limit that side.
-    A website label only — they never touch `min_rating`/`max_rating` or the
-    rating engine (rule 2). Set per event in the console's create/edit sheet
-    ("Website levels", 2026-10-22) — the app's level range is a SEPARATE
-    field and does not limit the website. The level list lives in three
-    places: SQL `web_levels()`, `LEVELS` in `home.js`, `_webLevels` in
+  - **Levels are padel categories** `D Low … A Upper` (`web_levels()`),
+    **derived from the tournament's `min_rating` / `max_rating`** — ONE level
+    setting, the console's eligibility range (2026-10-22,
+    `changes/2026-10-22_one_level_setting.sql`). Each category is a 0.5 band
+    from 1.0 (D Low 1.0–1.5 … A Upper 6.5–7.0); the min takes the band it
+    falls in, the max the band that ENDS at it, so 2.5–4.5 → C Low to B Low.
+    `_web_level_from_min` / `_web_level_from_max` are the definition; the
+    RPCs still OUTPUT `min_category` / `max_category` so `home.js` and
+    `web_register` didn't change. The hand-set `tournaments.min_category` /
+    `max_category` columns briefly existed and were **dropped** — two settings
+    that could disagree. Read-only use of the rating columns (rule 2). The
+    list lives in three places: SQL `web_levels()`, `LEVELS` in `home.js`,
+    `_webLevels` + `_webRangeText` (display mirror) in
     `admin_tournaments_screen.dart`.
   - **"Coming soon"** (2026-10-22, `changes/2026-10-22_web_upcoming_tournaments.sql`):
     an event whose `registration_opens` is still in the future is invisible to

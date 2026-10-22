@@ -1,5 +1,8 @@
 -- ============================================================
 -- 2026-10-20 · Web registrations (padel-rivals.com landing page)
+-- 2026-10-22 ⚠️ Partly superseded: levels now come from min_rating/max_rating
+-- (2026-10-22_one_level_setting.sql). If you ever re-run THIS file, re-run
+-- that one straight after, or the category columns and old readers come back.
 -- ============================================================
 -- People who don't trust the app yet can register a pair for a tournament
 -- from the website, with no account. The site runs as `anon`, so:
