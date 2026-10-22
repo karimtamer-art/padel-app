@@ -272,6 +272,8 @@
       if (solo) text += " We're finding you a partner at your level and will introduce you both before the event.";
       $('done-title').textContent = 'Thanks, ' + first + ' — pending confirmation';
       $('done-text').textContent = text;
+      $('app-nudge-text').textContent = 'Download the Padel Rivals app and sign up with ' + phone +
+        ' — the number you just used. We will link your entry, so your matches count toward your level.';
       showStep(3);
     }).catch(function (ex) {
       showError(f, ex.message);

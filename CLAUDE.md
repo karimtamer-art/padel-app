@@ -821,6 +821,20 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     `entry_fee` is per player, so the page and RPC charge `entry_fee * 2`.
   - Each registration alerts staff as `admin_tournament` (bell + push). Staff
     read/update rows via `_is_admin()` or `_has_access('tournaments')`.
+  - **Into the draw as REAL players** (2026-10-22,
+    `changes/2026-10-22_web_to_draw.sql`). A guest entry has no profile, and
+    `finalize_tournament` rates only clean 2v2s of four profiles — so a match
+    with a website guest counted for NOBODY in it, app players included.
+    Console → tournament → **Manage entries** lists the website rows; "Add to
+    draw" calls `admin_web_to_draw`, which links each person to an app account
+    by phone (`_profile_by_phone`: last 10 digits, exactly ONE match or
+    nobody) and falls back to a guest. Two solos are paired via `p_pair_with`.
+    `web_registrations.entry_id` marks it done and stops capacity counting the
+    row AND its entry. Gate is `owns_tournament`, same as the entry manager. No
+    money moves (entry goes in `registered`). The website's confirmation tells
+    players to sign up with the number they registered with — so add them
+    close to the draw, after they've had the chance; a pair added as guests
+    stays guests (re-linking a guest later is not built).
   - The anon key in `home.js` is the app's public key — fine to commit.
 - **The domain, the email stack, and the legal site** (set up 2026-08-08).
   `padel-rivals.com` is registered at GoDaddy but its **DNS lives at

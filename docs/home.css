@@ -69,6 +69,10 @@ h1 em { font-style: normal; color: var(--primary); }
 .steps li.on i { background: var(--primary); }
 .state { text-align: center; padding: 32px 8px; color: var(--ink-soft); }
 .state h2 { color: var(--ink); margin: 0 0 8px; }
+.app-nudge { width: 100%; max-width: 420px; box-sizing: border-box; background: var(--field); border: 1.5px solid var(--line); border-radius: 16px; padding: 16px; margin: 4px 0 14px; display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.app-nudge strong { color: var(--ink); }
+.app-nudge span { font-size: 14px; color: var(--ink-soft); }
+.app-nudge .btn { align-self: flex-start; margin-top: 6px; }
 .upcoming { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .upcoming li { background: var(--field); border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
 .upcoming strong { color: var(--ink); }

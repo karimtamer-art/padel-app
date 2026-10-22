@@ -5,6 +5,9 @@ import '../data/admin_service.dart';
 
 // Organizer entry manager: add pairs (real app players by @username, or guests
 // by name) and remove entries — for events where not everyone is on the app yet.
+// Website registrations (padel-rivals.com) are listed too, with one-tap "Add to
+// draw": the server links each person to their app account by phone so their
+// results count, and falls back to a guest (admin_web_to_draw).
 
 Future<void> showTournamentEntries(
   BuildContext context, {
@@ -50,6 +53,8 @@ class _Side {
 class _EntriesSheetState extends State<_EntriesSheet> {
   bool _loading = true, _busy = false;
   List<Map<String, dynamic>> _entries = [];
+  List<Map<String, dynamic>> _web = [];
+  String? _webBusy; // registration id being added
   final _p1 = _Side();
   final _p2 = _Side();
   int _searchSide = -1; // 0 = player, 1 = partner, -1 = none
@@ -69,10 +74,14 @@ class _EntriesSheetState extends State<_EntriesSheet> {
   }
 
   Future<void> _load() async {
-    final rows = await AdminService.tournamentEntries(widget.tournamentId);
+    final results = await Future.wait([
+      AdminService.tournamentEntries(widget.tournamentId),
+      AdminService.webRegistrations(widget.tournamentId),
+    ]);
     if (!mounted) return;
     setState(() {
-      _entries = rows;
+      _entries = results[0];
+      _web = results[1];
       _loading = false;
     });
   }
@@ -203,6 +212,7 @@ class _EntriesSheetState extends State<_EntriesSheet> {
                     padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
                     children: [
                       _addCard(),
+                      if (_web.isNotEmpty) ..._webSection(),
                       const SizedBox(height: 18),
                       Text('CURRENT PAIRS', style: AdminText.kicker()),
                       const SizedBox(height: 8),
@@ -332,5 +342,172 @@ class _EntriesSheetState extends State<_EntriesSheet> {
         ),
       ]),
     );
+  }
+
+  // ── Website registrations ───────────────────────────────────────────────
+  static bool _webOpen(Map<String, dynamic> w) =>
+      w['entry_id'] == null && (w['status'] == 'pending' || w['status'] == 'confirmed');
+
+  List<Widget> _webSection() {
+    final open = _web.where(_webOpen).toList();
+    final done = _web.where((w) => w['entry_id'] != null).length;
+    return [
+      const SizedBox(height: 18),
+      Text('FROM THE WEBSITE', style: AdminText.kicker()),
+      const SizedBox(height: 4),
+      Text(
+          'Check the payment, then add them. Anyone whose number matches an app '
+          'account goes in as that player, so their results count.'
+          '${done > 0 ? ' $done already added.' : ''}',
+          style: AdminText.small(AdminColors.inkFaint)),
+      const SizedBox(height: 8),
+      if (open.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Text('Nothing waiting.', style: AdminText.small()),
+        )
+      else
+        for (final w in open) _webRow(w),
+    ];
+  }
+
+  Widget _who(String name, String? level, String? account) {
+    final linked = account != null && account.trim().isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Row(children: [
+        Icon(linked ? Icons.person_rounded : Icons.person_outline_rounded,
+            size: 15, color: linked ? AdminColors.primary : AdminColors.inkFaint),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text('$name${level != null ? ' · $level' : ''}',
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: AdminText.sans(13, FontWeight.w700, AdminColors.ink)),
+        ),
+        Text(linked ? 'App: $account' : 'Guest',
+            style: AdminText.sans(10.5, FontWeight.w800,
+                linked ? AdminColors.primary : AdminColors.gold)),
+      ]),
+    );
+  }
+
+  Widget _webRow(Map<String, dynamic> w) {
+    final solo = w['needs_partner'] == true;
+    final due = (w['amount_due'] as num?)?.toDouble() ?? 0;
+    final sender = (w['instapay_sender'] as String?)?.trim();
+    final proof = w['proof_path'] as String?;
+    final busy = _webBusy == w['id'];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+          color: AdminColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AdminColors.lineSoft)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _who(w['name'] as String? ?? 'Player', w['level'] as String?,
+            w['player_account'] as String?),
+        if (solo)
+          Padding(
+            padding: const EdgeInsets.only(top: 3, left: 21),
+            child: Text('Needs a partner',
+                style: AdminText.sans(11.5, FontWeight.w700, AdminColors.warn)),
+          )
+        else
+          _who(w['partner_name'] as String? ?? 'Partner', w['partner_level'] as String?,
+              w['partner_account'] as String?),
+        const SizedBox(height: 6),
+        Text(
+            [
+              'WhatsApp ${w['phone'] ?? '—'}',
+              due > 0 ? 'EGP ${due.toStringAsFixed(0)} InstaPay' : 'Free entry',
+              if (sender != null && sender.isNotEmpty) 'from $sender',
+            ].join(' · '),
+            style: AdminText.small(AdminColors.inkSoft)),
+        const SizedBox(height: 10),
+        Row(children: [
+          if (proof != null && proof.isNotEmpty) ...[
+            Expanded(
+              child: AdminButton('Screenshot',
+                  variant: AdminBtn.ghost, height: 38, icon: Icons.image_outlined,
+                  onPressed: () => _showProof(proof)),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: AdminButton(
+                busy ? 'Adding…' : (solo ? 'Pair & add' : 'Add to draw'),
+                height: 38,
+                icon: solo ? Icons.people_alt_outlined : Icons.playlist_add_rounded,
+                onPressed: _webBusy != null ? null : () => _webAdd(w)),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  Future<void> _showProof(String path) async {
+    final url = await AdminService.signProofUrl(path, bucket: 'web-payment-proofs');
+    if (!mounted) return;
+    if (url == null) {
+      adminToast(context, 'Could not load the screenshot.', ok: false);
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (c) => Dialog(
+        backgroundColor: AdminColors.surface,
+        insetPadding: const EdgeInsets.all(16),
+        child: InteractiveViewer(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(url, fit: BoxFit.contain),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _webAdd(Map<String, dynamic> w) async {
+    String? pairWith;
+    if (w['needs_partner'] == true) {
+      final others = _web
+          .where((o) => o['id'] != w['id'] && o['needs_partner'] == true && _webOpen(o))
+          .toList();
+      if (others.isEmpty) {
+        adminToast(context, 'No other solo player to pair with yet.', ok: false);
+        return;
+      }
+      pairWith = await showDialog<String>(
+        context: context,
+        builder: (c) => SimpleDialog(
+          backgroundColor: AdminColors.surface,
+          title: Text('Pair ${w['name']} with…',
+              style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+          children: [
+            for (final o in others)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(c, o['id'] as String),
+                child: Text('${o['name']} · ${o['level'] ?? ''}',
+                    style: AdminText.body()),
+              ),
+          ],
+        ),
+      );
+      if (pairWith == null) return;
+    }
+    setState(() => _webBusy = w['id'] as String);
+    final err = await AdminService.webRegistrationToDraw(w['id'] as String, pairWith: pairWith);
+    if (!mounted) return;
+    if (err != null) {
+      setState(() => _webBusy = null);
+      adminToast(context, err, ok: false);
+      return;
+    }
+    await _load();
+    widget.onChanged?.call();
+    if (!mounted) return;
+    setState(() => _webBusy = null);
+    adminToast(context, 'Added to the draw');
   }
 }

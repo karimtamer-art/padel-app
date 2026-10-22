@@ -515,6 +515,35 @@ class AdminService {
     }
   }
 
+  /// Website registrations for a tournament, with the app account each phone
+  /// matches (`player_account` / `partner_account`, null = none). Empty on a
+  /// database without the 2026-10-22 web_to_draw delta.
+  static Future<List<Map<String, dynamic>>> webRegistrations(String tid) async {
+    try {
+      final rows = await _db
+          .rpc('admin_web_registrations', params: {'p_tournament': tid});
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (e) {
+      debugPrint('[AdminService] webRegistrations: $e');
+      return [];
+    }
+  }
+
+  /// Moves a website registration into the draw — as real app players where
+  /// the phone matches an account, else as guests. [pairWith] is a second
+  /// solo registration to partner a solo one with. Error sentence or null.
+  static Future<String?> webRegistrationToDraw(String regId, {String? pairWith}) async {
+    try {
+      final res = await _db.rpc('admin_web_to_draw',
+          params: {'p_reg': regId, 'p_pair_with': pairWith});
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Search real players by @username (for linking an app player to an entry).
   static Future<List<Map<String, dynamic>>> searchPlayers(String query) async {
     try {
@@ -1377,10 +1406,12 @@ class AdminService {
 
   /// Signs a private payment-proof storage path so the admin can view the
   /// InstaPay screenshot. Returns null if there's no proof or signing fails.
-  static Future<String?> signProofUrl(String? path) async {
+  /// [bucket] is 'web-payment-proofs' for a website registration's screenshot.
+  static Future<String?> signProofUrl(String? path,
+      {String bucket = 'payment-proofs'}) async {
     if (path == null || path.isEmpty) return null;
     try {
-      return await _db.storage.from('payment-proofs').createSignedUrl(path, 3600);
+      return await _db.storage.from(bucket).createSignedUrl(path, 3600);
     } catch (e) {
       debugPrint('[AdminService] signProofUrl: $e');
       return null;
