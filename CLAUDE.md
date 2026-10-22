@@ -789,8 +789,17 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   - **Levels are padel categories** `D Low … A Upper` (`web_levels()`), stored
     as `tournaments.min_category` / `max_category`, NULL = no limit that side.
     A website label only — they never touch `min_rating`/`max_rating` or the
-    rating engine (rule 2). Set them per event in the table editor until the
-    console has a field for them.
+    rating engine (rule 2). Set per event in the console's create/edit sheet
+    ("Website levels", 2026-10-22) — the app's level range is a SEPARATE
+    field and does not limit the website. The level list lives in three
+    places: SQL `web_levels()`, `LEVELS` in `home.js`, `_webLevels` in
+    `admin_tournaments_screen.dart`.
+  - **"Coming soon"** (2026-10-22, `changes/2026-10-22_web_upcoming_tournaments.sql`):
+    an event whose `registration_opens` is still in the future is invisible to
+    `web_open_tournaments()`, which read as "the site isn't connected".
+    `web_upcoming_tournaments()` lists them read-only, with no form. It is a
+    separate function on purpose — `web_register` checks eligibility against
+    `web_open_tournaments()`, so widening that one would open registration early.
   - **Payment is InstaPay ONLY** (2026-10-21 — no cash at the venue, no
     gateway, rule 8). A paid event always needs a sender name + screenshot;
     `web_register` ignores `p_pay_method` and the CHECK allows only

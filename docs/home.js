@@ -28,6 +28,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var tournaments = [];
   var current = null;
+  var upcoming = [];
 
   // ── Supabase helpers ─────────────────────────────────────────────────
   function headers(extra) {
@@ -87,6 +88,7 @@
   // ── UI helpers ───────────────────────────────────────────────────────
   function showStep(n) {
     ['step1', 'step2', 'step3'].forEach(function (id, i) { $(id).hidden = (i + 1 !== n); });
+    if (upcoming.length) $('upcoming').hidden = n !== 1;
     document.querySelectorAll('.steps li').forEach(function (li) {
       li.classList.toggle('on', Number(li.dataset.step) <= n);
     });
@@ -122,6 +124,32 @@
   }
 
   // ── Load tournaments ─────────────────────────────────────────────────
+  // Announced events whose registration hasn't opened: listed, no form.
+  // Any failure (e.g. a database without the 2026-10-22 delta) just hides it.
+  function loadUpcoming() {
+    rpc('web_upcoming_tournaments').then(function (rows) {
+      upcoming = rows || [];
+      if (!upcoming.length) return;
+      var list = $('upcoming-list');
+      upcoming.forEach(function (t) {
+        var li = document.createElement('li');
+        var name = document.createElement('strong');
+        name.textContent = t.name;
+        var meta = document.createElement('span');
+        var bits = [fmtDate(t.start_date) + (t.start_time ? ' ' + t.start_time : '')];
+        if (t.venue_name) bits.push(t.venue_name);
+        bits.push(rangeText(t));
+        if (Number(t.entry_fee) > 0) bits.push(money(t.entry_fee) + ' per player');
+        meta.textContent = bits.join(' · ');
+        var opens = document.createElement('em');
+        opens.textContent = 'Registration opens ' + fmtDate(t.registration_opens);
+        li.appendChild(name); li.appendChild(meta); li.appendChild(opens);
+        list.appendChild(li);
+      });
+      $('upcoming').hidden = !$('step2').hidden || !$('step3').hidden;
+    }).catch(function () {});
+  }
+
   function load() {
     rpc('web_open_tournaments').then(function (rows) {
       tournaments = rows || [];
@@ -278,5 +306,6 @@
     $('back').addEventListener('click', function () { showStep(1); });
     $('again').addEventListener('click', reset);
     load();
+    loadUpcoming();
   });
 })();

@@ -943,6 +943,13 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     );
   }
 
+  /// Padel categories the website form uses, lowest first. Mirrors SQL
+  /// web_levels() and LEVELS in docs/home.js — change all three together.
+  static const _webLevels = [
+    'D Low', 'D Mid', 'D Upper', 'C Low', 'C Mid', 'C Upper',
+    'B Low', 'B Mid', 'B Upper', 'A Low', 'A Mid', 'A Upper',
+  ];
+
   void _form(Map<String, dynamic>? t) {
     final isNew = t == null;
     final nameC = TextEditingController(text: t?['name'] ?? '');
@@ -966,10 +973,22 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     bool sponsored = t?['sponsored'] as bool? ?? false;
     bool regClosed = t?['registration_closed'] as bool? ?? false;
     String category = t?['category'] as String? ?? 'open';
+    // Website levels (padel-rivals.com form) — null = no limit on that side.
+    // Mirrors web_levels() in SQL; tournaments_web_category_chk enforces it.
+    String? webMin = t?['min_category'] as String?;
+    String? webMax = t?['max_category'] as String?;
+    // One save per sheet: a second tap while the first is in flight used to
+    // create the tournament twice.
+    var saving = false;
 
     // Eligibility — derive mode from existing data
     final existingMin = (t?['min_rating'] as num?)?.toDouble() ?? 0;
     final existingMax = (t?['max_rating'] as num?)?.toDouble();
+    // min_rating/max_rating are stored on the 0–7 level scale (the ELO
+    // round trip is gone), so read them back as-is, snapped to the 0.5 steps
+    // the dropdown offers. The old (x − 800) / 200 here turned 2.5 into 1.0,
+    // so editing a tournament silently reset its range on save.
+    double snap(double v) => (v.clamp(1.0, 7.0) / 0.5).round() * 0.5;
     String eligMode;
     double minLevel;
     double maxLevel;
@@ -977,11 +996,11 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       eligMode = 'open'; minLevel = 1.0; maxLevel = 7.0;
     } else if (existingMax != null && existingMax > 0) {
       eligMode = 'range';
-      minLevel = (((existingMin - 800) / 200.0).clamp(1.0, 7.0) / 0.5).round() * 0.5;
-      maxLevel = (((existingMax - 800) / 200.0).clamp(1.0, 7.0) / 0.5).round() * 0.5;
+      minLevel = snap(existingMin);
+      maxLevel = snap(existingMax);
     } else {
       eligMode = 'min';
-      minLevel = (((existingMin - 800) / 200.0).clamp(1.0, 7.0) / 0.5).round() * 0.5;
+      minLevel = snap(existingMin);
       maxLevel = 7.0;
     }
 
@@ -996,6 +1015,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         height: 50,
         icon: Icons.check_rounded,
         onPressed: () async {
+          if (saving) return;
           if (nameC.text.trim().isEmpty) {
             adminToast(context, 'Give the tournament a name.', ok: false);
             return;
@@ -1008,6 +1028,12 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             adminToast(context, 'Pick a start time.', ok: false);
             return;
           }
+          if (webMin != null && webMax != null &&
+              _webLevels.indexOf(webMin!) > _webLevels.indexOf(webMax!)) {
+            adminToast(context, 'Website level "from" must be below "to".', ok: false);
+            return;
+          }
+          saving = true;
           final data = <String, dynamic>{
             'name': nameC.text.trim(),
             'venue_name': venueC.text.trim(),
@@ -1032,6 +1058,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             'sponsored': sponsored,
             'registration_closed': regClosed,
             'category': category,
+            'min_category': webMin,
+            'max_category': webMax,
             'cancel_reason': status == 'cancelled'
                 ? (reasonC.text.trim().isEmpty ? null : reasonC.text.trim())
                 : null,
@@ -1179,6 +1207,37 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                             style: AdminText.body(),
                           ),
                         ),
+                    ],
+                  ),
+                ),
+              ),
+            ]);
+          }
+
+          Widget webLevelDrop(String label, String? current, void Function(String?) onChange) {
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: AdminText.small(AdminColors.inkFaint)),
+              const SizedBox(height: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AdminColors.surfaceAlt,
+                  borderRadius: AdminUI.fieldR,
+                  border: Border.all(color: AdminColors.line),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String?>(
+                    value: _webLevels.contains(current) ? current : null,
+                    isExpanded: true,
+                    dropdownColor: AdminColors.surface,
+                    style: AdminText.body(),
+                    onChanged: onChange,
+                    items: [
+                      DropdownMenuItem<String?>(
+                          value: null, child: Text('Any', style: AdminText.body())),
+                      for (final l in _webLevels)
+                        DropdownMenuItem<String?>(
+                            value: l, child: Text(l, style: AdminText.body())),
                     ],
                   ),
                 ),
@@ -1456,6 +1515,22 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               Text('Any player level can register.',
                   style: AdminText.small(AdminColors.inkFaint)),
             ],
+            const SizedBox(height: 16),
+            // ── Website levels ────────────────────────────────────
+            Text('Website levels', style: AdminText.strong(AdminColors.inkSoft)),
+            const SizedBox(height: 7),
+            Row(children: [
+              Expanded(child: webLevelDrop('From', webMin,
+                  (v) => setSheet(() => webMin = v))),
+              const SizedBox(width: 12),
+              Expanded(child: webLevelDrop('To', webMax,
+                  (v) => setSheet(() => webMax = v))),
+            ]),
+            const SizedBox(height: 6),
+            Text('Which levels can register on padel-rivals.com (D Low … A Upper). '
+                'Separate from the app\'s level range above — set both. '
+                'Any = no limit on that side.',
+                style: AdminText.small(AdminColors.inkFaint)),
           ]);
         }),
       ]),
