@@ -9,33 +9,38 @@ import 'mock_data.dart';
 import 'rating_engine_v3f5.dart';
 
 /// One rung of the four-tier ladder.
+///
+/// Players see LETTERS only (2026-10-22): "B Mid", never "Gold". [metal] is
+/// the internal key the server stores in `player_ratings.tier` and the
+/// colours key off — it is not display text. [tierKeyLabel] turns one into a
+/// letter. The same bands drive the website's categories (SQL
+/// `_web_level_of`), so a player is the same letter on both.
 class Division {
   final String key; // 'D' … 'A'
   final String name; // 'Division B'
-  final String metal; // 'bronze' | 'silver' | 'gold' | 'elite'
-  final String metalName; // 'Gold'
+  final String metal; // internal: 'bronze' | 'silver' | 'gold' | 'elite'
   final String league; // 'Advanced League'
   final double min, max; // inclusive level band
-  const Division(this.key, this.name, this.metal, this.metalName, this.league,
-      this.min, this.max);
+  const Division(this.key, this.name, this.metal, this.league, this.min, this.max);
 }
 
 /// Pure ranking math. No widgets — safe to unit-test.
 ///
 /// ```
-/// 0.0–1.9  Division D · Bronze · Beginner League
-/// 2.0–3.4  Division C · Silver · Intermediate League
-/// 3.5–4.9  Division B · Gold   · Advanced League
-/// 5.0–7.0  Division A · Elite  · Expert League
+/// 0.0–1.9  Division D · Beginner League
+/// 2.0–3.4  Division C · Intermediate League
+/// 3.5–4.9  Division B · Advanced League
+/// 5.0–7.0  Division A · Expert League
+/// Each split into Low / Mid / Upper thirds → "B Mid".
 /// ```
 class RankingScale {
   RankingScale._();
 
   static const List<Division> divisions = [
-    Division('D', 'Division D', 'bronze', 'Bronze', 'Beginner League', 0.0, 1.9),
-    Division('C', 'Division C', 'silver', 'Silver', 'Intermediate League', 2.0, 3.4),
-    Division('B', 'Division B', 'gold', 'Gold', 'Advanced League', 3.5, 4.9),
-    Division('A', 'Division A', 'elite', 'Elite', 'Expert League', 5.0, 7.0),
+    Division('D', 'Division D', 'bronze', 'Beginner League', 0.0, 1.9),
+    Division('C', 'Division C', 'silver', 'Intermediate League', 2.0, 3.4),
+    Division('B', 'Division B', 'gold', 'Advanced League', 3.5, 4.9),
+    Division('A', 'Division A', 'elite', 'Expert League', 5.0, 7.0),
   ];
 
   /// Competitive matches before a rating goes public. THE authoritative
@@ -72,10 +77,25 @@ class RankingScale {
     return _clamp((lv - d.min) / (d.max - d.min), 0, 1);
   }
 
-  /// 'Low' | 'Mid' | 'High' within the current division.
+  /// 'Low' | 'Mid' | 'Upper' within the current division (the website's
+  /// word too — was 'High' until 2026-10-22).
   static String tierFor(double lv) {
     final f = progressInDivision(lv);
-    return f < 1 / 3 ? 'Low' : (f < 2 / 3 ? 'Mid' : 'High');
+    return f < 1 / 3 ? 'Low' : (f < 2 / 3 ? 'Mid' : 'Upper');
+  }
+
+  /// The player-facing category, e.g. "B Mid". Mirrored by SQL
+  /// `_web_level_of` for the website — change both.
+  static String categoryFor(double lv) => '${divisionFor(lv).key} ${tierFor(lv)}';
+
+  /// Letter for a stored tier key ('gold' → 'B'). Anything unknown (e.g.
+  /// 'Unranked') passes through title-cased, so it is safe on any tier string.
+  static String tierKeyLabel(String key) {
+    final k = key.trim().toLowerCase();
+    for (final d in divisions) {
+      if (d.metal == k) return d.key;
+    }
+    return k.isEmpty ? key : '${k[0].toUpperCase()}${k.substring(1)}';
   }
 
   static Division? nextDivision(double lv) {

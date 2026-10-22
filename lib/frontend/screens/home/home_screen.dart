@@ -2371,7 +2371,7 @@ class _ResultHero extends StatelessWidget {
                           .copyWith(fontSize: 15)),
                 ]),
                 const SizedBox(height: 4),
-                Text('${RankingScale.divisionFor(after).name} · ${RankingScale.divisionFor(after).metalName}',
+                Text(RankingScale.categoryFor(after),
                     style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 12.5)),
               ] else ...[
                 const SizedBox(height: 12),
@@ -2491,12 +2491,12 @@ class _PlacementReveal extends StatelessWidget {
               Text("You're in ${div.name}",
                   style: AppText.stat(23, AppColors.heroInk).copyWith(letterSpacing: -0.5)),
               const SizedBox(height: 4),
-              Text('${div.metalName} · ${div.league}',
+              Text('${RankingScale.categoryFor(level)} · ${div.league}',
                   style: AppText.small(AppColors.heroFaint).copyWith(fontSize: 13)),
               const SizedBox(height: 18),
               Row(children: [
                 stat('Lv ${RankingScale.fmtQuarter(level)}', 'STARTING LEVEL'),
-                stat(div.metalName, 'TIER'),
+                stat(RankingScale.categoryFor(level), 'CATEGORY'),
                 stat(record, 'RECORD'),
               ]),
               const SizedBox(height: 18),

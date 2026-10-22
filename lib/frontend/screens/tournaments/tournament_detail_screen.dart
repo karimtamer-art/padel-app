@@ -783,7 +783,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       final aboveMin = minLv == null || d.max >= minLv;
       final belowMax = maxLv == null || d.min <= maxLv;
       return aboveMin && belowMax;
-    }).map((d) => d.metalName).toList();
+    }).map((d) => d.name).toList();
 
     return AppCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

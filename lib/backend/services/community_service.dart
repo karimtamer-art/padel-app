@@ -124,7 +124,7 @@ class CommunityService {
       return t[0].toUpperCase() + t.substring(1).toLowerCase();
     }
     if (level == null) return null;
-    return RankingScale.divisionFor(level).metalName;
+    return RankingScale.divisionFor(level).metal;
   }
 
   /// Full mini-profile for one member (stats + community rank), or null.
@@ -644,7 +644,9 @@ class Community {
 class MemberLite {
   final String id, name;
   final String? avatarUrl;
-  final String? tier; // 'Gold' / 'Silver' / … (or derived from level)
+  // Stored tier KEY ('gold' / 'Gold' / 'Unranked' …) — colours key off it.
+  // Show it through RankingScale.tierKeyLabel ('gold' → 'B'), never raw.
+  final String? tier;
   const MemberLite(
       {required this.id, required this.name, this.avatarUrl, this.tier});
 

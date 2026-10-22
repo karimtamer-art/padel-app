@@ -789,17 +789,23 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   - **Levels are padel categories** `D Low … A Upper` (`web_levels()`),
     **derived from the tournament's `min_rating` / `max_rating`** — ONE level
     setting, the console's eligibility range (2026-10-22,
-    `changes/2026-10-22_one_level_setting.sql`). Each category is a 0.5 band
-    from 1.0 (D Low 1.0–1.5 … A Upper 6.5–7.0); the min takes the band it
-    falls in, the max the band that ENDS at it, so 2.5–4.5 → C Low to B Low.
-    `_web_level_from_min` / `_web_level_from_max` are the definition; the
+    `changes/2026-10-22_one_level_setting.sql`). Categories are the **app's
+    own division bands** — D 0.0–1.9, C 2.0–3.4, B 3.5–4.9, A 5.0–7.0, each
+    split Low / Mid / Upper — so a player is the same "B Mid" in the app and
+    on the site; 2.5–4.5 → C Mid to B Upper. SQL `_web_level_of` mirrors
+    `RankingScale.categoryFor` (`test/ranking_category_test.dart` pins the
+    band edges); `_web_level_from_min` / `_from_max` apply it to a range; the
     RPCs still OUTPUT `min_category` / `max_category` so `home.js` and
     `web_register` didn't change. The hand-set `tournaments.min_category` /
     `max_category` columns briefly existed and were **dropped** — two settings
     that could disagree. Read-only use of the rating columns (rule 2). The
-    list lives in three places: SQL `web_levels()`, `LEVELS` in `home.js`,
-    `_webLevels` + `_webRangeText` (display mirror) in
-    `admin_tournaments_screen.dart`.
+    list lives in SQL `web_levels()` and `LEVELS` in `home.js`.
+  - **Players see letters, never metals** (2026-10-22). Bronze / Silver /
+    Gold / Elite are gone from every screen; the third is now "Upper" (was
+    "High"). `Division.metal` and `player_ratings.tier`
+    (`bronze`/`silver`/`gold`/`elite`) are still the INTERNAL keys — colours,
+    season scopes and SQL key off them — so show a stored tier through
+    `RankingScale.tierKeyLabel` ('gold' → 'B'), never raw.
   - **"Coming soon"** (2026-10-22, `changes/2026-10-22_web_upcoming_tournaments.sql`):
     an event whose `registration_opens` is still in the future is invisible to
     `web_open_tournaments()`, which read as "the site isn't connected".

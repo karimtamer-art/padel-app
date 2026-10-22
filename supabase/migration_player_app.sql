@@ -12996,8 +12996,8 @@ notify pgrst, 'reload schema';
 --
 -- Levels are padel categories, D Low (lowest) .. A Upper (highest). Since
 -- 2026-10-22 they are DERIVED from the tournament's min_rating / max_rating
--- (one setting, set in the console): each category is a 0.5 band of the
--- 0-7 scale, D Low = 1.0-1.5 … A Upper = 6.5-7.0. The min_category /
+-- (one setting, set in the console) on the app's division bands — see
+-- _web_level_of below. The min_category /
 -- max_category columns this first added are dropped. Read-only use of the
 -- rating columns; nothing here touches the rating engine (rule 2).
 --
@@ -13014,22 +13014,33 @@ returns text[] language sql immutable as $$
 $$;
 grant execute on function public.web_levels() to anon, authenticated;
 
--- Category bands from the 0-7 level range. Band i (1..12) covers
--- [0.5 + 0.5*i, 1.0 + 0.5*i). Min level → the band it falls in (2.5 → C Low);
--- max level → the band that ENDS at it (4.5 → B Low, 4.7 → B Mid), so the
--- website never offers a category wholly above the app's limit.
--- No limit (min <= 1.0, max null or >= 7.0) → NULL, which reads as "any".
+-- A level's category, on the APP's division bands so a player is the same
+-- letter on the website and in the app: D 0.0-1.9, C 2.0-3.4, B 3.5-4.9,
+-- A 5.0-7.0, each split into Low / Mid / Upper thirds. Exact mirror of
+-- RankingScale.divisionFor + tierFor (lib/backend/models/ranking_scale.dart)
+-- — change both. A level in a gap (1.95) belongs to the division above, at Low.
+create or replace function public._web_level_of(p numeric)
+returns text language sql immutable as $$
+  with d as (
+    select case when p <= 1.9 then 0 when p <= 3.4 then 1 when p <= 4.9 then 2 else 3 end as i
+  ), b as (
+    select i, (array[0.0, 2.0, 3.5, 5.0])[i + 1] as lo, (array[1.9, 3.4, 4.9, 7.0])[i + 1] as hi from d
+  ), f as (
+    select i, least(1.0, greatest(0.0, (p - lo) / (hi - lo))) as f from b
+  )
+  select (public.web_levels())[i * 3 + case when f < 1.0 / 3 then 1 when f < 2.0 / 3 then 2 else 3 end]
+    from f;
+$$;
+-- A tournament's range → the categories the website offers. No limit
+-- (min <= 0, max null or >= 7.0) → NULL, which reads as "any".
+-- e.g. 2.50-4.50 → C Mid to B Upper.
 create or replace function public._web_level_from_min(p numeric)
 returns text language sql immutable as $$
-  select case when p is null or p <= 1.0 then null
-              else (public.web_levels())[least(12, greatest(1, floor((p - 1.0) / 0.5)::int + 1))]
-         end;
+  select case when p is null or p <= 0 then null else public._web_level_of(p) end;
 $$;
 create or replace function public._web_level_from_max(p numeric)
 returns text language sql immutable as $$
-  select case when p is null or p >= 7.0 then null
-              else (public.web_levels())[least(12, greatest(1, ceil((p - 1.0) / 0.5)::int))]
-         end;
+  select case when p is null or p >= 7.0 then null else public._web_level_of(p) end;
 $$;
 
 -- The hand-set category columns (2026-10-20) were a second level setting that

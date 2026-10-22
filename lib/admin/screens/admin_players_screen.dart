@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart' show CupertinoPicker;
 import '../theme/admin_colors.dart';
+import 'package:padel_clay/backend/models/ranking_scale.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
 
@@ -111,12 +112,13 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
     }
   }
 
-  static String _metalName(String tier) {
+  // League word under a division (letters only — no metal names, 2026-10-22).
+  static String _leagueName(String tier) {
     switch (tier) {
-      case 'elite': return 'Elite';
-      case 'gold': return 'Gold';
-      case 'silver': return 'Silver';
-      default: return 'Bronze';
+      case 'elite': return 'Expert';
+      case 'gold': return 'Advanced';
+      case 'silver': return 'Intermediate';
+      default: return 'Beginner';
     }
   }
 
@@ -421,7 +423,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
           ]),
           const SizedBox(height: 3),
           Text('$count', style: AdminText.mono(16, FontWeight.w800, AdminColors.ink)),
-          Text(_metalName(tier), style: AdminText.sans(10.5, FontWeight.w600, AdminColors.inkFaint)),
+          Text(_leagueName(tier), style: AdminText.sans(10.5, FontWeight.w600, AdminColors.inkFaint)),
         ]),
       ),
     );
@@ -575,7 +577,7 @@ class _AdminPlayersScreenState extends State<AdminPlayersScreen> {
                 Text(
                     unranked
                         ? 'Unranked · ${_placementOf(p)}/5 placement matches'
-                        : '${_metalName(tier)} · Division ${_divLetter(tier)}',
+                        : '${RankingScale.categoryFor(rating)} · Division ${_divLetter(tier)}',
                     style: AdminText.sans(15, FontWeight.w800, AdminColors.ink)),
               ]),
             ),

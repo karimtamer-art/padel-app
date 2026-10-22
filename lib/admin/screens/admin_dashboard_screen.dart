@@ -65,10 +65,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     const tierOrder = ['elite', 'gold', 'silver', 'bronze'];
     const tierLabels = {
-      'elite': 'A · Elite',
-      'gold': 'B · Gold',
-      'silver': 'C · Silver',
-      'bronze': 'D · Bronze',
+      'elite': 'Division A',
+      'gold': 'Division B',
+      'silver': 'Division C',
+      'bronze': 'Division D',
     };
     const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final hasMatchData = _weeklyMatches.any((n) => n > 0);

@@ -802,7 +802,7 @@ class _CommunityHubScreenState extends State<CommunityHubScreen> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis),
         if (m.tier != null)
-          Text(m.tier!,
+          Text(RankingScale.tierKeyLabel(m.tier!),
               style: AppText.small(AppColors.inkFaint).copyWith(fontSize: 10.5),
               maxLines: 1,
               overflow: TextOverflow.ellipsis),
@@ -1742,7 +1742,7 @@ class _MemberProfileSheetState extends State<_MemberProfileSheet> {
                   style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 11.5)),
               const SizedBox(height: 9),
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                if (m.tier != null) AppTag(m.tier!, color: tint),
+                if (m.tier != null) AppTag(RankingScale.tierKeyLabel(m.tier!), color: tint),
                 if (rank != null) ...[
                   const SizedBox(width: 7),
                   Container(

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../backend/models/ranking_scale.dart';
 import '../../../backend/services/season_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -839,17 +840,15 @@ class _SeasonLeaderboardScreenState extends State<SeasonLeaderboardScreen> {
   }
 
   String _scopeLabel(SeasonOverview d) =>
-      _scope == 'all' ? 'All players' : '${_titleCase(_scope)} players';
+      _scope == 'all' ? 'All players' : 'Division ${RankingScale.tierKeyLabel(_scope)}';
 
-  static String _titleCase(String s) =>
-      s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 
   // ── scope pills ──
   Widget _scopePills(SeasonOverview d) {
     final myTier = d.me?.tier;
     final scopes = <List<String>>[
       ['all', 'All players'],
-      if (myTier != null) [myTier, '${_titleCase(myTier)} players'],
+      if (myTier != null) [myTier, 'Division ${RankingScale.tierKeyLabel(myTier)}'],
     ];
     if (scopes.length < 2) return const SizedBox.shrink();
     return Container(
@@ -1265,7 +1264,7 @@ class _StandingRow extends StatelessWidget {
               ]),
               const SizedBox(height: 2),
               Text(
-                '${bracket?.short ?? 'Unranked'} · ${_titleCase(row.tier)}',
+                '${bracket?.short ?? 'Unranked'} · Div ${RankingScale.tierKeyLabel(row.tier)}',
                 style: AppText.small(AppColors.inkSoft).copyWith(fontSize: 11),
               ),
             ],
@@ -1292,8 +1291,6 @@ class _StandingRow extends StatelessWidget {
     );
   }
 
-  static String _titleCase(String s) =>
-      s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 }
 
 // ── Reward bracket card ─────────────────────────────────────────────────────

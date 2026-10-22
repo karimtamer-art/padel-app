@@ -374,9 +374,9 @@ class _AdminCommunityScreenState extends State<AdminCommunityScreen> {
 
   Widget _tierBars(int total) {
     final rows = <List<Object>>[
-      ['Bronze–Silver', _s('tier_bronze'), const Color(0xFF9E7B4F)],
-      ['Gold', _s('tier_gold'), AdminColors.gold],
-      ['Elite', _s('tier_elite'), AdminColors.primary],
+      ['Division D–C', _s('tier_bronze'), const Color(0xFF9E7B4F)],
+      ['Division B', _s('tier_gold'), AdminColors.gold],
+      ['Division A', _s('tier_elite'), AdminColors.primary],
     ];
     return AdminCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

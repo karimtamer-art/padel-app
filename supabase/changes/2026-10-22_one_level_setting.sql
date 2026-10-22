@@ -6,15 +6,15 @@
 -- min_category / max_category (D Low … A Upper). The website now DERIVES its
 -- categories from min_rating / max_rating, and the category columns go.
 --
---   Level      Category        Level      Category
---   1.0-1.5    D Low           4.0-4.5    B Low
---   1.5-2.0    D Mid           4.5-5.0    B Mid
---   2.0-2.5    D Upper         5.0-5.5    B Upper
---   2.5-3.0    C Low           5.5-6.0    A Low
---   3.0-3.5    C Mid           6.0-6.5    A Mid
---   3.5-4.0    C Upper         6.5-7.0    A Upper
+--   Division   Level      Low / Mid / Upper
+--   D          0.0-1.9    0.0-0.6 / 0.7-1.2 / 1.3-1.9
+--   C          2.0-3.4    2.0-2.4 / 2.5-2.9 / 3.0-3.4
+--   B          3.5-4.9    3.5-3.9 / 4.0-4.4 / 4.5-4.9
+--   A          5.0-7.0    5.0-5.6 / 5.7-6.3 / 6.4-7.0
 --
--- e.g. a tournament set to 2.50-4.50 in the console shows "C Low to B Low".
+-- These are the APP's division bands (RankingScale), so a player is the same
+-- category on the website and in the app ("B Mid"). e.g. a tournament set to
+-- 2.50-4.50 in the console shows "C Mid to B Upper".
 -- The RPCs keep their min_category / max_category OUTPUT names, so the
 -- website code needs no change and web_register keeps checking against them.
 --
@@ -23,22 +23,33 @@
 -- into min_category / max_category are discarded — set levels in the console.
 -- ============================================================
 
--- Category bands from the 0-7 level range. Band i (1..12) covers
--- [0.5 + 0.5*i, 1.0 + 0.5*i). Min level → the band it falls in (2.5 → C Low);
--- max level → the band that ENDS at it (4.5 → B Low, 4.7 → B Mid), so the
--- website never offers a category wholly above the app's limit.
--- No limit (min <= 1.0, max null or >= 7.0) → NULL, which reads as "any".
+-- A level's category, on the APP's division bands so a player is the same
+-- letter on the website and in the app: D 0.0-1.9, C 2.0-3.4, B 3.5-4.9,
+-- A 5.0-7.0, each split into Low / Mid / Upper thirds. Exact mirror of
+-- RankingScale.divisionFor + tierFor (lib/backend/models/ranking_scale.dart)
+-- — change both. A level in a gap (1.95) belongs to the division above, at Low.
+create or replace function public._web_level_of(p numeric)
+returns text language sql immutable as $$
+  with d as (
+    select case when p <= 1.9 then 0 when p <= 3.4 then 1 when p <= 4.9 then 2 else 3 end as i
+  ), b as (
+    select i, (array[0.0, 2.0, 3.5, 5.0])[i + 1] as lo, (array[1.9, 3.4, 4.9, 7.0])[i + 1] as hi from d
+  ), f as (
+    select i, least(1.0, greatest(0.0, (p - lo) / (hi - lo))) as f from b
+  )
+  select (public.web_levels())[i * 3 + case when f < 1.0 / 3 then 1 when f < 2.0 / 3 then 2 else 3 end]
+    from f;
+$$;
+-- A tournament's range → the categories the website offers. No limit
+-- (min <= 0, max null or >= 7.0) → NULL, which reads as "any".
+-- e.g. 2.50-4.50 → C Mid to B Upper.
 create or replace function public._web_level_from_min(p numeric)
 returns text language sql immutable as $$
-  select case when p is null or p <= 1.0 then null
-              else (public.web_levels())[least(12, greatest(1, floor((p - 1.0) / 0.5)::int + 1))]
-         end;
+  select case when p is null or p <= 0 then null else public._web_level_of(p) end;
 $$;
 create or replace function public._web_level_from_max(p numeric)
 returns text language sql immutable as $$
-  select case when p is null or p >= 7.0 then null
-              else (public.web_levels())[least(12, greatest(1, ceil((p - 1.0) / 0.5)::int))]
-         end;
+  select case when p is null or p >= 7.0 then null else public._web_level_of(p) end;
 $$;
 
 

@@ -7,6 +7,7 @@ import 'draw_sheet.dart';
 import 'tournament_entries_sheet.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/community_service.dart';
+import 'package:padel_clay/backend/models/ranking_scale.dart';
 
 class AdminTournamentsScreen extends StatefulWidget {
   /// When set (organizer console), the list is scoped to this organizer's own
@@ -943,25 +944,15 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     );
   }
 
-  /// Padel categories the website form uses, lowest first. Mirrors SQL
-  /// web_levels() and LEVELS in docs/home.js — change all three together.
-  static const _webLevels = [
-    'D Low', 'D Mid', 'D Upper', 'C Low', 'C Mid', 'C Upper',
-    'B Low', 'B Mid', 'B Upper', 'A Low', 'A Mid', 'A Upper',
-  ];
-
-  /// What padel-rivals.com shows for a level range. Display-only mirror of
-  /// SQL _web_level_from_min / _web_level_from_max (the server decides who
-  /// may register): each category is a 0.5 band from 1.0, the min takes the
-  /// band it falls in, the max the band that ends at it (2.5–4.5 → C Low to
-  /// B Low).
+  /// What padel-rivals.com offers for a level range — same categories as the
+  /// app (RankingScale.categoryFor), mirrored server-side by SQL
+  /// _web_level_from_min / _web_level_from_max, which decide who may register.
+  /// e.g. 2.5–4.5 → "C Mid to B Upper".
   static String _webRangeText(double min, double? max) {
-    final lo = min <= 1.0 ? 0 : (((min - 1.0) / 0.5).floor()).clamp(0, 11);
-    final hi = (max == null || max >= 7.0)
-        ? 11
-        : ((((max - 1.0) / 0.5).ceil()) - 1).clamp(0, 11);
-    if (lo == 0 && hi == 11) return 'all levels';
-    return '${_webLevels[lo]} to ${_webLevels[hi]}';
+    final lo = min <= 0 ? null : RankingScale.categoryFor(min);
+    final hi = (max == null || max >= 7.0) ? null : RankingScale.categoryFor(max);
+    if (lo == null && hi == null) return 'all levels';
+    return '${lo ?? 'D Low'} to ${hi ?? 'A Upper'}';
   }
 
   void _form(Map<String, dynamic>? t) {
@@ -1178,12 +1169,6 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
           Widget levelDrop(String label, double current, void Function(double) onChange) {
             const lvls = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0];
-            String divName(double l) {
-              if (l < 2.0) return 'Bronze';
-              if (l < 3.5) return 'Silver';
-              if (l < 5.0) return 'Gold';
-              return 'Elite';
-            }
             return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label, style: AdminText.strong(AdminColors.inkSoft)),
               const SizedBox(height: 7),
@@ -1206,7 +1191,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                         DropdownMenuItem(
                           value: l,
                           child: Text(
-                            'Lv ${l.toStringAsFixed(1)}  ·  ${divName(l)}',
+                            'Lv ${l.toStringAsFixed(1)}  ·  ${RankingScale.categoryFor(l)}',
                             style: AdminText.body(),
                           ),
                         ),
