@@ -239,10 +239,10 @@
       var first = val('f-name').split(/\s+/)[0];
       var phone = val('f-phone');
       var text = pay === 'instapay'
-        ? 'We received your payment screenshot. Our team will check it and confirm your spot on WhatsApp at ' + phone + '.'
-        : 'We will message you on WhatsApp at ' + phone + ' to confirm your spot.';
+        ? 'We received your payment screenshot. Your spot is PENDING until our team checks the transfer — we will confirm it on WhatsApp at ' + phone + '.'
+        : 'Your spot is PENDING until we confirm it on WhatsApp at ' + phone + '.';
       if (solo) text += " We're finding you a partner at your level and will introduce you both before the event.";
-      $('done-title').textContent = "You're registered, " + first + '!';
+      $('done-title').textContent = 'Thanks, ' + first + ' — pending confirmation';
       $('done-text').textContent = text;
       showStep(3);
     }).catch(function (ex) {
