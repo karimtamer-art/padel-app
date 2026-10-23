@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
@@ -643,6 +645,8 @@ class _EntriesSheetState extends State<_EntriesSheet> {
     );
   }
 
+  static const _waChannel = MethodChannel('padel/whatsapp');
+
   static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   static const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -676,8 +680,18 @@ class _EntriesSheetState extends State<_EntriesSheet> {
         '${venue.isNotEmpty ? '\n📍 $venue' : ''}'
         '${p.isNotEmpty ? '\n👥 Partner: $p' : ''}'
         '\nSee you on court! — Padel Rivals';
-    final uri = Uri.parse(
-        'https://wa.me/${_waDigits(phone)}?text=${Uri.encodeComponent(text)}');
+    final digits = _waDigits(phone);
+    final msg = Uri.encodeComponent(text);
+    // Android: WhatsApp Business first (the business number lives there, and
+    // a wa.me link may land in personal WhatsApp). MainActivity.kt.
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final ok = await _waChannel.invokeMethod<bool>('openBusiness',
+            {'url': 'whatsapp://send?phone=$digits&text=$msg'});
+        if (ok == true) return;
+      } catch (_) {/* fall back to wa.me */}
+    }
+    final uri = Uri.parse('https://wa.me/$digits?text=$msg');
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
       adminToast(context, 'Could not open WhatsApp.', ok: false);
     }
