@@ -14,6 +14,9 @@ Future<void> showTournamentEntries(
   BuildContext context, {
   required String tournamentId,
   required String tournamentName,
+  String? startDate,
+  String? startTime,
+  String? venue,
   VoidCallback? onChanged,
 }) {
   return showModalBottomSheet(
@@ -23,6 +26,9 @@ Future<void> showTournamentEntries(
     builder: (_) => _EntriesSheet(
       tournamentId: tournamentId,
       tournamentName: tournamentName,
+      startDate: startDate,
+      startTime: startTime,
+      venue: venue,
       onChanged: onChanged,
     ),
   );
@@ -30,10 +36,14 @@ Future<void> showTournamentEntries(
 
 class _EntriesSheet extends StatefulWidget {
   final String tournamentId, tournamentName;
+  final String? startDate, startTime, venue; // for the WhatsApp confirmation
   final VoidCallback? onChanged;
   const _EntriesSheet({
     required this.tournamentId,
     required this.tournamentName,
+    this.startDate,
+    this.startTime,
+    this.venue,
     this.onChanged,
   });
 
@@ -584,34 +594,66 @@ class _EntriesSheetState extends State<_EntriesSheet> {
       add(w['partner_name'] as String?, w['partner_phone'] as String?, (w['name'] as String?) ?? '');
     }
     if (targets.isEmpty || !mounted) return;
+    // One person: straight into WhatsApp, nothing to choose.
+    if (targets.length == 1) {
+      final t = targets.single;
+      await _openWhatsApp(t.$1, t.$2, t.$3);
+      return;
+    }
+    // Two people: WhatsApp opens one chat at a time, so list them and tick
+    // each off once opened.
+    final opened = <int>{};
     await showDialog<void>(
       context: context,
-      builder: (c) => SimpleDialog(
-        backgroundColor: AdminColors.surface,
-        title: Text('Send the confirmation',
-            style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-            child: Text('Opens WhatsApp with the message typed — just press Send.',
-                style: AdminText.small(AdminColors.inkFaint)),
-          ),
-          for (final t in targets)
-            SimpleDialogOption(
-              onPressed: () => _openWhatsApp(t.$1, t.$2, t.$3),
-              child: Row(children: [
-                const Icon(Icons.chat_outlined, size: 18, color: AdminColors.primary),
-                const SizedBox(width: 10),
-                Expanded(child: Text('${t.$1} · ${t.$2}', style: AdminText.body())),
-              ]),
+      builder: (c) => StatefulBuilder(
+        builder: (c, setD) => SimpleDialog(
+          backgroundColor: AdminColors.surface,
+          title: Text('Send the confirmation',
+              style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text('Opens WhatsApp with the message typed — just press Send, '
+                  'then come back for the next one.',
+                  style: AdminText.small(AdminColors.inkFaint)),
             ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(onPressed: () => Navigator.pop(c), child: const Text('Done')),
-          ),
-        ],
+            for (var i = 0; i < targets.length; i++)
+              SimpleDialogOption(
+                onPressed: () async {
+                  await _openWhatsApp(targets[i].$1, targets[i].$2, targets[i].$3);
+                  setD(() => opened.add(i));
+                },
+                child: Row(children: [
+                  Icon(opened.contains(i) ? Icons.check_circle_rounded : Icons.chat_outlined,
+                      size: 18,
+                      color: opened.contains(i) ? AdminColors.green : AdminColors.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: Text('${targets[i].$1} · ${targets[i].$2}',
+                          style: AdminText.body())),
+                ]),
+              ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(onPressed: () => Navigator.pop(c), child: const Text('Done')),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  static const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  /// "Fri 30 Oct, 18:00" — same shape as the Edge Function's template param.
+  String? _when() {
+    final d = DateTime.tryParse(widget.startDate ?? '');
+    if (d == null) return null;
+    final s = '${_days[d.weekday - 1]} ${d.day} ${_months[d.month - 1]}';
+    final t = (widget.startTime ?? '').trim();
+    return t.isEmpty ? s : '$s, ${t.length >= 5 ? t.substring(0, 5) : t}';
   }
 
   /// Egyptian number as typed → wa.me digits (mirrors toWaNumber in the
@@ -627,8 +669,12 @@ class _EntriesSheetState extends State<_EntriesSheet> {
   Future<void> _openWhatsApp(String name, String phone, String partner) async {
     final first = name.split(RegExp(r'\s+')).first;
     final p = partner.trim();
+    final when = _when();
+    final venue = (widget.venue ?? '').trim();
     final text = 'Hi $first, your entry for ${widget.tournamentName} is confirmed ✅'
-        '${p.isNotEmpty ? '\nPartner: $p' : ''}'
+        '${when != null ? '\n📅 $when' : ''}'
+        '${venue.isNotEmpty ? '\n📍 $venue' : ''}'
+        '${p.isNotEmpty ? '\n👥 Partner: $p' : ''}'
         '\nSee you on court! — Padel Rivals';
     final uri = Uri.parse(
         'https://wa.me/${_waDigits(phone)}?text=${Uri.encodeComponent(text)}');

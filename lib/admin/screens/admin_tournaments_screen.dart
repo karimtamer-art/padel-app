@@ -411,6 +411,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                 context,
                 tournamentId: t['id'] as String,
                 tournamentName: (t['name'] as String?) ?? '',
+                startDate: t['start_date'] as String?,
+                startTime: t['start_time'] as String?,
+                venue: t['venue_name'] as String?,
                 onChanged: _load,
               );
             }),
