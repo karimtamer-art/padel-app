@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
@@ -535,6 +536,9 @@ class _EntriesSheetState extends State<_EntriesSheet> {
       );
       if (pairWith == null) return;
     }
+    final other = pairWith == null
+        ? null
+        : _web.firstWhere((o) => o['id'] == pairWith, orElse: () => const {});
     setState(() => _webBusy = w['id'] as String);
     final err = await AdminService.webRegistrationToDraw(w['id'] as String, pairWith: pairWith);
     if (!mounted) return;
@@ -543,10 +547,93 @@ class _EntriesSheetState extends State<_EntriesSheet> {
       adminToast(context, err, ok: false);
       return;
     }
+    // Entry is in — now the WhatsApp confirmation (Edge Function).
+    final wa = await AdminService.sendWebWhatsApp(
+        [w['id'] as String, if (pairWith != null) pairWith]);
     await _load();
     widget.onChanged?.call();
     if (!mounted) return;
     setState(() => _webBusy = null);
-    adminToast(context, 'Added to the draw');
+    if (wa.status == 'sent') {
+      adminToast(context, 'Added to the draw · WhatsApp sent');
+      return;
+    }
+    adminToast(
+        context,
+        wa.status == 'not_configured'
+            ? 'Added to the draw'
+            : 'Added to the draw · WhatsApp failed${wa.error != null ? ': ${wa.error}' : ''}',
+        ok: wa.status == 'not_configured');
+    await _manualWhatsApp(w, other);
+  }
+
+  /// Fallback when the API didn't send: one tap per person opens WhatsApp on
+  /// this phone with the confirmation already typed.
+  Future<void> _manualWhatsApp(Map<String, dynamic> w, Map<String, dynamic>? other) async {
+    final targets = <(String name, String phone, String partner)>[];
+    void add(String? name, String? phone, String partner) {
+      final n = (name ?? '').trim();
+      final p = (phone ?? '').trim();
+      if (n.isNotEmpty && p.isNotEmpty) targets.add((n, p, partner));
+    }
+    if (other != null && other.isNotEmpty) {
+      add(w['name'] as String?, w['phone'] as String?, (other['name'] as String?) ?? '');
+      add(other['name'] as String?, other['phone'] as String?, (w['name'] as String?) ?? '');
+    } else {
+      add(w['name'] as String?, w['phone'] as String?, (w['partner_name'] as String?) ?? '');
+      add(w['partner_name'] as String?, w['partner_phone'] as String?, (w['name'] as String?) ?? '');
+    }
+    if (targets.isEmpty || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (c) => SimpleDialog(
+        backgroundColor: AdminColors.surface,
+        title: Text('Send the confirmation',
+            style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Text('Opens WhatsApp with the message typed — just press Send.',
+                style: AdminText.small(AdminColors.inkFaint)),
+          ),
+          for (final t in targets)
+            SimpleDialogOption(
+              onPressed: () => _openWhatsApp(t.$1, t.$2, t.$3),
+              child: Row(children: [
+                const Icon(Icons.chat_outlined, size: 18, color: AdminColors.primary),
+                const SizedBox(width: 10),
+                Expanded(child: Text('${t.$1} · ${t.$2}', style: AdminText.body())),
+              ]),
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(onPressed: () => Navigator.pop(c), child: const Text('Done')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Egyptian number as typed → wa.me digits (mirrors toWaNumber in the
+  /// whatsapp-confirm Edge Function).
+  static String _waDigits(String raw) {
+    var d = raw.replaceAll(RegExp(r'\D'), '');
+    if (d.startsWith('00')) d = d.substring(2);
+    if (d.length == 11 && d.startsWith('01')) d = '2$d';
+    if (d.length == 10 && d.startsWith('1')) d = '20$d';
+    return d;
+  }
+
+  Future<void> _openWhatsApp(String name, String phone, String partner) async {
+    final first = name.split(RegExp(r'\s+')).first;
+    final p = partner.trim();
+    final text = 'Hi $first, your entry for ${widget.tournamentName} is confirmed ✅'
+        '${p.isNotEmpty ? '\nPartner: $p' : ''}'
+        '\nSee you on court! — Padel Rivals';
+    final uri = Uri.parse(
+        'https://wa.me/${_waDigits(phone)}?text=${Uri.encodeComponent(text)}');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+      adminToast(context, 'Could not open WhatsApp.', ok: false);
+    }
   }
 }

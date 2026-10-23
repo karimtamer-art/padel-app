@@ -835,6 +835,19 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     players to sign up with the number they registered with — so add them
     close to the draw, after they've had the chance; a pair added as guests
     stays guests (re-linking a guest later is not built).
+  - **WhatsApp confirmation** (2026-10-23, `changes/2026-10-23_web_whatsapp.sql`,
+    Edge Function `whatsapp-confirm`). After "Add to draw" succeeds the console
+    calls the function, which re-checks `owns_tournament` with the caller's
+    JWT and sends the approved UTILITY template `entry_confirmed` (body in the
+    function header; 5 params: first name, tournament, date, venue, partner)
+    via the WhatsApp Cloud API to the registrant and their partner. Outcome is
+    written to `web_registrations.wa_status/wa_error/wa_sent_at` by the
+    service role only. Secrets `WA_TOKEN`, `WA_PHONE_ID` (+ optional
+    `WA_TEMPLATE`, `WA_LANG`, `WA_API_VERSION`). Unset/undeployed → the
+    console falls back to one-tap `wa.me` links with the text pre-typed, so
+    nothing breaks before Meta setup is finished. A template must be used:
+    free text doesn't reach someone who hasn't messaged the number in 24h.
+    Number used: 01501800943 (the business number on the website).
   - The anon key in `home.js` is the app's public key — fine to commit.
 - **The domain, the email stack, and the legal site** (set up 2026-08-08).
   `padel-rivals.com` is registered at GoDaddy but its **DNS lives at
@@ -1065,7 +1078,8 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   `profiles.notify_*` prefs.
 - `division_demo_screen.dart` is a demo/dev screen; ignore it.
 - **`supabase/functions/` — what is actually deployed.** Live: `push-notify`,
-  `create-staff`, `weekly-report`, `weekly-report-send`. NOT deployed and not
+  `create-staff`, `weekly-report`, `weekly-report-send`. Written, awaiting
+  deploy + Meta setup: `whatsapp-confirm`. NOT deployed and not
   meant to be: `admin-order-ping`, which says SKETCH in its own header — it is
   an optional alternative to the pg_net SQL for order alerts, kept for whoever
   wants WhatsApp. Don't re-flag it as dead code.

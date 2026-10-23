@@ -560,6 +560,48 @@ class AdminService {
     return out;
   }
 
+  /// Sends the WhatsApp "entry confirmed" template for one registration, or
+  /// two paired solos (Edge Function `whatsapp-confirm`). `status` is
+  /// 'sent' | 'partial' | 'failed' | 'not_configured' (no API set up / not
+  /// deployed) — anything but 'sent' means the console offers the one-tap
+  /// fallback. `error` is the first failure reason, for the toast.
+  static Future<({String status, String? error})> sendWebWhatsApp(
+      List<String> registrationIds) async {
+    try {
+      final res = await _db.functions.invoke('whatsapp-confirm',
+          body: {'registration_ids': registrationIds});
+      final data = (res.data as Map?)?.cast<String, dynamic>() ?? const {};
+      final results = (data['results'] as List?) ?? const [];
+      final firstErr = results
+          .whereType<Map>()
+          .map((r) => r['error'] as String?)
+          .firstWhere((e) => e != null && e.isNotEmpty, orElse: () => null);
+      return (
+        status: (data['status'] as String?) ?? 'failed',
+        error: firstErr ?? (results.isEmpty && data['status'] == 'failed'
+            ? 'No valid WhatsApp number'
+            : null),
+      );
+    } on FunctionException catch (e) {
+      debugPrint('[AdminService] sendWebWhatsApp: ${e.status} ${e.details}');
+      // A bare 404 is the function not being deployed; the function's own 404
+      // carries {"error": "not_found"} (registration missing).
+      final code = (e.details as Map?)?['error'];
+      if (e.status == 404 && code != 'not_found') {
+        return (status: 'not_configured', error: null);
+      }
+      return (
+        status: 'failed',
+        error: code == 'forbidden'
+            ? 'You can\'t message entrants of this tournament.'
+            : 'WhatsApp service error (${e.status})'
+      );
+    } catch (e) {
+      debugPrint('[AdminService] sendWebWhatsApp: $e');
+      return (status: 'failed', error: 'Could not reach the WhatsApp service');
+    }
+  }
+
   /// Rejects a website registration (payment not valid). Error or null.
   static Future<String?> rejectWebRegistration(String regId) async {
     try {
