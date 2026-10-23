@@ -529,6 +529,55 @@ class AdminService {
     }
   }
 
+  /// Website registrations still waiting for staff, per tournament id — what
+  /// the Tournaments list badges so an "admin_tournament" alert lands on
+  /// something. Waiting = pending/confirmed and not yet in the draw. Before
+  /// the 2026-10-22 web_to_draw delta (no entry_id) it counts 'pending' only.
+  static Future<Map<String, int>> webPendingCounts() async {
+    List rows;
+    try {
+      rows = await _db
+          .from('web_registrations')
+          .select('tournament_id')
+          .inFilter('status', ['pending', 'confirmed'])
+          .isFilter('entry_id', null);
+    } catch (_) {
+      try {
+        rows = await _db
+            .from('web_registrations')
+            .select('tournament_id')
+            .eq('status', 'pending');
+      } catch (e) {
+        debugPrint('[AdminService] webPendingCounts: $e');
+        return {};
+      }
+    }
+    final out = <String, int>{};
+    for (final r in rows) {
+      final id = (r as Map)['tournament_id'] as String?;
+      if (id != null) out[id] = (out[id] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  /// Rejects a website registration (payment not valid). Error or null.
+  static Future<String?> rejectWebRegistration(String regId) async {
+    try {
+      // RLS turns a write you may not make into "0 rows", not an error —
+      // read back the row so a silent no-op says so.
+      final rows = await _db.from('web_registrations').update({
+        'status': 'rejected',
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', regId).select('id');
+      if ((rows as List).isEmpty) return 'You can\'t change this registration.';
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Moves a website registration into the draw — as real app players where
   /// the phone matches an account, else as guests. [pairWith] is a second
   /// solo registration to partner a solo one with. Error sentence or null.

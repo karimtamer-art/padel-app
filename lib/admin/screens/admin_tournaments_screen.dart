@@ -20,6 +20,7 @@ class AdminTournamentsScreen extends StatefulWidget {
 
 class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
   List<Map<String, dynamic>> _list = [];
+  Map<String, int> _webPending = {}; // tournament id → website entries waiting
   List<Map<String, dynamic>> _courts = []; // venue picker options
   bool _loading = true;
   bool _hasCommunity = true; // organizers must have one before publishing
@@ -42,11 +43,14 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 
   Future<void> _load() async {
     if (!_loading) setState(() => _loading = true);
-    final data =
-        await AdminService.fetchTournaments(organizerId: widget.organizerId);
+    final results = await Future.wait([
+      AdminService.fetchTournaments(organizerId: widget.organizerId),
+      AdminService.webPendingCounts(),
+    ]);
     if (!mounted) return;
     setState(() {
-      _list = data;
+      _list = results[0] as List<Map<String, dynamic>>;
+      _webPending = results[1] as Map<String, int>;
       _loading = false;
     });
   }
@@ -280,6 +284,10 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                   ]),
                   const SizedBox(height: 8),
                   Wrap(spacing: 6, runSpacing: 6, children: [
+                    if ((_webPending[t['id']] ?? 0) > 0)
+                      _payChip('${_webPending[t['id']]} website '
+                          '${_webPending[t['id']] == 1 ? 'entry' : 'entries'} to check',
+                          AdminColors.warn),
                     _tag(Icons.calendar_today_outlined,
                         _dateRange(t['start_date'] as String?, t['end_date'] as String?)),
                     if (t['prize_pool'] != null)
@@ -389,10 +397,13 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
               _bracketSheet(t);
             }),
         const SizedBox(height: 10),
-        AdminButton('Manage entries',
+        AdminButton(
+            (_webPending[t['id']] ?? 0) > 0
+                ? 'Manage entries · ${_webPending[t['id']]} from website'
+                : 'Manage entries',
             full: true,
             height: 46,
-            variant: AdminBtn.ghost,
+            variant: (_webPending[t['id']] ?? 0) > 0 ? AdminBtn.primary : AdminBtn.ghost,
             icon: Icons.group_add_outlined,
             onPressed: () {
               Navigator.pop(context);

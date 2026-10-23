@@ -428,12 +428,18 @@ class _EntriesSheetState extends State<_EntriesSheet> {
         Row(children: [
           if (proof != null && proof.isNotEmpty) ...[
             Expanded(
-              child: AdminButton('Screenshot',
-                  variant: AdminBtn.ghost, height: 38, icon: Icons.image_outlined,
+              child: AdminButton('Proof',
+                  variant: AdminBtn.ghost, height: 38,
                   onPressed: () => _showProof(proof)),
             ),
             const SizedBox(width: 8),
           ],
+          Expanded(
+            child: AdminButton('Reject',
+                variant: AdminBtn.danger, height: 38,
+                onPressed: _webBusy != null ? null : () => _webReject(w)),
+          ),
+          const SizedBox(width: 8),
           Expanded(
             child: AdminButton(
                 busy ? 'Adding…' : (solo ? 'Pair & add' : 'Add to draw'),
@@ -444,6 +450,39 @@ class _EntriesSheetState extends State<_EntriesSheet> {
         ]),
       ]),
     );
+  }
+
+  Future<void> _webReject(Map<String, dynamic> w) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: AdminColors.surface,
+        title: Text('Reject ${w['name']}?',
+            style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+        content: Text(
+            'Use this when the payment is not valid. They are NOT told automatically '
+            '— message them on WhatsApp. Their spot is freed on the website.',
+            style: AdminText.body(AdminColors.inkSoft)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Reject')),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    setState(() => _webBusy = w['id'] as String);
+    final err = await AdminService.rejectWebRegistration(w['id'] as String);
+    if (!mounted) return;
+    if (err != null) {
+      setState(() => _webBusy = null);
+      adminToast(context, err, ok: false);
+      return;
+    }
+    await _load();
+    widget.onChanged?.call();
+    if (!mounted) return;
+    setState(() => _webBusy = null);
+    adminToast(context, 'Rejected');
   }
 
   Future<void> _showProof(String path) async {
