@@ -766,12 +766,15 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     through the existing admin rating tools (rule 2).
   - Player entry is a row under the Home hero, hidden until a center is live
     (`AssessmentService.overview()` returns empty on a DB without the delta).
-- **Web registration on the homepage** (2026-10-20,
-  `changes/2026-10-20_web_registrations.sql`). `docs/index.html` is now the
-  landing page: a pair registers for a tournament **without the app or an
-  account** (`home.js` + `home.css`; the old link hub's links live in the
-  footer). Built because players didn't trust the app enough to download and
-  pay in it.
+- **Web registration** (2026-10-20,
+  `changes/2026-10-20_web_registrations.sql`). `docs/register/index.html`
+  (`padel-rivals.com/register`) is the landing page: a pair registers for a
+  tournament **without the app or an account** (`home.js` + `home.css`).
+  Built because players didn't trust the app enough to download and pay in it.
+  - **`docs/index.html` is the link-in-bio page** (2026-10-24) — the address in
+    the Instagram/TikTok bios. Its main card points at `/register`. The
+    registration page moved into a folder, so its asset paths are
+    root-relative (`/home.css`, `/home.js`, `/logo.jpg`); keep them that way.
   - **The site is `anon`, and anon touches no table.** It calls exactly two
     SECURITY DEFINER RPCs — `web_open_tournaments()` and `web_register()` — and
     makes one insert-only upload to the PRIVATE `web-payment-proofs` bucket

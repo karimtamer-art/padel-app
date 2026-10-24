@@ -1,246 +1,276 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Padel Rivals — Register for a tournament</title>
-<meta name="description" content="Register your pair for the next Padel Rivals tournament in Egypt. No app needed — pay by InstaPay and we confirm you on WhatsApp.">
-<meta property="og:title" content="Padel Rivals — Tournament registration">
-<meta property="og:description" content="Register your pair in two minutes. No app needed.">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Padel Rivals</title>
+<meta name="description" content="Register for the next Padel Rivals tournament, join the WhatsApp community, get the app and follow us.">
+<meta property="og:title" content="Padel Rivals">
+<meta property="og:description" content="Tournaments, rematches and rankings. Tag your rival.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://padel-rivals.com/">
 <meta property="og:image" content="https://padel-rivals.com/logo.jpg">
-<meta name="theme-color" content="#F3EADB">
-<link rel="icon" href="logo.jpg">
+<meta name="theme-color" content="#1B2E27">
+<link rel="icon" href="/logo.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="home.css">
+<style>
+  /* Clay Court palette (app_colors.dart / home.css) */
+  :root {
+    --page: #1B2E27;
+    --hero: #21372F;
+    --hero2: #2B463B;
+    --hero-ink: #F4EFE2;
+    --hero-soft: #C9C3B4;
+    --pill: #F3EADB;
+    --pill-hover: #FBF6EC;
+    --ink: #2A2218;
+    --ink-soft: #6E6149;
+    --primary: #C2502A;
+    --primary-press: #A8431F;
+    --clay-light: #E07A52;
+    --accent: #2F6B57;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--page);
+    color: var(--hero-ink);
+    font-family: 'Outfit', system-ui, sans-serif;
+    line-height: 1.4;
+    padding: max(32px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom));
+  }
+  /* logo as the page background, blurred and tinted court green */
+  body::before, body::after {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  }
+  body::before {
+    inset: 0 auto auto 50%;
+    width: min(140vw, 820px); aspect-ratio: 1;
+    transform: translateX(-50%);
+    background: url("/logo.jpg") center / cover no-repeat;
+    filter: blur(2px);
+    /* soft edges so the square photo blends into the page */
+    -webkit-mask-image: radial-gradient(closest-side, #000 62%, transparent 100%);
+    mask-image: radial-gradient(closest-side, #000 62%, transparent 100%);
+  }
+  body::after {
+    --logo-h: min(140vw, 820px);
+    background:
+      linear-gradient(180deg,
+        rgba(27, 46, 39, 0.45) 0%,
+        rgba(27, 46, 39, 0.70) calc(var(--logo-h) * 0.55),
+        var(--page) calc(var(--logo-h) * 0.95));
+  }
+  main { max-width: 560px; margin: 0 auto; }
+
+  /* profile */
+  .profile { text-align: center; text-shadow: 0 1px 12px rgba(0, 0, 0, .7), 0 1px 2px rgba(0, 0, 0, .6); }
+  .profile p { color: var(--hero-ink) !important; opacity: .9; }
+  .profile img {
+    width: 96px; height: 96px; border-radius: 50%;
+    object-fit: cover; display: block; margin: 0 auto 14px;
+    box-shadow: 0 0 0 3px var(--hero-ink);
+  }
+  .profile h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: .05em; }
+  .profile p { margin: 4px 0 0; color: var(--hero-soft); font-size: 15px; }
+
+  .socials { display: flex; justify-content: center; gap: 6px; margin: 14px 0 24px; }
+  .socials a { width: 40px; height: 40px; display: grid; place-items: center; color: var(--hero-ink); border-radius: 50%; }
+  .socials a:hover { background: rgba(244, 239, 226, .1); }
+  .socials svg { width: 22px; height: 22px; fill: currentColor; }
+
+  /* link buttons */
+  .links { display: grid; gap: 14px; }
+  .card {
+    position: relative;
+    background: var(--pill);
+    color: var(--ink);
+    border-radius: 30px;
+    transition: transform .15s ease, background .15s ease;
+  }
+  .card:hover { transform: scale(1.015); background: var(--pill-hover); }
+  .card > a {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 64px;
+    padding: 10px 56px;
+    color: inherit; text-decoration: none; text-align: center;
+  }
+  .card .text { display: block; }
+  .card .title { display: block; font-size: 16px; font-weight: 600; }
+  .card .sub { display: block; font-size: 13px; color: var(--ink-soft); margin-top: 1px; }
+
+  /* small round picture on the left */
+  .card .thumb {
+    position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+    width: 48px; height: 48px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: #fff; color: var(--primary);
+  }
+  .card .thumb svg { width: 24px; height: 24px; fill: currentColor; }
+  .card .thumb.whatsapp { background: #25D366; color: #fff; }
+  .card .thumb.clay { background: var(--primary); color: #fff; }
+
+  /* share button on the right */
+  .card .more {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    width: 40px; height: 40px; border: 0; border-radius: 50%;
+    background: transparent; color: var(--ink-soft);
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .card .more:hover { background: rgba(42, 34, 24, .08); }
+  .card .more svg { width: 18px; height: 18px; fill: currentColor; }
+
+  /* featured card with a big picture */
+  .card.featured > a { flex-direction: column; padding: 8px 8px 0; min-height: 0; }
+  .card.featured .banner {
+    position: relative;
+    width: 100%; aspect-ratio: 16 / 9;
+    border-radius: 24px; overflow: hidden;
+    display: grid; place-items: center;
+    background:
+      radial-gradient(70% 90% at 50% 40%, var(--clay-light) 0%, var(--primary) 55%, var(--primary-press) 100%);
+  }
+  .card.featured .banner img {
+    width: 30%; max-width: 150px; aspect-ratio: 1;
+    margin-top: 28px;
+    border-radius: 24px; object-fit: cover;
+    box-shadow: 0 14px 30px rgba(0, 0, 0, .35);
+  }
+  .card.featured .badge {
+    position: absolute; top: 12px; left: 12px;
+    background: var(--hero); color: var(--hero-ink);
+    font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    padding: 6px 12px; border-radius: 999px;
+  }
+  .card.featured .badge::before {
+    content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: #5FD39A; margin-right: 7px; vertical-align: 1px;
+  }
+  .card.featured .text { padding: 14px 48px 18px; }
+  .card.featured .title { font-size: 18px; font-weight: 700; }
+  .card.featured .more { top: auto; bottom: 14px; transform: none; }
+
+  footer { margin-top: 32px; text-align: center; font-size: 13px; color: var(--hero-soft); }
+  footer a { color: var(--hero-soft); }
+
+  .toast {
+    position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom));
+    transform: translate(-50%, 20px); opacity: 0;
+    background: var(--hero-ink); color: var(--ink);
+    padding: 10px 18px; border-radius: 999px; font-size: 14px; font-weight: 600;
+    transition: opacity .2s ease, transform .2s ease; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
 </head>
 <body>
-
-<header class="top wrap">
-  <a class="brand" href="/">
-    <img src="logo.jpg" alt="" width="44" height="44">
-    <span>PADEL RIVALS</span>
-  </a>
-  <nav>
-    <a href="#how">How it works</a>
-    <a href="#faq">Questions</a>
-    <a class="js-whatsapp" href="/whatsapp">WhatsApp</a>
-    <a class="pill" href="#register">Register now</a>
-  </nav>
-</header>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-instagram" viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.8.1 3.3.1 4.8 1.7 4.9 4.9.1 1.3.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 3.2-1.7 4.8-4.9 4.9-1.3.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-3.3-.1-4.8-1.7-4.9-4.9C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.8C2.4 3.9 3.9 2.4 7.2 2.3 8.4 2.2 8.8 2.2 12 2.2zM12 0C8.7 0 8.3 0 7.1.1 2.7.3.3 2.7.1 7.1 0 8.3 0 8.7 0 12s0 3.7.1 4.9c.2 4.4 2.6 6.8 7 7 1.2.1 1.6.1 4.9.1s3.7 0 4.9-.1c4.4-.2 6.8-2.6 7-7 .1-1.2.1-1.6.1-4.9s0-3.7-.1-4.9c-.2-4.4-2.6-6.8-7-7C15.7 0 15.3 0 12 0zm0 5.8a6.2 6.2 0 1 0 0 12.4 6.2 6.2 0 0 0 0-12.4zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.4-11.8a1.4 1.4 0 1 0 0 2.9 1.4 1.4 0 0 0 0-2.9z"/></symbol>
+  <symbol id="i-tiktok" viewBox="0 0 24 24"><path d="M19.6 6.7a4.8 4.8 0 0 1-3.8-4.2V2h-3.4v13.7a2.9 2.9 0 1 1-2-2.7V9.5a6.3 6.3 0 1 0 5.4 6.2V8.8a8.2 8.2 0 0 0 4.8 1.5V6.9a4.8 4.8 0 0 1-1-.2z"/></symbol>
+  <symbol id="i-facebook" viewBox="0 0 24 24"><path d="M24 12a12 12 0 1 0-13.9 11.9v-8.4h-3V12h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 .9-2 1.9V12h3.4l-.5 3.5h-2.9v8.4A12 12 0 0 0 24 12z"/></symbol>
+  <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M17.5 14.4c-.3-.1-1.8-.9-2-1-.3-.1-.5-.1-.7.1-.2.3-.8 1-.9 1.2-.2.2-.3.2-.6.1-.3-.1-1.3-.5-2.4-1.5-.9-.8-1.5-1.8-1.7-2.1-.2-.3 0-.5.1-.6l.4-.5c.2-.2.2-.3.3-.5.1-.2 0-.4 0-.5l-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.8-.7 2-1.4.2-.7.2-1.3.2-1.4-.1-.1-.3-.2-.6-.3zM12 21.8a9.8 9.8 0 0 1-5-1.4l-.4-.2-3.7 1 1-3.6-.2-.4A9.8 9.8 0 1 1 12 21.8zM20.5 3.5A11.9 11.9 0 0 0 1.8 17.8L.1 24l6.3-1.7A11.9 11.9 0 0 0 24 12a11.8 11.8 0 0 0-3.5-8.5z"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M17 1H7a3 3 0 0 0-3 3v16a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V4a3 3 0 0 0-3-3zm-5 20a1.3 1.3 0 1 1 0-2.6 1.3 1.3 0 0 1 0 2.6zm6-4H6V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v13z"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></symbol>
+</svg>
 
 <main>
+  <header class="profile">
+    <img src="/logo.jpg" alt="Padel Rivals logo">
+    <h1>PADEL RIVALS</h1>
+    <p>Tournaments, rematches &amp; rankings in Egypt</p>
+    <nav class="socials" aria-label="Social media">
+      <a href="https://www.instagram.com/padel.rivals" aria-label="Instagram" target="_blank" rel="noopener"><svg><use href="#i-instagram"/></svg></a>
+      <a href="https://www.tiktok.com/@padel.rivalss" aria-label="TikTok" target="_blank" rel="noopener"><svg><use href="#i-tiktok"/></svg></a>
+      <a href="https://www.facebook.com/profile.php?id=61595683674131" aria-label="Facebook" target="_blank" rel="noopener"><svg><use href="#i-facebook"/></svg></a>
+      <a href="https://wa.me/201501800943" aria-label="WhatsApp" target="_blank" rel="noopener"><svg><use href="#i-whatsapp"/></svg></a>
+    </nav>
+  </header>
 
-<section class="hero wrap" id="register">
-  <div class="pitch">
-    <span class="kicker">Registration open</span>
-    <h1>Join the next <em>Padel Rivals</em> tournament.</h1>
-    <p class="lead">Register with your partner — or on your own and we'll find you one. Two minutes, no app needed, and we confirm your spot personally on WhatsApp.</p>
-
-    <ul class="trust">
-      <li>
-        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
-        <div><strong>We never ask for card details</strong><span>Pay securely by InstaPay to our official account — the address is only ever the one on this page.</span></div>
-      </li>
-      <li>
-        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M19 8v6M16 11h6"/></svg></span>
-        <div><strong>No partner? We'll find you one</strong><span>Register on your own and we'll pair you with a player at your level.</span></div>
-      </li>
-      <li>
-        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/></svg></span>
-        <div><strong>A real person confirms you</strong><span>Our team messages you on WhatsApp before the event.</span></div>
-      </li>
-      <li>
-        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></span>
-        <div><strong>Changed your plans?</strong><span>Withdraw before the tournament's start date and your entry fee is refunded.</span></div>
-      </li>
-    </ul>
-  </div>
-
-  <div class="card" id="form-card">
-    <ol class="steps" aria-label="Registration progress">
-      <li class="on" data-step="1"><i></i><span>1 · Your details</span></li>
-      <li data-step="2"><i></i><span>2 · Payment</span></li>
-      <li data-step="3"><i></i><span>3 · Submitted</span></li>
-    </ol>
-
-    <!-- Loading / no-events states -->
-    <div id="state-loading" class="state">Loading tournaments…</div>
-    <div id="state-empty" class="state" hidden>
-      <h2>No open tournaments right now</h2>
-      <p>New events are announced in our WhatsApp group first.</p>
-      <a class="btn" href="/whatsapp">Join the WhatsApp group</a>
+  <div class="links">
+    <div class="card featured">
+      <a href="/register">
+        <span class="banner">
+          <span class="badge">Registration open</span>
+          <img src="/logo.jpg" alt="">
+        </span>
+        <span class="text">
+          <span class="title">Register for the next tournament</span>
+          <span class="sub">With your partner · no app needed</span>
+        </span>
+      </a>
+      <button class="more" data-url="https://padel-rivals.com/register" data-title="Register for the next Padel Rivals tournament" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
     </div>
 
-    <!-- Step 1 -->
-    <form id="step1" hidden novalidate>
-      <div class="field">
-        <label for="f-tournament">Tournament *</label>
-        <select id="f-tournament" required>
-          <option value="">Choose a tournament</option>
-        </select>
-        <p id="t-info" class="note" hidden></p>
-      </div>
-
-      <h3 class="group">You</h3>
-      <div class="grid">
-        <div class="field">
-          <label for="f-name">Full name *</label>
-          <input id="f-name" type="text" autocomplete="name" maxlength="80" required>
-        </div>
-        <div class="field">
-          <label for="f-phone">WhatsApp number *</label>
-          <input id="f-phone" type="tel" autocomplete="tel" placeholder="+20 10 0000 0000" maxlength="20" required>
-        </div>
-        <div class="field">
-          <label for="f-email">Email</label>
-          <input id="f-email" type="email" autocomplete="email" maxlength="120">
-        </div>
-        <div class="field">
-          <label for="f-level">Your level *</label>
-          <select id="f-level" required disabled><option value="">Choose a tournament first</option></select>
-        </div>
-      </div>
-
-      <h3 class="group">Your partner</h3>
-      <fieldset class="seg">
-        <legend class="sr-only">Do you have a partner?</legend>
-        <label class="option">
-          <input type="radio" name="haspartner" value="yes" checked>
-          <span><strong>I have a partner</strong><small>Register as a pair.</small></span>
-        </label>
-        <label class="option">
-          <input type="radio" name="haspartner" value="no">
-          <span><strong>Find me a partner</strong><small>We'll pair you with a player at your level.</small></span>
-        </label>
-      </fieldset>
-      <p id="solo-note" class="note" hidden>We'll match you with a player in this tournament's level range and introduce you both on WhatsApp before the event. You only pay your own share.</p>
-      <div class="grid" id="partner-fields">
-        <div class="field">
-          <label for="f-pname">Partner's name *</label>
-          <input id="f-pname" type="text" maxlength="80" required>
-        </div>
-        <div class="field">
-          <label for="f-pphone">Partner's phone</label>
-          <input id="f-pphone" type="tel" placeholder="+20 10 0000 0000" maxlength="20">
-        </div>
-        <div class="field">
-          <label for="f-plevel">Partner's level *</label>
-          <select id="f-plevel" required disabled><option value="">Choose a tournament first</option></select>
-        </div>
-      </div>
-
-      <div class="alert" role="alert" hidden></div>
-      <button class="btn" type="submit">Continue to payment</button>
-    </form>
-
-    <!-- Step 2 -->
-    <form id="step2" hidden novalidate>
-      <div class="due">
-        <div><span id="due-label">Entry fee for your pair</span><strong id="due-amount"></strong></div>
-        <span id="due-names"></span>
-      </div>
-
-      <div id="instapay-box" hidden>
-        <div class="payto">
-          <span>Send the fee to our official InstaPay</span>
-          <strong id="ip-handle"></strong>
-          <small id="ip-name"></small>
-          <a id="ip-link" class="btn green" target="_blank" rel="noopener" hidden>Pay with InstaPay</a>
-        </div>
-        <div class="field">
-          <label for="f-sender">Name on the InstaPay transfer *</label>
-          <input id="f-sender" type="text" maxlength="80">
-        </div>
-        <div class="field">
-          <label for="f-proof">Screenshot of the transfer *</label>
-          <input id="f-proof" type="file" accept="image/*">
-        </div>
-      </div>
-
-      <label class="agree">
-        <input type="checkbox" id="f-agree">
-        <span>I agree to the <a href="/terms" target="_blank" rel="noopener">terms</a> and to be contacted on WhatsApp about this tournament. *</span>
-      </label>
-
-      <div class="alert" role="alert" hidden></div>
-      <div class="row">
-        <button class="btn ghost" type="button" id="back">Back</button>
-        <button class="btn grow" type="submit" id="submit">Complete registration</button>
-      </div>
-    </form>
-
-    <!-- Step 3 -->
-    <div id="step3" class="done" hidden>
-      <span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></span>
-      <h2 id="done-title">Pending confirmation</h2>
-      <p id="done-text"></p>
-      <div class="app-nudge">
-        <strong>Track your level and results</strong>
-        <span id="app-nudge-text">Download the Padel Rivals app and sign up with the same number you registered with. We'll link your entry, so your matches count toward your level.</span>
-        <a class="btn dark-btn" href="/download">Get the app</a>
-      </div>
-      <a class="btn green js-whatsapp" href="/whatsapp">Message us on WhatsApp</a>
-      <button class="link" type="button" id="again">Register another pair</button>
+    <div class="card">
+      <a href="/whatsapp" target="_blank" rel="noopener">
+        <span class="thumb whatsapp"><svg><use href="#i-whatsapp"/></svg></span>
+        <span class="text"><span class="title">Join our WhatsApp group</span><span class="sub">WhatsApp Community · Free to join</span></span>
+      </a>
+      <button class="more" data-url="https://padel-rivals.com/whatsapp" data-title="Join the Padel Rivals WhatsApp group" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
     </div>
 
-    <!-- Announced, registration not open yet (web_upcoming_tournaments) -->
-    <div id="upcoming" hidden>
-      <h3 class="group">Coming soon</h3>
-      <ul id="upcoming-list" class="upcoming"></ul>
+    <div class="card">
+      <a href="https://wa.me/201501800943" target="_blank" rel="noopener">
+        <span class="text"><span class="title">Message us on WhatsApp</span><span class="sub">Questions or challenge a team</span></span>
+      </a>
+      <button class="more" data-url="https://wa.me/201501800943" data-title="Message Padel Rivals on WhatsApp" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
     </div>
 
-    <noscript><p class="state">Please enable JavaScript to register, or message us on <a href="/whatsapp">WhatsApp</a>.</p></noscript>
-  </div>
-</section>
+    <div class="card">
+      <a href="/download">
+        <span class="thumb clay"><svg><use href="#i-phone"/></svg></span>
+        <span class="text"><span class="title">Get the Padel Rivals app</span><span class="sub">Brackets, results &amp; rankings</span></span>
+      </a>
+      <button class="more" data-url="https://padel-rivals.com/download" data-title="Get the Padel Rivals app" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
+    </div>
 
-<section class="dark" id="how">
-  <div class="wrap">
-    <h2>How registration works</h2>
-    <div class="cols">
-      <div class="stepcard"><b>01</b><h3>Fill in the form</h3><p>Your details and your partner's — that's all we need.</p></div>
-      <div class="stepcard"><b>02</b><h3>Pay by InstaPay</h3><p>Send the fee to our official InstaPay and upload a screenshot of the transfer.</p></div>
-      <div class="stepcard"><b>03</b><h3>Get confirmed</h3><p>Our team messages you on WhatsApp, then sends the draw before the event.</p></div>
+    <div class="card">
+      <a href="https://www.instagram.com/padel.rivals" target="_blank" rel="noopener"><span class="text"><span class="title">Instagram</span></span></a>
+      <button class="more" data-url="https://www.instagram.com/padel.rivals" data-title="Padel Rivals on Instagram" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
+    </div>
+
+    <div class="card">
+      <a href="https://www.tiktok.com/@padel.rivalss" target="_blank" rel="noopener"><span class="text"><span class="title">TikTok</span></span></a>
+      <button class="more" data-url="https://www.tiktok.com/@padel.rivalss" data-title="Padel Rivals on TikTok" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
+    </div>
+
+    <div class="card">
+      <a href="https://www.facebook.com/profile.php?id=61595683674131" target="_blank" rel="noopener"><span class="text"><span class="title">Facebook</span></span></a>
+      <button class="more" data-url="https://www.facebook.com/profile.php?id=61595683674131" data-title="Padel Rivals on Facebook" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
     </div>
   </div>
-</section>
 
-<section class="faq narrow" id="faq">
-  <h2>Questions</h2>
-  <details open><summary>Do I need to download the app?</summary><p>No. You can register and pay here. The app is optional — it shows your bracket, results and level.</p></details>
-  <details><summary>How do I know the InstaPay account is really yours?</summary><p>Only pay to the InstaPay address shown on this page at padel-rivals.com — never to one sent in a private message. Unsure? Message us on WhatsApp first.</p></details>
-  <details><summary>What if I can't make it?</summary><p>If you withdraw before the tournament's start date, your entry fee is refunded the same way you paid. Withdrawing on or after the start date forfeits the fee. See our <a href="/terms">terms</a>.</p></details>
-  <details><summary>What do the levels mean?</summary><p>Levels go from D (newer players) up to A (strongest), each split into Low, Mid and Upper. Each tournament only lists the levels it's open to.</p></details>
-  <details><summary>I don't have a partner yet.</summary><p>No problem — choose "Find me a partner" in the form. We'll match you with another player at your level, introduce you both on WhatsApp before the event, and you only pay your own share. If we can't find you a partner in time, your fee is refunded in full.</p></details>
-</section>
-
-<section class="wrap">
-  <div class="app">
-    <div class="app-text">
-      <img src="logo.jpg" alt="Padel Rivals logo" width="72" height="72">
-      <div><strong>Want to follow your bracket live?</strong><span>Optional: get the free app for results, rankings and your level.</span></div>
-    </div>
-    <div class="row">
-      <a class="btn dark-btn" href="https://apps.apple.com/app/id6786002098">App Store</a>
-      <a class="btn dark-btn" href="https://play.google.com/store/apps/details?id=com.padelegypt.app">Google Play</a>
-    </div>
-  </div>
-</section>
-
+  <footer>
+    <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:help@padel-rivals.com">help@padel-rivals.com</a>
+  </footer>
 </main>
 
-<footer class="foot wrap">
-  <span>© <span id="year">2026</span> Padel Rivals · Cairo, Egypt</span>
-  <nav>
-    <a href="/privacy">Privacy</a>
-    <a href="/terms">Terms</a>
-    <a href="/delete-account">Delete account</a>
-    <a href="mailto:help@padel-rivals.com">help@padel-rivals.com</a>
-  </nav>
-</footer>
+<div class="toast" role="status" aria-live="polite"></div>
 
-<script src="home.js"></script>
+<script>
+  // ⋮ button: open the phone's share sheet, or copy the link on desktop
+  const toast = document.querySelector('.toast');
+  let toastTimer;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+  }
+  document.querySelectorAll('.more').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const url = btn.dataset.url, title = btn.dataset.title;
+      if (navigator.share) {
+        try { await navigator.share({ title, url }); } catch (e) {}
+        return;
+      }
+      try { await navigator.clipboard.writeText(url); showToast('Link copied'); }
+      catch (e) { showToast(url); }
+    });
+  });
+</script>
 </body>
 </html>
