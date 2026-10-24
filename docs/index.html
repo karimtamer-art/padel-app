@@ -112,6 +112,10 @@
   .card .thumb svg { width: 24px; height: 24px; fill: currentColor; }
   .card .thumb.whatsapp { background: #25D366; color: #fff; }
   .card .thumb.clay { background: var(--primary); color: #fff; }
+  .card .thumb.instagram { background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fd5949 45%, #d6249f 60%, #285AEB 90%); color: #fff; }
+  .card .thumb.tiktok { background: #000; color: #fff; }
+  .card .thumb.tiktok svg { filter: drop-shadow(-1.5px -1px 0 #25F4EE) drop-shadow(1.5px 1px 0 #FE2C55); }
+  .card .thumb.facebook { background: #1877F2; color: #fff; }
 
   /* share button on the right */
   .card .more {
@@ -214,6 +218,7 @@
 
     <div class="card">
       <a href="https://wa.me/201501800943" target="_blank" rel="noopener">
+        <span class="thumb whatsapp"><svg><use href="#i-whatsapp"/></svg></span>
         <span class="text"><span class="title">Message us on WhatsApp</span><span class="sub">Questions or challenge a team</span></span>
       </a>
       <button class="more" data-url="https://wa.me/201501800943" data-title="Message Padel Rivals on WhatsApp" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
@@ -228,17 +233,26 @@
     </div>
 
     <div class="card">
-      <a href="https://www.instagram.com/padel.rivals" target="_blank" rel="noopener"><span class="text"><span class="title">Instagram</span></span></a>
+      <a href="https://www.instagram.com/padel.rivals" target="_blank" rel="noopener">
+        <span class="thumb instagram"><svg><use href="#i-instagram"/></svg></span>
+        <span class="text"><span class="title">Instagram</span><span class="sub">@padel.rivals</span></span>
+      </a>
       <button class="more" data-url="https://www.instagram.com/padel.rivals" data-title="Padel Rivals on Instagram" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
     </div>
 
     <div class="card">
-      <a href="https://www.tiktok.com/@padel.rivalss" target="_blank" rel="noopener"><span class="text"><span class="title">TikTok</span></span></a>
+      <a href="https://www.tiktok.com/@padel.rivalss" target="_blank" rel="noopener">
+        <span class="thumb tiktok"><svg><use href="#i-tiktok"/></svg></span>
+        <span class="text"><span class="title">TikTok</span><span class="sub">@padel.rivalss</span></span>
+      </a>
       <button class="more" data-url="https://www.tiktok.com/@padel.rivalss" data-title="Padel Rivals on TikTok" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
     </div>
 
     <div class="card">
-      <a href="https://www.facebook.com/profile.php?id=61595683674131" target="_blank" rel="noopener"><span class="text"><span class="title">Facebook</span></span></a>
+      <a href="https://www.facebook.com/profile.php?id=61595683674131" target="_blank" rel="noopener">
+        <span class="thumb facebook"><svg><use href="#i-facebook"/></svg></span>
+        <span class="text"><span class="title">Facebook</span><span class="sub">Padel Rivals</span></span>
+      </a>
       <button class="more" data-url="https://www.facebook.com/profile.php?id=61595683674131" data-title="Padel Rivals on Facebook" aria-label="Share link"><svg><use href="#i-more"/></svg></button>
     </div>
   </div>
