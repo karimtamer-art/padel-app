@@ -5,7 +5,8 @@
 //   flutter run -d chrome -t lib/dev/bracket_demo.dart
 //   ...then optionally ?case=3&side=losers to jump straight to a scenario,
 //   ?case=compete for the list, &w=360 to test a narrow phone, and &h=1600 to
-//   see a long screen without scrolling.
+//   see a long screen without scrolling. &extras=1 fills in the optional fields
+//   (court, live, draw time, address), which are null otherwise.
 //
 // It renders the REAL screens, so the design cannot drift from
 // what ships. The sample rows are produced by [_Sim], a port of what the SQL
@@ -26,6 +27,8 @@ import 'package:padel_clay/frontend/theme/app_text.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _me = '00000000-0000-4000-8000-000000000001';
+
+bool get _extras => Uri.base.queryParameters['extras'] == '1';
 
 String _jwt() {
   String seg(Map<String, dynamic> m) =>
@@ -295,6 +298,10 @@ Map<String, dynamic> _tournament(int i) {
     'description': 'Sample tournament for the design preview.',
     'min_rating': 0.5,
     'max_rating': 1.9,
+    'draw_at': _extras
+        ? now.add(const Duration(days: 2, hours: 3)).toIso8601String()
+        : null,
+    'venue_address': _extras ? '90th Street, New Cairo' : null,
     'format_spec': s.format == 'custom'
         ? {
             'stages': [
@@ -334,7 +341,16 @@ class _FakeBackend extends http.BaseClient {
                 if (i == 1 || _scenarios[i].open) _tournament(i),
             ];
     } else if (path.endsWith('/tournament_matches')) {
-      body = _scenarios[idx(q['tournament_id'])].rows();
+      final rows = _scenarios[idx(q['tournament_id'])].rows();
+      if (_extras) {
+        for (var i = 0; i < rows.length; i++) {
+          rows[i]['court'] = i.isEven ? '${i + 1}' : 'Centre court';
+          if (rows[i]['winner_entry'] == null && rows[i]['e2'] != null) {
+            rows[i]['result_status'] = 'live';
+          }
+        }
+      }
+      body = rows;
     } else if (path.endsWith('/profiles') && q.containsKey('id') &&
         (q['id'] ?? '').startsWith('eq.')) {
       body = [

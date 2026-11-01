@@ -76,7 +76,7 @@ List<SetScore>? orientedSets(String? score, {required bool? entry1Won}) {
 
 // ── Slots and rounds ────────────────────────────────────────────────────────
 
-enum SlotState { done, bye, ready, pending, disputed, waiting }
+enum SlotState { done, bye, ready, live, pending, disputed, waiting }
 
 /// One position in a round. [row] is null for a match the server hasn't created
 /// yet (a later round, drawn so the whole bracket is visible from day one).
@@ -111,6 +111,17 @@ class BracketSlot {
 
   String? get winner => row?['winner_entry'] as String?;
   String? get score => row?['score'] as String?;
+
+  /// "SF 1 · COURT 3", or just the code until a court is set. A bare number gets
+  /// the word; anything else ("Centre court") is shown as the organiser typed it.
+  String get title {
+    final court = (row?['court'] as String?)?.trim() ?? '';
+    final name = code.toUpperCase();
+    if (court.isEmpty) return name;
+    final where = RegExp(r'^\d+$').hasMatch(court) ? 'COURT $court' : court.toUpperCase();
+    return '$name · $where';
+  }
+
   bool get bothSet => e1 != null && e2 != null;
 
   bool? get entry1Won =>
@@ -120,6 +131,7 @@ class BracketSlot {
     if (winner != null) return bothSet ? SlotState.done : SlotState.bye;
     if (!bothSet) return SlotState.waiting;
     return switch (row?['result_status'] as String?) {
+      'live' => SlotState.live,
       'pending' => SlotState.pending,
       'disputed' => SlotState.disputed,
       _ => SlotState.ready,

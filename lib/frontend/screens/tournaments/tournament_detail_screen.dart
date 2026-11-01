@@ -35,6 +35,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   final _selection = BracketSelection();
   Map<String, dynamic>? _t;
   Map<String, dynamic>? _formatSpec;
+  Map<String, dynamic> _extras = const {};
   List<Map<String, dynamic>> _bracket = [];
   bool _loading = true;
   bool _busy = false;
@@ -55,13 +56,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       TournamentService.fetchTournament(widget.tournamentId),
       TournamentService.fetchBracket(widget.tournamentId),
       TournamentService.fetchFormatSpec(widget.tournamentId),
+      TournamentService.fetchTournamentExtras(widget.tournamentId),
+      TournamentService.fetchMatchCourts(widget.tournamentId),
     ]);
     final myGender = await _fetchMyGender();
     if (!mounted) return;
     setState(() {
       _t = results[0] as Map<String, dynamic>?;
-      _bracket = results[1] as List<Map<String, dynamic>>;
+      final courts = results[4] as Map<String, String>;
+      _bracket = [
+        for (final m in results[1] as List<Map<String, dynamic>>)
+          {...m, 'court': courts[m['id']]},
+      ];
       _formatSpec = results[2] as Map<String, dynamic>?;
+      _extras = results[3] as Map<String, dynamic>;
       _myGender = myGender;
       _loading = false;
     });
@@ -341,6 +349,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   }
 
   String get _venue => ((_t?['venue_name'] as String?) ?? '').trim();
+
+  String get _venueAddress =>
+      ((_extras['venue_address'] as String?) ?? '').trim();
+
+  /// "Fri, Nov 6 at 5:00 PM" while the draw is still ahead. Null otherwise: a
+  /// time that has passed with no draw published shouldn't be repeated.
+  String? get _drawAtLabel {
+    final d = DateTime.tryParse((_extras['draw_at'] as String?) ?? '')?.toLocal();
+    if (d == null || d.isBefore(DateTime.now())) return null;
+    final hour = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final minute = d.minute.toString().padLeft(2, '0');
+    return '${_weekdays[d.weekday - 1]}, ${_monthsShort[d.month - 1]} ${d.day} '
+        'at $hour:$minute ${d.hour < 12 ? 'AM' : 'PM'}';
+  }
 
   String? get _categoryLabel => switch (_category) {
         'mens' => "Men's",
@@ -790,8 +812,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   // Tournaments carry a free-text venue_name (no coords) — open the maps app to
   // a search on that name.
   Future<void> _openVenueDirections() async {
-    final v = (_t?['venue_name'] as String?)?.trim();
-    if (v == null || v.isEmpty) return;
+    final name = (_t?['venue_name'] as String?)?.trim();
+    if (name == null || name.isEmpty) return;
+    final v = _venueAddress.isEmpty ? name : '$name, $_venueAddress';
     try {
       await launchUrl(
           Uri.parse('https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(v)}'),
@@ -829,10 +852,18 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(children: [
                 Expanded(
-                  child: Text(_venue,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: tStyle(16, FontWeight.w700)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(_venue,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: tStyle(16, FontWeight.w700)),
+                    if (_venueAddress.isNotEmpty)
+                      Text(_venueAddress,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: tStyle(13, FontWeight.w400,
+                              color: TColors.muted)),
+                  ]),
                 ),
                 const SizedBox(width: 12),
                 TButton(
@@ -934,6 +965,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
             uid: _uid,
             doubleElim: _doubleElim,
             formatSpec: _formatSpec,
+            drawAtLabel: _drawAtLabel,
             selection: _selection,
             onSelectionChanged: () => setState(() {}),
             onRefresh: _load,
@@ -1207,7 +1239,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     final String? resultAction = !next.canAct(_uid)
         ? null
         : switch (next.state) {
-            SlotState.ready => 'Enter result',
+            SlotState.ready || SlotState.live => 'Enter result',
             SlotState.disputed => 'Re-enter result',
             SlotState.pending => iSubmitted ? null : 'Confirm result',
             _ => null,

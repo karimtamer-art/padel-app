@@ -52,6 +52,9 @@ class BracketView extends StatelessWidget {
   final String? uid;
   final bool doubleElim;
   final Map<String, dynamic>? formatSpec;
+
+  /// "Fri, Nov 6 at 5:00 PM" when a future draw time is set.
+  final String? drawAtLabel;
   final BracketSelection selection;
   final VoidCallback onSelectionChanged;
   final Future<void> Function() onRefresh;
@@ -64,6 +67,7 @@ class BracketView extends StatelessWidget {
     required this.uid,
     required this.doubleElim,
     required this.formatSpec,
+    this.drawAtLabel,
     required this.selection,
     required this.onSelectionChanged,
     required this.onRefresh,
@@ -107,13 +111,15 @@ class BracketView extends StatelessWidget {
         // TODO(notifications): the design adds "We'll notify you the moment your
         // first match is set" and a "Notifications on" pill. Nothing notifies on
         // a draw yet (generate_draw has no notifications insert), so promising it
-        // would be untrue. Restore both once the server sends one. Same for
-        // "[DRAW TIME]": tournaments have no such column.
-        const EmptyStateCard(
-          illustration: GhostBracket(),
+        // would be untrue. Restore both once the server sends one.
+        EmptyStateCard(
+          illustration: const GhostBracket(),
           title: "The draw isn't out yet",
-          body: 'Organisers make the draw before play starts. Your matches '
-              'will appear here as soon as it is published.',
+          body: drawAtLabel != null
+              ? 'Organisers make the draw on $drawAtLabel. Your matches '
+                  'will appear here as soon as it is published.'
+              : 'Organisers make the draw before play starts. Your matches '
+                  'will appear here as soon as it is published.',
         ),
         if (doubleElim) _howDoubleElimWorks(),
         if (entries.isNotEmpty) _registeredPairs(context),
@@ -597,7 +603,7 @@ class BracketView extends StatelessWidget {
     final String? action = !canAct
         ? null
         : switch (state) {
-            SlotState.ready => 'Enter result',
+            SlotState.ready || SlotState.live => 'Enter result',
             SlotState.disputed => 'Re-enter result',
             SlotState.pending => myTeamSubmitted ? null : 'Confirm result',
             _ => null,
@@ -609,12 +615,13 @@ class BracketView extends StatelessWidget {
       SlotState.waiting => (ChipKind.tbd, null),
       SlotState.pending => (ChipKind.awaitingResult, null),
       SlotState.disputed => (ChipKind.disputed, null),
+      SlotState.live => (ChipKind.live, null),
       SlotState.ready => canAct
           ? (ChipKind.awaitingResult, null)
           : (ChipKind.upNext, null),
     };
 
-    String title = s.code.toUpperCase();
+    String title = s.title;
     if (canAct) title = 'YOUR MATCH · $title';
 
     String? footer = s.next;

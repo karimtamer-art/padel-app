@@ -122,6 +122,32 @@ void main() {
     });
   });
 
+  group('optional fields', () {
+    Map<String, dynamic> withInfo({String? court, String? status}) => {
+          ...row('wb', 1, 0, entry('a'), entry('b'), status: status),
+          'court': court,
+        };
+    BracketSlot slotOf(Map<String, dynamic> r) =>
+        buildWinners([r], doubleElim: false).rounds.single.slots.single;
+
+    test('no court: the title is just the match', () {
+      expect(slotOf(withInfo()).title, 'FINAL');
+      expect(slotOf(withInfo(court: '  ')).title, 'FINAL');
+    });
+
+    test('a court number gets the word, a name is kept as typed', () {
+      expect(slotOf(withInfo(court: '3')).title, 'FINAL · COURT 3');
+      expect(slotOf(withInfo(court: 'Centre court')).title,
+          'FINAL · CENTRE COURT');
+    });
+
+    test('live is its own state, and a decided match stops being live', () {
+      expect(slotOf(withInfo(status: 'live')).state, SlotState.live);
+      final done = {...withInfo(status: 'live'), 'winner_entry': 'a'};
+      expect(slotOf(done).state, SlotState.done);
+    });
+  });
+
   group('typed scores', () {
     test('written from the winner\'s side', () {
       expect(orientedSets('6-3, 6-4', entry1Won: false),

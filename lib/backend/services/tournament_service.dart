@@ -251,6 +251,43 @@ class TournamentService {
     }
   }
 
+  /// Optional display fields (`draw_at`, `venue_address`). Their own query, like
+  /// [fetchFormatSpec]: adding them to the main select would make a database
+  /// without the columns fall back to the plain tier and lose the entries join.
+  /// Empty when they're missing.
+  static Future<Map<String, dynamic>> fetchTournamentExtras(String id) async {
+    try {
+      final row = await _db
+          .from('tournaments')
+          .select('draw_at, venue_address')
+          .eq('id', id)
+          .maybeSingle();
+      return row == null ? const {} : Map<String, dynamic>.from(row);
+    } catch (e) {
+      debugPrint('[TournamentService] fetchTournamentExtras: $e');
+      return const {};
+    }
+  }
+
+  /// Match id to court, for the matches that have one. Empty when the column is
+  /// missing, for the same reason as [fetchTournamentExtras].
+  static Future<Map<String, String>> fetchMatchCourts(String id) async {
+    try {
+      final rows = await _db
+          .from('tournament_matches')
+          .select('id, court')
+          .eq('tournament_id', id);
+      return {
+        for (final r in (rows as List))
+          if ((r['court'] as String?)?.trim().isNotEmpty ?? false)
+            r['id'] as String: (r['court'] as String).trim(),
+      };
+    } catch (e) {
+      debugPrint('[TournamentService] fetchMatchCourts: $e');
+      return const {};
+    }
+  }
+
   /// A player in the match submits a winner (+ optional score). The other team
   /// then confirms or disputes. Returns an error message or null.
   static Future<String?> submitResult(String matchId, String winnerEntry,
