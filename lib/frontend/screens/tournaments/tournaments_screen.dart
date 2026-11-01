@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:padel_clay/frontend/theme/app_colors.dart';
-import 'package:padel_clay/frontend/theme/app_spacing.dart';
-import 'package:padel_clay/frontend/theme/app_text.dart';
-import 'package:padel_clay/frontend/widgets/common.dart';
-import 'package:padel_clay/frontend/widgets/screen_bar.dart';
+import 'package:padel_clay/frontend/theme/tournament_tokens.dart';
+import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/frontend/widgets/padel_refresh.dart';
 import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
+import 'package:padel_clay/frontend/widgets/tournament_kit.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/region_service.dart' show money;
-import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import 'tournament_detail_screen.dart';
 
 class TournamentsScreen extends StatefulWidget {
@@ -21,6 +18,8 @@ class TournamentsScreen extends StatefulWidget {
 class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<TournamentsScreen> {
   List<Map<String, dynamic>> _tournaments = [];
   bool _loading = true;
+  int _tab = 0; // 0 open, 1 registered, 2 past
+  String? _category; // null = every category
 
   String? get _uid => Supabase.instance.client.auth.currentUser?.id;
 
@@ -46,13 +45,7 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
   /// Active events (open/live/full/postponed) first by soonest date; finished
   /// ones (completed/cancelled) sink to the bottom, most recent first.
   static void _sortActiveFirst(List<Map<String, dynamic>> list) {
-    bool done(Map<String, dynamic> t) {
-      final entries = ((t['tournament_entries'] as List?) ?? const [])
-          .where((e) => e['status'] != 'withdrawn')
-          .length;
-      final ds = TournamentService.tournamentStatus(t, entries);
-      return ds == 'completed' || ds == 'cancelled';
-    }
+    bool done(Map<String, dynamic> t) => _isPast(t);
 
     list.sort((a, b) {
       final da = done(a), db = done(b);
@@ -65,18 +58,165 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        const ScreenBar(title: 'Compete', big: true),
-        Expanded(
-          child: PadelRefresh(
-            onRefresh: _load,
-            slivers: _tournamentSlivers(),
+  // ── Filters ──────────────────────────────────────────────────────────────
+
+  static bool _isPast(Map<String, dynamic> t) {
+    final entries = ((t['tournament_entries'] as List?) ?? const [])
+        .where((e) => e['status'] != 'withdrawn')
+        .length;
+    final ds = TournamentService.tournamentStatus(t, entries);
+    return ds == 'completed' || ds == 'cancelled';
+  }
+
+  bool _isRegistered(Map<String, dynamic> t) =>
+      TournamentService.isParticipant(t['tournament_entries'] as List?, _uid);
+
+  bool _matchesCategory(Map<String, dynamic> t) =>
+      _category == null || (t['category'] as String? ?? 'open') == _category;
+
+  /// Open = everything not finished yet, so a live event stays findable.
+  List<Map<String, dynamic>> _inTab(int tab) => _tournaments
+      .where(_matchesCategory)
+      .where((t) => switch (tab) {
+            1 => _isRegistered(t),
+            2 => _isPast(t),
+            _ => !_isPast(t),
+          })
+      .toList();
+
+  void _openFilter() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: TColors.cream,
+      shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(TRadius.sheet))),
+      builder: (c) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Filter by category', style: tStyle(20, FontWeight.w800)),
+              const SizedBox(height: 8),
+              for (final (value, label) in const [
+                (null, 'All tournaments'),
+                ('open', 'Open'),
+                ('mens', "Men's"),
+                ('womens', "Women's"),
+                ('mixed', 'Mixed'),
+              ])
+                InkWell(
+                  onTap: () {
+                    setState(() => _category = value);
+                    Navigator.pop(c);
+                  },
+                  child: SizedBox(
+                    height: 48,
+                    child: Row(children: [
+                      Expanded(
+                        child: Text(label,
+                            style: tStyle(15,
+                                _category == value
+                                    ? FontWeight.w700
+                                    : FontWeight.w500)),
+                      ),
+                      if (_category == value)
+                        const Icon(Icons.check_rounded,
+                            size: 20, color: TColors.accent),
+                    ]),
+                  ),
+                ),
+            ],
           ),
         ),
-      ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: TColors.cream,
+      child: Column(
+        children: [
+          _header(),
+          Expanded(
+            child: PadelRefresh(
+              onRefresh: _load,
+              slivers: _tournamentSlivers(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _header() => Padding(
+        padding: EdgeInsets.fromLTRB(
+            20, MediaQuery.of(context).padding.top + 12, 20, 10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('TOURNAMENTS',
+                    style: tStyle(13, FontWeight.w600,
+                        color: TColors.muted, letterSpacing: 1.2)),
+                const SizedBox(height: 2),
+                Text('Compete',
+                    style: tStyle(34, FontWeight.w800, letterSpacing: -0.5)),
+              ]),
+            ),
+            TapTarget(
+              label: 'Filter tournaments',
+              onTap: _openFilter,
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _category == null ? TColors.surface : TColors.green,
+                  borderRadius: BorderRadius.circular(TRadius.button),
+                  border: Border.all(
+                      color: _category == null
+                          ? TColors.borderStrong
+                          : TColors.green),
+                ),
+                child: Icon(Icons.filter_list_rounded,
+                    size: 20,
+                    color: _category == null ? TColors.text : TColors.white),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, children: [
+            _pill(0, _loading ? 'Open' : 'Open · ${_inTab(0).length}'),
+            _pill(1, 'Registered'),
+            _pill(2, 'Past'),
+          ]),
+        ]),
+      );
+
+  Widget _pill(int tab, String label) {
+    final on = _tab == tab;
+    return TapTarget(
+      label: label,
+      onTap: () => setState(() => _tab = tab),
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: on ? TColors.green : Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+          border: on ? null : Border.all(color: TColors.borderStrong),
+        ),
+        child: Center(
+          widthFactor: 1,
+          child: Text(label,
+              style: tStyle(14, on ? FontWeight.w600 : FontWeight.w500,
+                  color: on ? TColors.white : TColors.text2)),
+        ),
+      ),
     );
   }
 
@@ -89,63 +229,115 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
           hasScrollBody: false,
           child: Center(
               child: CircularProgressIndicator(
-                  strokeWidth: 2.4, color: AppColors.primary)),
+                  strokeWidth: 2.4, color: TColors.accent)),
         ),
       ];
     }
-    if (_tournaments.isEmpty) {
+    final list = _inTab(_tab);
+    if (list.isEmpty && _tab != 0) {
       return [
         SliverFillRemaining(
           hasScrollBody: false,
-          child: _emptyList(Icons.emoji_events_outlined, 'No tournaments yet',
-              'Open and upcoming tournaments will appear here once they are created.'),
+          child: _tab == 1
+              ? _emptyList(Icons.emoji_events_outlined, 'Nothing here yet',
+                  'Tournaments you register for will appear here.')
+              : _emptyList(Icons.history_rounded, 'No past tournaments',
+                  'Finished tournaments will appear here.'),
         ),
       ];
     }
     return [
       SliverPadding(
-        padding: const EdgeInsets.fromLTRB(
-            AppSpacing.screen, 4, AppSpacing.screen, 120),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
         sliver: SliverList(
-          delegate: SliverChildListDelegate(
-            [for (final t in _tournaments) _tournamentCard(t)],
-          ),
+          delegate: SliverChildListDelegate([
+            if (list.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 40, bottom: 28),
+                child: _emptyList(
+                    Icons.emoji_events_outlined,
+                    'No tournaments yet',
+                    'Open and upcoming tournaments will appear here once they are created.'),
+              ),
+            for (final t in list) ...[
+              _tournamentCard(t),
+              const SizedBox(height: 18),
+            ],
+            if (_tab == 0) _comingSoonCard(),
+          ]),
         ),
       ),
     ];
+  }
+
+  Widget _comingSoonCard() => CustomPaint(
+        painter: _DashedBorderPainter(),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: TColors.accentSoft,
+                borderRadius: BorderRadius.circular(TRadius.button),
+              ),
+              child: const Icon(Icons.notifications_none_rounded,
+                  size: 22, color: TColors.accent),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('More tournaments coming',
+                    style: tStyle(15, FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text('Get a heads-up when registration opens.',
+                    style: tStyle(13, FontWeight.w400, color: TColors.muted)),
+              ]),
+            ),
+            const SizedBox(width: 10),
+            // TODO(notifications): nothing sends a "registration is open" alert
+            // yet, and notify_tournament only gates events a player is already
+            // in, so there is nothing to subscribe to. Wire this up once the
+            // server sends one.
+            TButton(
+              'Notify me',
+              height: 40,
+              fontSize: 14,
+              radius: 12,
+              horizontalPadding: 14,
+              style: TButtonStyle.outlineGreen,
+              onPressed: () => AppToast.show(
+                  context, 'Registration alerts are coming soon.'),
+            ),
+          ]),
+        ),
+      );
+
+  static String? _timeOf(Map<String, dynamic> t) {
+    final v = (t['start_time'] as String?)?.trim();
+    return v == null || v.isEmpty ? null : v;
   }
 
   Widget _tournamentCard(Map<String, dynamic> t) {
     final entries = ((t['tournament_entries'] as List?) ?? const [])
         .where((e) => e['status'] != 'withdrawn')
         .toList();
-    final registered =
-        TournamentService.isParticipant(t['tournament_entries'] as List?, _uid);
+    final registered = _isRegistered(t);
     final ds = TournamentService.tournamentStatus(t, entries.length);
-    final sc = switch (ds) {
-      'open' || 'live' => AppColors.success,
-      'full' || 'postponed' || 'upcoming' => AppColors.gold,
-      _ => AppColors.inkSoft,
-    };
-    final statusLabel = switch (ds) {
-      'open' => 'Open',
-      'live' => 'Live',
-      'full' => 'Full',
-      'closed' => 'Registration closed',
-      'upcoming' => 'Upcoming',
-      'completed' => 'Completed',
-      'cancelled' => 'Cancelled',
-      'postponed' => 'Postponed',
-      _ => ds,
-    };
     final cap = (t['capacity'] as num?)?.toInt() ?? 0;
-    final remaining = cap > 0 ? (cap - entries.length).clamp(0, cap) : null;
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final minRating = (t['min_rating'] as num?)?.toDouble() ?? 0;
     final maxRating = (t['max_rating'] as num?)?.toDouble();
-    final venue = (t['venue_name'] as String?) ?? '';
+    final venue = (t['venue_name'] as String?)?.trim() ?? '';
     final canRegister = !registered && (ds == 'open' || ds == 'postponed');
+    final start = DateTime.tryParse((t['start_date'] as String?) ?? '')?.toLocal();
+    final time = _timeOf(t);
+    final level = tournamentLevelLabel(minRating, maxRating);
+    final format = tournamentFormatLabel(t);
+    final bestOf = (t['best_of'] as num?)?.toInt();
+    final cat = _catLabel(t['category'] as String?);
 
     Future<void> open() async {
       await Navigator.of(context).push(MaterialPageRoute(
@@ -153,109 +345,121 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
       _load();
     }
 
-    final isCommunity = t['organizer_id'] != null;
-    final sponsored = t['sponsored'] == true;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Stack(clipBehavior: Clip.none, children: [
-      AppCard(
-        onTap: open,
-        borderColor: isCommunity ? AppColors.gold : null,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(Icons.emoji_events_rounded, size: 18, color: AppColors.gold),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text((t['name'] as String?) ?? 'Tournament',
-                  style: AppText.bodyStrong().copyWith(fontSize: 15.5),
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            AppTag(statusLabel, color: sc),
-          ]),
-          const SizedBox(height: 9),
-          Row(children: [
-            const Icon(Icons.calendar_today_rounded, size: 13, color: AppColors.inkFaint),
-            const SizedBox(width: 5),
-            Text(_fmtRange(t['start_date'] as String?, t['end_date'] as String?),
-                style: AppText.small().copyWith(fontSize: 12.5)),
-          ]),
-          const SizedBox(height: 10),
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            if (_catLabel(t['category'] as String?) != null)
-              AppTag(_catLabel(t['category'] as String?)!, color: AppColors.accent),
-            if (venue.isNotEmpty) AppTag(venue),
-            if (minRating > 0 && maxRating != null && maxRating > 0)
-              AppTag('Lv ${RankingScale.fmtLevel(minRating)}–${RankingScale.fmtLevel(maxRating)}')
-            else if (minRating > 0)
-              AppTag('Lv ${RankingScale.fmtLevel(minRating)}+'),
-            if (registered) const AppTag('Registered', color: AppColors.primary),
-          ]),
-          const SizedBox(height: 14),
-          Row(children: [
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(prize > 0 ? money(prize) : (fee > 0 ? money(fee) : 'Free'),
-                  style: AppText.stat(18, AppColors.primary)),
-              Text(prize > 0 ? 'Prize Pool' : 'Entry / Pair',
-                  style: AppText.small().copyWith(fontSize: 11)),
-            ]),
-            const SizedBox(width: 18),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(remaining != null ? '$remaining left' : '${entries.length} pairs',
-                  style: AppText.stat(16,
-                      remaining != null && remaining <= cap * 0.25
-                          ? AppColors.success
-                          : AppColors.ink)),
-              Text(remaining != null ? 'of $cap spots' : 'registered',
-                  style: AppText.small().copyWith(fontSize: 11)),
-            ]),
-            const Spacer(),
-            AppButton(canRegister ? 'Register' : 'View',
-                height: 42,
-                variant: canRegister ? AppBtnVariant.solid : AppBtnVariant.outline,
-                onPressed: open),
-          ]),
-        ]),
+    final subtitle = [if (venue.isNotEmpty) venue, if (time != null) time];
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: TColors.surface,
+        borderRadius: BorderRadius.circular(TRadius.card),
+        border: Border.all(color: TColors.border),
       ),
-      // Blue 3D "SPONSORED" tab overhanging the right edge, vertically centered.
-      if (sponsored)
-        Positioned(
-          right: -10,
-          top: 0,
-          bottom: 0,
-          child: IgnorePointer(
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(7),
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFF6FA2F7), Color(0xFF3A6FDD), Color(0xFF2450B8)],
-                    stops: [0.0, 0.45, 1.0],
-                  ),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
-                  boxShadow: [
-                    BoxShadow(
-                        color: const Color(0xFF18347C).withValues(alpha: 0.7),
-                        blurRadius: 14,
-                        offset: const Offset(0, 7)),
-                    BoxShadow(
-                        color: const Color(0xFF18347C).withValues(alpha: 0.35),
-                        blurRadius: 3,
-                        offset: const Offset(0, 2)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          color: TColors.green,
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            DateTile(start),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    tournamentStatusChip(ds),
+                    if (registered)
+                      const InfoChip('Registered', onGreen: true),
+                    if (t['sponsored'] == true)
+                      Text('SPONSORED',
+                          style: tStyle(11, FontWeight.w600,
+                              color: TColors.sponsored, letterSpacing: 1)),
                   ],
                 ),
-                child: Text('SPONSORED',
-                    style: AppText.tag(Colors.white).copyWith(
-                        fontSize: 8.5, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-              ),
+                const SizedBox(height: 4),
+                Text((t['name'] as String?) ?? 'Tournament',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: tStyle(20, FontWeight.w700, color: TColors.white)),
+                if (subtitle.isNotEmpty)
+                  Text(subtitle.join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: tStyle(13, FontWeight.w400,
+                          color: TColors.onGreenMuted)),
+              ]),
             ),
-          ),
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              if (level != null) InfoChip(level),
+              const InfoChip('Doubles'),
+              if (cat != null) InfoChip(cat),
+              InfoChip(format),
+              if (bestOf != null) InfoChip('Best of $bestOf'),
+            ]),
+            const SizedBox(height: 14),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (prize > 0) ...[
+                Expanded(
+                  child: _stat(
+                      'Prize pool',
+                      Text(money(prize),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: tStyle(22, FontWeight.w800,
+                              color: TColors.accent))),
+                ),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: _stat(
+                  'Entry',
+                  Text.rich(
+                    TextSpan(children: [
+                      TextSpan(
+                          text: fee > 0 ? money(fee) : 'Free',
+                          style: tStyle(22, FontWeight.w800)),
+                      if (fee > 0)
+                        TextSpan(
+                            text: ' /player',
+                            style: tStyle(13, FontWeight.w500,
+                                color: TColors.muted)),
+                    ]),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ]),
+            if (cap > 0) ...[
+              const SizedBox(height: 14),
+              SpotsProgress(filled: entries.length, capacity: cap),
+            ],
+            const SizedBox(height: 14),
+            TButton(
+              canRegister ? 'View & register' : 'View tournament',
+              full: true,
+              fontSize: 16,
+              trailingIcon: Icons.arrow_forward_rounded,
+              onPressed: open,
+            ),
+          ]),
         ),
       ]),
     );
   }
+
+  Widget _stat(String label, Widget value) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: tStyle(12, FontWeight.w600, color: TColors.muted)),
+        const SizedBox(height: 2),
+        value,
+      ]);
 
   // Short tag for a gender category, or null for 'open'/unset (no tag).
   static String? _catLabel(String? c) => switch (c) {
@@ -265,40 +469,49 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
         _ => null,
       };
 
-  static String _fmtRange(String? startIso, String? endIso) {
-    final s = startIso == null ? null : DateTime.tryParse(startIso)?.toLocal();
-    if (s == null) return 'TBD';
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    final e = endIso == null ? null : DateTime.tryParse(endIso)?.toLocal();
-    if (e == null || (e.year == s.year && e.month == s.month && e.day == s.day)) {
-      return '${months[s.month - 1]} ${s.day}, ${s.year}';
-    }
-    if (e.year == s.year && e.month == s.month) {
-      return '${months[s.month - 1]} ${s.day} – ${e.day}';
-    }
-    return '${months[s.month - 1]} ${s.day} – ${months[e.month - 1]} ${e.day}';
-  }
-
   // Non-scrolling empty body — fills the SliverFillRemaining so pull-to-refresh
   // stays on the outer scroll view.
   Widget _emptyList(IconData icon, String title, String sub) => Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
-            width: 56, height: 56, alignment: Alignment.center,
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
             decoration: const BoxDecoration(
-                color: AppColors.field, shape: BoxShape.circle),
-            child: Icon(icon, size: 28, color: AppColors.inkFaint),
+                color: TColors.sunken, shape: BoxShape.circle),
+            child: Icon(icon, size: 28, color: TColors.muted),
           ),
           const SizedBox(height: 14),
-          Text(title, style: AppText.cardTitle().copyWith(fontSize: 17)),
+          Text(title, style: tStyle(17, FontWeight.w800)),
           const SizedBox(height: 6),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 40),
             child: Text(sub,
                 textAlign: TextAlign.center,
-                style: AppText.body(AppColors.inkSoft)
-                    .copyWith(fontSize: 13.5, height: 1.5)),
+                style: tStyle(14, FontWeight.w400,
+                    color: TColors.muted, height: 1.5)),
           ),
         ]),
       );
+}
+
+class _DashedBorderPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+          Offset.zero & size, const Radius.circular(20)));
+    final paint = Paint()
+      ..color = TColors.borderDashed
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    for (final metric in path.computeMetrics()) {
+      for (double d = 0; d < metric.length; d += 9) {
+        canvas.drawPath(metric.extractPath(d, d + 5), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
