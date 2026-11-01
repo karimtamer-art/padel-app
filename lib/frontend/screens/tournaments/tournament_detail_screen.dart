@@ -4,18 +4,21 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/app_colors.dart';
-import 'package:padel_clay/frontend/theme/app_spacing.dart';
 import 'package:padel_clay/frontend/theme/app_text.dart';
+import 'package:padel_clay/frontend/theme/tournament_tokens.dart';
 import 'package:padel_clay/frontend/widgets/common.dart';
+import 'package:padel_clay/frontend/widgets/tournament_kit.dart';
 import 'package:padel_clay/frontend/widgets/app_toast.dart';
 import 'package:padel_clay/frontend/widgets/copy_icon.dart';
 import 'package:padel_clay/frontend/widgets/instapay_field.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/region_service.dart' show money;
 import 'package:padel_clay/backend/services/order_service.dart';
-import 'package:padel_clay/backend/services/match_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
+import 'package:padel_clay/backend/models/tournament_bracket.dart';
+import 'bracket_view.dart';
 import 'match_result_sheet.dart';
+import 'partner_sheet.dart';
 
 /// Tournament detail — Clay Court prototype parity:
 /// Overview (prize/entry, about, where & when, eligibility, partner picker)
@@ -29,17 +32,14 @@ class TournamentDetailScreen extends StatefulWidget {
 
 class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   int _tab = 0; // 0 overview, 1 bracket
-  int _bracketSide = 0; // 0 winners, 1 losers
+  final _selection = BracketSelection();
   Map<String, dynamic>? _t;
+  Map<String, dynamic>? _formatSpec;
   List<Map<String, dynamic>> _bracket = [];
   bool _loading = true;
   bool _busy = false;
 
-  // partner picker
   Map<String, dynamic>? _partner;
-  List<Map<String, dynamic>> _players = [];
-  bool _playersLoading = true;
-  final _search = TextEditingController();
   String? _myGender; // for client-side gender-category pre-check
 
   String? get _uid => Supabase.instance.client.auth.currentUser?.id;
@@ -50,27 +50,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     _load();
   }
 
-  @override
-  void dispose() {
-    _search.dispose();
-    super.dispose();
-  }
-
   Future<void> _load() async {
     final results = await Future.wait([
       TournamentService.fetchTournament(widget.tournamentId),
       TournamentService.fetchBracket(widget.tournamentId),
-      MatchService.searchPlayers(''),
+      TournamentService.fetchFormatSpec(widget.tournamentId),
     ]);
     final myGender = await _fetchMyGender();
     if (!mounted) return;
     setState(() {
       _t = results[0] as Map<String, dynamic>?;
       _bracket = results[1] as List<Map<String, dynamic>>;
-      _players = results[2] as List<Map<String, dynamic>>;
+      _formatSpec = results[2] as Map<String, dynamic>?;
       _myGender = myGender;
       _loading = false;
-      _playersLoading = false;
     });
   }
 
@@ -115,16 +108,6 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         break;
     }
     return null;
-  }
-
-  Future<void> _searchPlayers(String q) async {
-    setState(() => _playersLoading = true);
-    final rows = await MatchService.searchPlayers(q);
-    if (!mounted) return;
-    setState(() {
-      _players = rows;
-      _playersLoading = false;
-    });
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────
@@ -330,7 +313,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
 
   // ── Formatting ───────────────────────────────────────────────────────────
 
-  static const _monthsShort = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  static const _weekdays = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  static const _monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   static const _months = ['January','February','March','April','May','June',
                           'July','August','September','October','November','December'];
 
@@ -339,18 +323,56 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   DateTime? get _end =>
       DateTime.tryParse(_t?['end_date'] as String? ?? '')?.toLocal();
 
-  String get _dateRange {
-    final s = _start;
-    if (s == null) return 'TBD';
-    final e = _end;
-    if (e == null || (e.year == s.year && e.month == s.month && e.day == s.day)) {
-      return '${_months[s.month - 1]} ${s.day}';
-    }
-    if (e.year == s.year && e.month == s.month) {
-      return '${_months[s.month - 1]} ${s.day} – ${e.day}';
-    }
-    return '${_months[s.month - 1]} ${s.day} – ${_months[e.month - 1]} ${e.day}';
+  /// "Fri, Nov 6".
+  String get _factDate {
+    final d = _start;
+    if (d == null) return 'TBD';
+    return '${_weekdays[d.weekday - 1]}, ${_monthsShort[d.month - 1]} ${d.day}';
   }
+
+  /// "5:00 PM", and how long it runs when that's more than a day.
+  String get _factTime {
+    final s = _start, e = _end;
+    final days = s == null || e == null ? 1 : e.difference(s).inDays + 1;
+    return [
+      if (_startTime != null) _startTime!,
+      if (days > 1) '$days days',
+    ].join(' · ');
+  }
+
+  String get _venue => ((_t?['venue_name'] as String?) ?? '').trim();
+
+  String? get _categoryLabel => switch (_category) {
+        'mens' => "Men's",
+        'womens' => "Women's",
+        'mixed' => 'Mixed',
+        _ => null,
+      };
+
+  /// Eligibility, in plain lines. Empty when anyone can enter.
+  List<String> get _whoCanPlay {
+    final minLv = _minRating > 0 ? _minRating : null;
+    final maxR = _maxRating;
+    final maxLv = (maxR != null && maxR > 0) ? maxR : null;
+    return [
+      switch (_category) {
+        'mens' => 'Both players in a pair must be men.',
+        'womens' => 'Both players in a pair must be women.',
+        'mixed' => "A team can't be two men: pair with a woman.",
+        _ => '',
+      },
+      if (minLv != null && maxLv != null)
+        'Levels ${RankingScale.fmtLevel(minLv)} to ${RankingScale.fmtLevel(maxLv)} only.'
+      else if (minLv != null)
+        'Level ${RankingScale.fmtLevel(minLv)} and above.'
+      else if (maxLv != null)
+        'Up to level ${RankingScale.fmtLevel(maxLv)}.',
+    ].where((l) => l.isNotEmpty).toList();
+  }
+
+  bool get _doubleElim =>
+      (_t?['format'] as String?) == 'double_elim' ||
+      _bracket.any((m) => m['bracket'] == 'lb');
 
   String? get _startTime {
     final t = (_t?['start_time'] as String?)?.trim();
@@ -363,365 +385,407 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     return d == null ? null : '${_months[d.month - 1]} ${d.day}';
   }
 
-  String get _formatLabel {
-    switch (_t?['format'] as String?) {
-      case 'knockout':
-        return 'Knockout';
-      case 'double_elim':
-        return 'Double elim';
-      case 'group_knockout':
-        return 'Groups + KO';
-      case 'round_robin':
-        return 'Round robin';
-      case 'custom':
-        final note = (_t?['format_note'] as String?)?.trim();
-        return note != null && note.isNotEmpty ? note : 'Custom';
-      default:
-        return 'Doubles';
-    }
-  }
-
   // ── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: AppColors.bg,
-        body: Center(child: CircularProgressIndicator(strokeWidth: 2.4, color: AppColors.primary)),
+        backgroundColor: TColors.cream,
+        body: Center(child: CircularProgressIndicator(strokeWidth: 2.4, color: TColors.accent)),
       );
     }
     if (_t == null) {
       return Scaffold(
-        backgroundColor: AppColors.bg,
+        backgroundColor: TColors.cream,
         body: SafeArea(
           child: Center(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('Tournament not found', style: AppText.cardTitle()),
+              Text('Tournament not found', style: tStyle(20, FontWeight.w800)),
               const SizedBox(height: 18),
-              AppButton('Back', onPressed: () => Navigator.pop(context)),
+              TButton('Back', onPressed: () => Navigator.pop(context)),
             ]),
           ),
         ),
       );
     }
+    final bar = _actionBar();
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: TColors.cream,
       body: Column(children: [
-        _hero(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 12, AppSpacing.screen, 0),
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: AppColors.field,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Row(children: [_seg('Overview', 0), _seg('Bracket', 1)]),
-          ),
-        ),
-        Expanded(
-          child: RefreshIndicator(
-            color: AppColors.primary,
-            onRefresh: _load,
-            child: _tab == 0 ? _overview() : _bracketView(),
-          ),
-        ),
-        _footer(),
+        Expanded(child: _tab == 0 ? _overview() : _bracketTab()),
+        if (bar != null) bar,
       ]),
     );
   }
 
-  Widget _seg(String label, int i) => Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _tab = i),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: _tab == i ? AppColors.primary : Colors.transparent,
-                borderRadius: BorderRadius.circular(9)),
-            child: Text(label,
-                style: AppText.bodyStrong(_tab == i ? AppColors.primaryInk : AppColors.inkSoft)
-                    .copyWith(fontSize: 13.5)),
-          ),
-        ),
+  void _setTab(int i) => setState(() => _tab = i);
+
+  Widget _tabs() => HeaderSegmentedTabs(
+        labels: const ['Overview', 'Bracket'],
+        index: _tab,
+        onChanged: _setTab,
       );
 
-  Widget _hero() {
-    final s = _start;
-    final ds = _derivedStatus;
-    final sc = switch (ds) {
-      'open' || 'live' => AppColors.success,
-      'full' || 'postponed' => AppColors.gold,
-      _ => AppColors.inkSoft,
-    };
-    final statusLabel = switch (ds) {
-      'open' => 'Open',
-      'live' => 'Live',
-      'full' => 'Full',
-      'closed' => 'Registration closed',
-      'completed' => 'Completed',
-      'cancelled' => 'Cancelled',
-      'postponed' => 'Postponed',
-      _ => ds,
-    };
+  // ── Overview header ──────────────────────────────────────────────────────
+
+  Widget _fullHeader() {
+    final level = tournamentLevelLabel(_minRating, _maxRating);
     return Container(
-      padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 6, 16, 18),
+      padding: EdgeInsets.fromLTRB(
+          20, MediaQuery.of(context).padding.top + 8, 20, 22),
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [AppColors.hero, AppColors.hero2]),
+        color: TColors.green,
+        borderRadius:
+            BorderRadius.vertical(bottom: Radius.circular(TRadius.sheet)),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          GestureDetector(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          HeaderIconButton(
+            icon: Icons.chevron_left_rounded,
+            label: 'Back to tournaments',
             onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 34, height: 34,
-              decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.close_rounded, size: 18, color: AppColors.heroInk),
-            ),
           ),
-          const Spacer(),
-          AppTag(statusLabel, color: sc, solid: true),
-        ]),
-        const SizedBox(height: 14),
-        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          // date badge
-          Container(
-            width: 58, height: 58, alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
-            ),
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text(s == null ? '–' : '${s.day}',
-                  style: AppText.stat(20, AppColors.heroInk).copyWith(height: 1)),
-              Text(s == null ? '' : _monthsShort[s.month - 1],
-                  style: AppText.tag(AppColors.heroFaint).copyWith(fontSize: 10, letterSpacing: 1)),
-            ]),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text((_t?['name'] as String?) ?? 'Tournament',
-                  style: AppText.bigTitle(AppColors.heroInk).copyWith(fontSize: 22)),
-              const SizedBox(height: 3),
-              Row(children: [
-                const Icon(Icons.place_outlined, size: 13, color: AppColors.heroFaint),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text((_t?['venue_name'] as String?) ?? '—',
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: AppText.body(AppColors.heroFaint).copyWith(fontSize: 13)),
-                ),
-              ]),
-            ]),
+          HeaderIconButton(
+            icon: Icons.ios_share_rounded,
+            label: 'Share tournament',
+            onTap: () => _shareOnWhatsApp(invite: false),
           ),
         ]),
+        const SizedBox(height: 18),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          tournamentStatusChip(_derivedStatus),
+          if (level != null) InfoChip(level, onGreen: true),
+          const InfoChip('Doubles', onGreen: true),
+          if (_categoryLabel != null) InfoChip(_categoryLabel!, onGreen: true),
+        ]),
+        const SizedBox(height: 8),
+        Text((_t?['name'] as String?) ?? 'Tournament',
+            style: tStyle(32, FontWeight.w800,
+                color: TColors.white, letterSpacing: -0.5, height: 1.05)),
+        if (_venue.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.place_outlined,
+                size: 16, color: TColors.onGreenMuted),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(_venue,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tStyle(15, FontWeight.w400,
+                      color: TColors.onGreenMuted)),
+            ),
+          ]),
+        ],
+        const SizedBox(height: 18),
+        _factStrip(),
+        const SizedBox(height: 18),
+        _tabs(),
       ]),
     );
   }
 
-  // ── Overview tab ─────────────────────────────────────────────────────────
-
-  Widget _overview() {
-    final prize = (_t?['prize_pool'] as num?)?.toInt() ?? 0;
-    final about = (_t?['description'] as String?) ?? '';
+  Widget _factStrip() {
     final bestOf = (_t?['best_of'] as num?)?.toInt() ?? 3;
     final remaining = _cap > 0 ? (_cap - _entries.length).clamp(0, _cap) : null;
+    final line = BorderSide(color: TColors.white.withValues(alpha: 0.14));
+    Widget fact(String label, String value, String sub, {bool first = false}) =>
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: first
+                ? null
+                : BoxDecoration(border: Border(left: line)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  style: tStyle(11, FontWeight.w600,
+                      color: TColors.onGreenMuted, letterSpacing: 1)),
+              const SizedBox(height: 2),
+              // Shrinks rather than cuts off: "Groups + KO" only just misses
+              // fitting a third of a 360px phone at the design's 16px.
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(value,
+                    maxLines: 1,
+                    style: tStyle(16, FontWeight.w700, color: TColors.white)),
+              ),
+              const SizedBox(height: 2),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(sub,
+                    maxLines: 1,
+                    style: tStyle(13, FontWeight.w400,
+                        color: TColors.onGreenMuted)),
+              ),
+            ]),
+          ),
+        );
+    return Container(
+      decoration: BoxDecoration(
+        color: TColors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(TRadius.matchCard),
+        border: Border.all(color: TColors.white.withValues(alpha: 0.14)),
+      ),
+      child: IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          fact('DATE', _factDate, _factTime, first: true),
+          fact('FORMAT', tournamentFormatLabel(_t), 'Best of $bestOf'),
+          fact(
+            'SPOTS',
+            remaining != null ? '$remaining left' : '${_entries.length}',
+            remaining != null ? 'of $_cap' : 'pairs',
+          ),
+        ]),
+      ),
+    );
+  }
 
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 24),
-      children: [
-        // prize / entry cards
-        Row(children: [
-          Expanded(
-            child: _bigStat('PRIZE POOL', prize > 0 ? money(prize) : '—',
-                highlight: true),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _bigStat('ENTRY / PLAYER', _fee > 0 ? money(_fee) : 'Free'),
-          ),
-        ]),
-        if (_myUnpaidPartnerShare != null) ...[
-          const SizedBox(height: 14),
-          _partnerShareCard(_myUnpaidPartnerShare!),
-        ],
-        if (about.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          Text('THE COMPETITION', style: AppText.kicker(AppColors.primary)),
-          const SizedBox(height: 4),
-          Text('About', style: AppText.cardTitle().copyWith(fontSize: 18)),
-          const SizedBox(height: 8),
-          Text(about,
-              style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 14, height: 1.55)),
-        ],
-        const SizedBox(height: 20),
-        Text('Where & when', style: AppText.cardTitle().copyWith(fontSize: 18)),
-        const SizedBox(height: 10),
-        Row(children: [
-          Expanded(child: _infoCard(Icons.calendar_today_rounded, 'WHEN',
-              _dateRange,
-              _startTime ?? (_start != null ? '${_start!.year}' : ''))),
-          const SizedBox(width: 10),
-          Expanded(
-            child: GestureDetector(
-              onTap: _openVenueDirections,
-              behavior: HitTestBehavior.opaque,
-              child: _infoCard(Icons.place_outlined, 'WHERE',
-                  (_t?['venue_name'] as String?) ?? '—',
-                  ((_t?['venue_name'] as String?)?.trim().isNotEmpty ?? false)
-                      ? 'Directions →'
-                      : ''),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 10),
-        Row(children: [
-          Expanded(child: _infoCard(Icons.groups_outlined, 'FORMAT',
-              _formatLabel, 'Doubles · Best of $bestOf')),
-          const SizedBox(width: 10),
-          Expanded(child: _infoCard(Icons.confirmation_number_outlined, 'SPOTS',
-              remaining != null ? '$remaining of $_cap' : '${_entries.length} pairs',
-              remaining != null ? 'remaining' : 'registered')),
-        ]),
-        if (_category != 'open') ...[
-          const SizedBox(height: 12),
-          _categoryCard(),
-        ],
-        if (_minRating > 0 || _maxRating != null) ...[
-          const SizedBox(height: 22),
-          Text('ELIGIBILITY', style: AppText.kicker(AppColors.primary)),
-          const SizedBox(height: 4),
-          Text('Who should play', style: AppText.cardTitle().copyWith(fontSize: 18)),
-          const SizedBox(height: 10),
-          _eligibilityCard(),
-        ],
-        if (_canRegister) ...[
-          const SizedBox(height: 22),
-          Text('IT TAKES TWO', style: AppText.kicker(AppColors.primary)),
-          const SizedBox(height: 4),
-          Text('Find your partner', style: AppText.cardTitle().copyWith(fontSize: 18)),
-          const SizedBox(height: 10),
-          _partnerPicker(),
-        ],
-        if (_entries.isNotEmpty) ...[
-          const SizedBox(height: 22),
-          Text('REGISTERED PAIRS', style: AppText.kicker()),
-          const SizedBox(height: 10),
-          AppCard(
-            padding: EdgeInsets.zero,
-            child: Column(children: [
-              for (int i = 0; i < _entries.length; i++)
-                _entryRow(_entries[i], divider: i > 0),
+  // ── Overview ─────────────────────────────────────────────────────────────
+
+  Widget _overview() {
+    final about = ((_t?['description'] as String?) ?? '').trim();
+    final prize = (_t?['prize_pool'] as num?)?.toInt() ?? 0;
+    final sections = <Widget>[
+      if (_myUnpaidPartnerShare != null) _partnerShareCard(_myUnpaidPartnerShare!),
+      if (prize > 0 || _cap > 0) _prizeCard(prize),
+      if (_canRegister) _yourTeam(),
+      if (about.isNotEmpty)
+        _section('About', _card(Text(about,
+            style: tStyle(14, FontWeight.w400,
+                color: TColors.text2, height: 1.5)))),
+      if (_whoCanPlay case final rules when rules.isNotEmpty)
+        _section('Who can play', _card(Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < rules.length; i++) ...[
+              if (i > 0) const SizedBox(height: 6),
+              Text(rules[i],
+                  style: tStyle(14, FontWeight.w500, color: TColors.text2)),
+            ],
+          ],
+        ))),
+      if (_venue.isNotEmpty) _venueCard(),
+      _howItWorks(prize),
+    ];
+    return RefreshIndicator(
+      color: TColors.accent,
+      onRefresh: _load,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.zero,
+        children: [
+          _fullHeader(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              for (var i = 0; i < sections.length; i++) ...[
+                if (i > 0) const SizedBox(height: 22),
+                sections[i],
+              ],
             ]),
           ),
         ],
-      ],
+      ),
     );
   }
 
-  Widget _bigStat(String label, String value, {bool highlight = false}) =>
+  Widget _card(Widget child, {EdgeInsets padding = const EdgeInsets.all(18)}) =>
       Container(
-        padding: const EdgeInsets.all(16),
+        clipBehavior: Clip.antiAlias,
+        padding: padding,
         decoration: BoxDecoration(
-          color: highlight
-              ? AppColors.primary.withValues(alpha: 0.1)
-              : AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-              color: highlight
-                  ? AppColors.primary.withValues(alpha: 0.3)
-                  : AppColors.line),
+          color: TColors.surface,
+          borderRadius: BorderRadius.circular(TRadius.card),
+          border: Border.all(color: TColors.border),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label,
-              style: AppText.kicker(highlight ? AppColors.primary : AppColors.inkSoft)),
-          const SizedBox(height: 5),
-          Text(value,
-              style: AppText.stat(22, highlight ? AppColors.primary : AppColors.ink)),
+        child: child,
+      );
+
+  Widget _section(String title, Widget child) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        TournamentSectionHeader(title, size: 20),
+        const SizedBox(height: 12),
+        child,
+      ]);
+
+  Widget _prizeCard(int prize) => _card(
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (prize > 0)
+            Row(children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: TColors.accentSoft,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.emoji_events_outlined,
+                    size: 26, color: TColors.accent),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Prize pool',
+                      style:
+                          tStyle(13, FontWeight.w600, color: TColors.muted)),
+                  Text(money(prize),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: tStyle(32, FontWeight.w800,
+                          color: TColors.accent,
+                          letterSpacing: -0.5,
+                          height: 1.05)),
+                ]),
+              ),
+            ]),
+          if (prize > 0 && _cap > 0) const SizedBox(height: 16),
+          if (_cap > 0)
+            SpotsProgress(filled: _entries.length, capacity: _cap, large: true),
         ]),
       );
 
-  // Gender-category banner (men's / women's / mixed).
-  Widget _categoryCard() {
-    final (icon, title, rule) = switch (_category) {
-      'mens' => (
-          Icons.male_rounded,
-          "Men's only",
-          'Both players in a pair must be men.'
-        ),
-      'womens' => (
-          Icons.female_rounded,
-          "Women's only",
-          'Both players in a pair must be women.'
-        ),
-      _ => (
-          Icons.wc_rounded,
-          'Mixed',
-          "A team can't be two men — pair with a woman."
-        ),
-    };
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.accent.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
-      ),
-      child: Row(children: [
-        Icon(icon, size: 20, color: AppColors.accent),
-        const SizedBox(width: 11),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('$title event', style: AppText.cardTitle().copyWith(fontSize: 15)),
-            const SizedBox(height: 2),
-            Text(rule,
-                style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13, height: 1.35)),
-          ]),
-        ),
-      ]),
-    );
-  }
-
-  // Shown to a partner whose own half of a split entry is still unpaid.
+  // Shown to a partner whose own half of a split entry is still unpaid. The
+  // button is the bottom bar's: one terracotta action per screen.
   Widget _partnerShareCard(Map<String, dynamic> entry) {
     final registrant = (entry['player_name'] as String?)?.split(' ').first ?? 'Your partner';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+        color: TColors.accentTint,
+        borderRadius: BorderRadius.circular(TRadius.matchCard),
+        border: Border.all(color: TColors.accentTintBorder),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.sports_tennis_rounded, size: 18, color: AppColors.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text('$registrant registered you as their partner',
-                style: AppText.cardTitle().copyWith(fontSize: 15)),
-          ),
-        ]),
-        const SizedBox(height: 6),
+        Text('$registrant registered you as their partner',
+            style: tStyle(15, FontWeight.w700, color: TColors.accentDeep)),
+        const SizedBox(height: 4),
         Text('Pay your ${money(_fee)} share to lock in your spot together.',
-            style: AppText.body(AppColors.inkSoft).copyWith(fontSize: 13.5, height: 1.4)),
-        const SizedBox(height: 12),
-        AppButton('Pay my share · ${money(_fee)}',
-            full: true,
-            height: 50,
-            onPressed: _busy ? null : () => _startPartnerShare(entry)),
+            style: tStyle(13, FontWeight.w400,
+                color: TColors.accentDeep, height: 1.4)),
       ]),
     );
   }
+
+  // ── Your team ────────────────────────────────────────────────────────────
+
+  Future<void> _choosePartner() async {
+    final picked = await showPartnerSheet(
+      context,
+      feePerPlayer: _fee,
+      onShareInvite: () => _shareOnWhatsApp(invite: true),
+    );
+    if (picked != null && mounted) setState(() => _partner = picked);
+  }
+
+  Widget _yourTeam() {
+    final partnerName = (_partner?['name'] as String?)?.trim();
+    Widget slot(Widget circle, String label, {Color? color}) => SizedBox(
+          width: 110,
+          child: Column(children: [
+            circle,
+            const SizedBox(height: 6),
+            Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: tStyle(13,
+                    color != null ? FontWeight.w700 : FontWeight.w600,
+                    color: color ?? TColors.text)),
+          ]),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const TournamentSectionHeader('Your team', eyebrow: 'IT TAKES TWO'),
+      const SizedBox(height: 12),
+      _card(Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          slot(
+            Container(
+              width: 64,
+              height: 64,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                  color: TColors.green, shape: BoxShape.circle),
+              child: Text('You',
+                  style: tStyle(22, FontWeight.w700, color: TColors.white)),
+            ),
+            'Player 1',
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Text('+',
+                style: tStyle(20, FontWeight.w800, color: TColors.faint)),
+          ),
+          TapTarget(
+            label: _partner == null ? 'Add partner' : 'Change partner',
+            onTap: _choosePartner,
+            child: _partner == null
+                ? slot(
+                    CustomPaint(
+                      painter: const _DashedCirclePainter(),
+                      child: Container(
+                        width: 64,
+                        height: 64,
+                        decoration: const BoxDecoration(
+                            color: TColors.accentTint, shape: BoxShape.circle),
+                        child: const Icon(Icons.add_rounded,
+                            size: 26, color: TColors.accent),
+                      ),
+                    ),
+                    'Add partner',
+                    color: TColors.accent,
+                  )
+                : slot(
+                    Container(
+                      width: 64,
+                      height: 64,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                          color: TColors.avatar, shape: BoxShape.circle),
+                      child: Text(initialsOf(partnerName),
+                          style: tStyle(22, FontWeight.w700,
+                              color: TColors.text2)),
+                    ),
+                    partnerName == null || partnerName.isEmpty
+                        ? 'Partner'
+                        : partnerName,
+                  ),
+          ),
+        ]),
+        const SizedBox(height: 16),
+        Row(children: [
+          Expanded(
+            child: TButton(
+              _partner == null ? 'Invite a friend' : 'Change partner',
+              full: true,
+              height: 46,
+              fontSize: 14,
+              horizontalPadding: 8,
+              style: TButtonStyle.outlineGreen,
+              onPressed: _choosePartner,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TButton(
+              _partner == null ? 'Find a partner' : 'Remove',
+              full: true,
+              height: 46,
+              fontSize: 14,
+              horizontalPadding: 8,
+              style: TButtonStyle.sunken,
+              onPressed: _partner == null
+                  ? _choosePartner
+                  : () => setState(() => _partner = null),
+            ),
+          ),
+        ]),
+      ])),
+    ]);
+  }
+
+  // ── Venue + how it works ─────────────────────────────────────────────────
 
   // Tournaments carry a free-text venue_name (no coords) — open the maps app to
   // a search on that name.
@@ -737,493 +801,121 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     }
   }
 
-  Widget _infoCard(IconData icon, String label, String value, String sub) =>
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.line),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-                color: AppColors.field, borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, size: 18, color: AppColors.primary),
-          ),
-          const SizedBox(height: 10),
-          Text(label, style: AppText.kicker()),
-          const SizedBox(height: 3),
-          Text(value,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: AppText.bodyStrong().copyWith(fontSize: 14.5)),
-          if (sub.isNotEmpty)
-            Text(sub, style: AppText.small().copyWith(fontSize: 11.5)),
-        ]),
-      );
-
-  Widget _eligibilityCard() {
-    final minLv = _minRating > 0 ? _minRating : null;
-    final maxR = _maxRating;
-    final maxLv = (maxR != null && maxR > 0) ? maxR : null;
-    final isRange = minLv != null && maxLv != null;
-
-    String subtitle;
-    if (isRange) {
-      subtitle = 'Lv ${RankingScale.fmtLevel(minLv)} – ${RankingScale.fmtLevel(maxLv)} only';
-    } else if (minLv != null) {
-      subtitle = 'Minimum Lv ${RankingScale.fmtLevel(minLv)} and above';
-    } else {
-      subtitle = 'Maximum Lv ${RankingScale.fmtLevel(maxLv!)}';
-    }
-
-    // which divisions are eligible
-    final eligDivs = RankingScale.divisions.where((d) {
-      final aboveMin = minLv == null || d.max >= minLv;
-      final belowMax = maxLv == null || d.min <= maxLv;
-      return aboveMin && belowMax;
-    }).map((d) => d.name).toList();
-
-    return AppCard(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(11)),
-            child: const Icon(Icons.shield_outlined, size: 20, color: AppColors.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(subtitle, style: AppText.bodyStrong().copyWith(fontSize: 15)),
-              Text('Eligible divisions shown below',
-                  style: AppText.small().copyWith(fontSize: 12)),
-            ]),
-          ),
-        ]),
-        const SizedBox(height: 12),
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          for (final d in eligDivs) AppTag(d, color: AppColors.gold),
-        ]),
-      ]),
-    );
-  }
-
-  // ── Partner picker ───────────────────────────────────────────────────────
-
-  Widget _partnerPicker() => AppCard(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-                color: AppColors.field,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.line)),
-            child: Row(children: [
-              const Icon(Icons.search_rounded, size: 18, color: AppColors.inkFaint),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: _search,
-                  onChanged: _searchPlayers,
-                  decoration: InputDecoration(
-                    hintText: 'Search players by @username…',
-                    hintStyle: AppText.body(AppColors.inkFaint).copyWith(fontSize: 13.5),
-                    border: InputBorder.none,
+  Widget _venueCard() => _section(
+        'Venue',
+        _card(
+          padding: EdgeInsets.zero,
+          Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            SizedBox(
+              height: 110,
+              child: CustomPaint(
+                painter: const _MapPlaceholderPainter(),
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: TColors.accent,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: TColors.white, width: 3),
+                    ),
+                    child: const Icon(Icons.place_outlined,
+                        size: 18, color: TColors.white),
                   ),
-                  style: AppText.body().copyWith(fontSize: 13.5),
                 ),
               ),
-            ]),
-          ),
-          const SizedBox(height: 10),
-          if (_partner != null)
-            _playerTile(_partner!, selected: true)
-          else if (_playersLoading)
-            const Center(child: Padding(
-              padding: EdgeInsets.all(14),
-              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
-            ))
-          else if (_players.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Text('No players found — try another name.',
-                  style: AppText.small().copyWith(fontSize: 12.5)),
-            )
-          else
-            SizedBox(
-              height: 200,
-              child: ListView(children: [for (final p in _players) _playerTile(p)]),
             ),
-        ]),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(children: [
+                Expanded(
+                  child: Text(_venue,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: tStyle(16, FontWeight.w700)),
+                ),
+                const SizedBox(width: 12),
+                TButton(
+                  'Directions',
+                  height: 44,
+                  fontSize: 14,
+                  radius: 12,
+                  horizontalPadding: 14,
+                  style: TButtonStyle.green,
+                  trailingIcon: Icons.north_east_rounded,
+                  onPressed: _openVenueDirections,
+                ),
+              ]),
+            ),
+          ]),
+        ),
       );
 
-  Widget _playerTile(Map<String, dynamic> p, {bool selected = false}) {
-    final name = p['name'] as String? ?? 'Player';
-    final username = p['username'] as String?;
-    // profiles.elo was dropped 2026-08-14; level (flattened from player_ratings) is the test now.
-    final ranked = p['rating'] != null || p['level'] != null;
-    final lv = (p['rating'] as num?)?.toDouble() ?? (p['level'] as num?)?.toDouble() ?? 0.0;
-    final initials = name.trim().isEmpty
-        ? 'P'
-        : name.trim().split(RegExp(r'\s+')).take(2).map((w) => w[0]).join().toUpperCase();
-    final subtitle = (username != null && username.isNotEmpty)
-        ? '@$username'
-        : (ranked ? RankingScale.levelTag(lv) : 'Unranked');
-    return GestureDetector(
-      onTap: () => setState(() => _partner = selected ? null : p),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.primary.withValues(alpha: 0.08) : AppColors.field,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? AppColors.primary : AppColors.line, width: 1.5),
-        ),
-        child: Row(children: [
-          AppAvatar(initials, size: 36, ring: 1.5,
-              color: selected ? AppColors.primary : AppColors.gold,
-              imageUrl: p['avatar_url'] as String?),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(name, style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
-              Text(subtitle,
-                  style: AppText.small().copyWith(fontSize: 11.5)),
-            ]),
-          ),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text(RankingScale.fmtLevel(lv), style: AppText.stat(15)),
-            Text('level', style: AppText.tag(AppColors.inkFaint).copyWith(fontSize: 9.5)),
-          ]),
-          const SizedBox(width: 8),
-          Icon(selected ? Icons.close_rounded : Icons.add_circle_outline_rounded,
-              size: 20, color: selected ? AppColors.inkSoft : AppColors.primary),
-        ]),
-      ),
-    );
-  }
-
-  Widget _entryRow(Map<String, dynamic> e, {bool divider = false}) {
-    final name = (e['player_name'] as String?)?.trim().isNotEmpty == true
-        ? (e['player_name'] as String)
-        : 'Player';
-    final partner = e['partner_name'] as String?;
-    final isMe = e['player_id'] == _uid;
-    final label = (partner != null && partner.isNotEmpty) ? '$name / $partner' : name;
-    final initials = name.trim().split(RegExp(r'\s+')).take(2)
-        .map((w) => w.isEmpty ? '' : w[0]).join().toUpperCase();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: isMe ? AppColors.primary.withValues(alpha: 0.06) : null,
-        border: divider ? const Border(top: BorderSide(color: AppColors.line)) : null,
-      ),
-      child: Row(children: [
-        AppAvatar(initials.isEmpty ? 'P' : initials, size: 34, ring: 1.5,
-            color: isMe ? AppColors.primary : AppColors.gold),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(isMe ? '$label (You)' : label,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: AppText.bodyStrong().copyWith(fontSize: 13.5)),
-        ),
-      ]),
-    );
-  }
-
-  // ── Bracket tab ──────────────────────────────────────────────────────────
-
-  Widget _bracketView() {
-    // Custom-format draws use free labels (Group A, Semifinal…) in `bracket`.
-    if ((_t?['format'] as String?) == 'custom') return _customBracketView();
-    final side = _bracketSide == 0 ? 'wb' : 'lb';
-    final matches = _bracket.where((m) => m['bracket'] == side).toList();
-    final rounds = <int, List<Map<String, dynamic>>>{};
-    for (final m in matches) {
-      rounds.putIfAbsent((m['round'] as num).toInt(), () => []).add(m);
-    }
-    final roundKeys = rounds.keys.toList()..sort();
-
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 24),
-      children: [
-        Row(children: [
-          Text('Knockout bracket', style: AppText.cardTitle().copyWith(fontSize: 17)),
-          const SizedBox(width: 8),
-          const AppTag('DOUBLE ELIMINATION', color: AppColors.accent),
-        ]),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: AppColors.field,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.line),
-          ),
-          child: Row(children: [
-            _bracketSeg('Winners', 0),
-            _bracketSeg('Losers', 1),
-          ]),
-        ),
-        const SizedBox(height: 16),
-        if (_bracket.isEmpty)
-          AppCard(
-            child: Column(children: [
-              Container(
-                width: 52, height: 52,
-                decoration: BoxDecoration(
-                    color: AppColors.field, borderRadius: BorderRadius.circular(14)),
-                child: const Icon(Icons.account_tree_outlined,
-                    size: 24, color: AppColors.inkSoft),
-              ),
-              const SizedBox(height: 12),
-              Text('No draw yet', style: AppText.cardTitle().copyWith(fontSize: 15)),
-              const SizedBox(height: 6),
-              Text('The bracket appears here once the organisers make the draw.',
-                  textAlign: TextAlign.center,
-                  style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
-            ]),
-          )
-        else if (matches.isEmpty)
-          AppCard(
-            color: AppColors.field,
-            child: Text(
-                _bracketSide == 1
-                    ? 'No one has dropped to the losers bracket yet.'
-                    : 'No matches on this side yet.',
-                style: AppText.small().copyWith(fontSize: 13)),
-          )
-        else
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final r in roundKeys) ...[
-                  _roundColumn(side, r, rounds[r]!, roundKeys.length),
-                  const SizedBox(width: 14),
-                ],
-              ],
-            ),
-          ),
-        const SizedBox(height: 16),
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.inkFaint),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-                "Lose once and you drop to the Losers bracket — two losses and you're out. Every pair is guaranteed at least two matches.",
-                style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
-          ),
-        ]),
-      ],
-    );
-  }
-
-  // Custom draw: matches grouped by their free-text label (Group A, Final…).
-  Widget _customBracketView() {
-    final byLabel = <String, List<Map<String, dynamic>>>{};
-    for (final m in _bracket) {
-      byLabel.putIfAbsent(m['bracket'] as String? ?? 'Round 1', () => []).add(m);
-    }
-    final labels = byLabel.keys.toList()..sort();
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(AppSpacing.screen, 16, AppSpacing.screen, 24),
-      children: [
-        Row(children: [
-          Text('Draw', style: AppText.cardTitle().copyWith(fontSize: 17)),
-          const SizedBox(width: 8),
-          const AppTag('CUSTOM FORMAT', color: AppColors.accent),
-        ]),
-        const SizedBox(height: 16),
-        if (_bracket.isEmpty)
-          AppCard(
-            child: Column(children: [
-              Container(
-                width: 52, height: 52,
-                decoration: BoxDecoration(
-                    color: AppColors.field, borderRadius: BorderRadius.circular(14)),
-                child: const Icon(Icons.account_tree_outlined,
-                    size: 24, color: AppColors.inkSoft),
-              ),
-              const SizedBox(height: 12),
-              Text('No draw yet', style: AppText.cardTitle().copyWith(fontSize: 15)),
-              const SizedBox(height: 6),
-              Text('The organiser will post the groups and matches here.',
-                  textAlign: TextAlign.center,
-                  style: AppText.small().copyWith(fontSize: 12.5, height: 1.5)),
-            ]),
-          )
-        else
-          for (final label in labels) ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 8, top: 4),
-              child: Text(label.toUpperCase(), style: AppText.kicker()),
-            ),
-            for (final m in (byLabel[label]!
-              ..sort((a, b) => (a['slot'] as num).toInt().compareTo((b['slot'] as num).toInt()))))
-              _bracketMatch(m),
+  Widget _howItWorks(int prize) {
+    final bestOf = (_t?['best_of'] as num?)?.toInt() ?? 3;
+    final sets = 'best of $bestOf sets';
+    final finish = prize > 0
+        ? 'Winners take the ${money(prize)} prize pool'
+        : 'Winners take the title';
+    final steps = <(String, String)>[
+      ...switch (_t?['format'] as String?) {
+        'knockout' => [
+            ('Knockout', "Lose once and you're out · $sets"),
           ],
-      ],
-    );
-  }
-
-  Widget _bracketSeg(String label, int i) => Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _bracketSide = i),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: _bracketSide == i ? AppColors.primary : Colors.transparent,
-                borderRadius: BorderRadius.circular(9)),
-            child: Text(label,
-                style: AppText.bodyStrong(
-                        _bracketSide == i ? AppColors.primaryInk : AppColors.inkSoft)
-                    .copyWith(fontSize: 13)),
-          ),
-        ),
-      );
-
-  String _roundName(String side, int round, int totalRounds) {
-    if (side == 'lb') return 'LB Round $round';
-    final fromEnd = totalRounds - round;
-    if (fromEnd == 0) return totalRounds == 1 ? 'Final' : 'Final';
-    if (fromEnd == 1) return 'Semifinals';
-    if (fromEnd == 2) return 'Quarterfinals';
-    return 'Round $round';
-  }
-
-  Widget _roundColumn(String side, int round,
-      List<Map<String, dynamic>> matches, int totalRounds) {
-    matches.sort((a, b) =>
-        ((a['slot'] as num).toInt()).compareTo((b['slot'] as num).toInt()));
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(
-        padding: const EdgeInsets.only(left: 4, bottom: 8),
-        child: Text(_roundName(side, round, totalRounds).toUpperCase(),
-            style: AppText.kicker()),
-      ),
-      for (final m in matches) _bracketMatch(m),
-    ]);
-  }
-
-  String? _teamOf(Map<String, dynamic>? e1, Map<String, dynamic>? e2, String? uid) {
-    bool inE(Map<String, dynamic>? e) =>
-        e != null && uid != null && (e['player_id'] == uid || e['partner_id'] == uid);
-    return inE(e1) ? 'a' : (inE(e2) ? 'b' : null);
-  }
-
-  bool _amInMatch(Map<String, dynamic>? e1, Map<String, dynamic>? e2) =>
-      _teamOf(e1, e2, _uid) != null;
-
-  Widget _bracketMatch(Map<String, dynamic> m) {
-    final e1 = m['e1'] as Map<String, dynamic>?;
-    final e2 = m['e2'] as Map<String, dynamic>?;
-    final winner = m['winner_entry'] as String?;
-    // A participant can enter / confirm / view the result once both pairs are set
-    // — except legacy wb/lb/gf draws, which the organizer records.
-    final legacy = const {'wb', 'lb', 'gf'}.contains(m['bracket'] as String?);
-    final actionable = e1 != null && e2 != null && !legacy && _amInMatch(e1, e2);
-    final myEntryIds = _entries
-        .where((e) => e['player_id'] == _uid)
-        .map((e) => e['id'])
-        .toSet();
-    Widget pairRow(Map<String, dynamic>? e, bool top) {
-      final won = e != null && winner != null && e['id'] == winner;
-      final mine = e != null && myEntryIds.contains(e['id']);
-      final label = e == null
-          ? 'TBD'
-          : mine
-              ? 'You${(e['partner_name'] != null && (e['partner_name'] as String).isNotEmpty) ? ' & ${(e['partner_name'] as String).split(' ').first}' : ' & ?'}'
-              : TournamentService.pairLabel(e);
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: mine ? AppColors.primary.withValues(alpha: 0.08) : null,
-          border: top ? null : const Border(top: BorderSide(color: AppColors.line)),
-        ),
-        child: Row(children: [
-          Expanded(
-            child: Text(label,
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: AppText
-                    .bodyStrong(mine
-                        ? AppColors.primary
-                        : e == null
-                            ? AppColors.inkFaint
-                            : AppColors.ink)
-                    .copyWith(fontSize: 13)),
-          ),
-          if (won)
-            const Icon(Icons.check_rounded, size: 16, color: AppColors.success),
-        ]),
-      );
-    }
-
-    // Action hint for a participant on an undecided match.
-    String? actionLabel;
-    Color actionColor = AppColors.primary;
-    if (actionable && winner == null) {
-      final status = (m['result_status'] as String?) ?? 'open';
-      if (status == 'pending') {
-        final mine = _teamOf(e1, e2, _uid);
-        final sub = _teamOf(e1, e2, m['submitted_by'] as String?);
-        actionLabel = sub == mine ? 'Awaiting confirm' : 'Confirm result';
-        actionColor = AppColors.gold;
-      } else if (status == 'disputed') {
-        actionLabel = 'Disputed · re-enter';
-        actionColor = AppColors.danger;
-      } else {
-        actionLabel = 'Enter result';
-      }
-    }
-
-    return GestureDetector(
-      onTap: actionable
-          ? () => showTournamentMatchResult(context,
-              match: m, uid: _uid, onChanged: _load)
-          : null,
-      child: Container(
-        width: 220,
-        margin: const EdgeInsets.only(bottom: 12),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.line),
-          boxShadow: kCardShadow,
-        ),
-        child: Column(children: [
-          pairRow(e1, true),
-          pairRow(e2, false),
-          if (m['score'] != null && (m['score'] as String).isNotEmpty)
+        'double_elim' => [
+            ('Winners bracket', 'Every pair starts here · $sets'),
+            ('Losers bracket', "Lose once and you play on. Lose again and you're out"),
+          ],
+        'round_robin' => [
+            ('Round robin', 'Every pair plays every other pair · $sets'),
+          ],
+        'group_knockout' => [
+            ('Group stage', 'Every team plays its group · $sets'),
+            ('Knockout', 'Top teams advance to the KO bracket'),
+          ],
+        _ => [
+            ('The draw', 'The organiser sets the matches · $sets'),
+          ],
+      },
+      ('Final', finish),
+    ];
+    return _section(
+      'How it works',
+      _card(
+        padding: EdgeInsets.zero,
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          for (var i = 0; i < steps.length; i++)
             Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: const BoxDecoration(
-                  border: Border(top: BorderSide(color: AppColors.lineSoft))),
-              child: Text(m['score'] as String,
-                  style: AppText.tag(AppColors.inkSoft).copyWith(fontSize: 11)),
-            ),
-          if (actionLabel != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: actionColor.withValues(alpha: 0.10),
-                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
-              ),
-              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.edit_outlined, size: 12, color: actionColor),
-                const SizedBox(width: 5),
-                Text(actionLabel,
-                    style: AppText.tag(actionColor).copyWith(fontSize: 10.5, fontWeight: FontWeight.w800)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: i == 0
+                  ? null
+                  : const BoxDecoration(
+                      border:
+                          Border(top: BorderSide(color: TColors.divider))),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i == steps.length - 1
+                        ? TColors.accent
+                        : TColors.green,
+                  ),
+                  child: Text('${i + 1}',
+                      style:
+                          tStyle(13, FontWeight.w700, color: TColors.white)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(steps[i].$1, style: tStyle(15, FontWeight.w700)),
+                    Text(steps[i].$2,
+                        style: tStyle(13, FontWeight.w400,
+                            color: TColors.muted)),
+                  ]),
+                ),
               ]),
             ),
         ]),
@@ -1231,51 +923,359 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     );
   }
 
-  // ── Footer ───────────────────────────────────────────────────────────────
+  // ── Bracket tab ──────────────────────────────────────────────────────────
 
-  Widget _footer() {
-    final needPartner = _canRegister && _partner == null;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
-      decoration: const BoxDecoration(
-          color: AppColors.bg,
-          border: Border(top: BorderSide(color: AppColors.lineSoft))),
-      child: Row(children: [
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('ENTRY / PLAYER', style: AppText.tag().copyWith(fontSize: 9.5)),
-          Text(_fee > 0 ? money(_fee) : 'Free', style: AppText.stat(20)),
-        ]),
-        const SizedBox(width: 14),
+  Widget _bracketTab() => Column(children: [
+        _compactHeader(),
         Expanded(
-          child: _isRegistrant
-              ? AppButton(_busy ? '…' : 'Withdraw', full: true, height: 52,
-                  variant: AppBtnVariant.ghost, onPressed: _busy ? null : _withdraw)
-              : _registered
-              // Added as a partner — already in, can't register again.
-              ? const AppButton("You're in this tournament",
-                  full: true, height: 52, variant: AppBtnVariant.outline,
-                  icon: Icons.check_circle_rounded, onPressed: null)
-              : AppButton(
-                  _busy
-                      ? 'Registering…'
-                      : switch (_derivedStatus) {
-                          'full' => 'Tournament Full',
-                          'completed' => 'Tournament Ended',
-                          'cancelled' => 'Registration Closed',
-                          'closed' => 'Registration Closed',
-                          'live' => 'Tournament in Progress',
-                          'upcoming' => _regOpensLabel != null
-                              ? 'Registration opens $_regOpensLabel'
-                              : 'Registration not open yet',
-                          _ => needPartner ? 'Pick a partner first' : 'Register Pair',
-                        },
-                  full: true, height: 52,
-                  icon: needPartner ? Icons.arrow_forward_rounded : Icons.emoji_events_rounded,
-                  onPressed: (_canRegister && !needPartner && !_busy) ? _startRegister : null),
+          child: BracketView(
+            rows: _bracket,
+            entries: _entries,
+            uid: _uid,
+            doubleElim: _doubleElim,
+            formatSpec: _formatSpec,
+            selection: _selection,
+            onSelectionChanged: () => setState(() {}),
+            onRefresh: _load,
+            onOpenResult: _openResult,
+          ),
         ),
+      ]);
+
+  Widget _compactHeader() {
+    final ds = _derivedStatus;
+    final drawSoon =
+        _bracket.isEmpty && ds != 'completed' && ds != 'cancelled';
+    return Container(
+      color: TColors.green,
+      padding: EdgeInsets.fromLTRB(
+          20, MediaQuery.of(context).padding.top + 8, 20, 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          HeaderIconButton(
+            icon: Icons.chevron_left_rounded,
+            label: 'Back',
+            onTap: () => Navigator.pop(context),
+          ),
+          HeaderIconButton(
+            icon: Icons.more_horiz_rounded,
+            label: 'More options',
+            onTap: _openManage,
+          ),
+        ]),
+        const SizedBox(height: 14),
+        Row(children: [
+          DateTile(_start, compact: true),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text((_t?['name'] as String?) ?? 'Tournament',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: tStyle(22, FontWeight.w800,
+                      color: TColors.white, height: 1.1)),
+              if (_venue.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(_venue,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: tStyle(13, FontWeight.w400,
+                        color: TColors.onGreenMuted)),
+              ],
+            ]),
+          ),
+          const SizedBox(width: 8),
+          drawSoon
+              ? const StatusChip(ChipKind.drawSoon)
+              : tournamentStatusChip(ds),
+        ]),
+        const SizedBox(height: 14),
+        _tabs(),
       ]),
     );
   }
+
+  void _openResult(Map<String, dynamic> row) {
+    showTournamentMatchResult(context, match: row, uid: _uid, onChanged: _load);
+  }
+
+  // ── Manage ───────────────────────────────────────────────────────────────
+
+  void _openManage() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: TColors.cream,
+      shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(TRadius.sheet))),
+      builder: (c) {
+        Widget item(IconData icon, String label, VoidCallback onTap,
+                {Color color = TColors.text}) =>
+            InkWell(
+              onTap: () {
+                Navigator.pop(c);
+                onTap();
+              },
+              child: SizedBox(
+                height: 52,
+                child: Row(children: [
+                  Icon(icon, size: 20, color: color),
+                  const SizedBox(width: 12),
+                  Text(label, style: tStyle(15, FontWeight.w600, color: color)),
+                ]),
+              ),
+            );
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text((_t?['name'] as String?) ?? 'Tournament',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: tStyle(20, FontWeight.w800)),
+                const SizedBox(height: 8),
+                item(Icons.ios_share_rounded, 'Share tournament',
+                    () => _shareOnWhatsApp(invite: false)),
+                // Only the registrant can withdraw the pair (server rule too).
+                if (_isRegistrant && !_busy)
+                  item(Icons.logout_rounded, 'Withdraw my pair', _withdraw,
+                      color: TColors.accentPressed),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// No per-tournament deep link exists yet, so this points at the registration
+  /// page. wa.me rather than share_plus: no new dependency for one screen.
+  Future<void> _shareOnWhatsApp({required bool invite}) async {
+    final name = (_t?['name'] as String?) ?? 'this tournament';
+    final where = _venue.isEmpty ? '' : ' at $_venue';
+    final text = invite
+        ? 'Be my partner for $name on $_factDate$where? '
+            'Sign up here: https://padel-rivals.com/register'
+        : 'Check out $name on $_factDate$where: '
+            'https://padel-rivals.com/register';
+    try {
+      await launchUrl(
+        Uri.parse('https://wa.me/?text=${Uri.encodeComponent(text)}'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      if (mounted) {
+        AppToast.show(context, "Couldn't open WhatsApp", kind: ToastKind.error);
+      }
+    }
+  }
+
+  // ── Bottom bar ───────────────────────────────────────────────────────────
+
+  /// The state machine from the design. Null hides the bar: a dead-end disabled
+  /// button is what it replaces.
+  Widget? _actionBar() {
+    final share = _myUnpaidPartnerShare;
+    if (share != null) {
+      return StickyActionBar(
+        expandButton: true,
+        left: BarLabel(value: money(_fee), sub: 'your share', valueSize: 22),
+        button: TButton(
+          _busy ? '…' : 'Pay my share',
+          full: true,
+          height: 54,
+          fontSize: 16,
+          radius: 16,
+          onPressed: _busy ? null : () => _startPartnerShare(share),
+        ),
+      );
+    }
+
+    if (_registered && _bracket.isNotEmpty) return _nextMatchBar();
+    if (_registered) return _youreInBar();
+
+    if (_canRegister) {
+      final needPartner = _partner == null;
+      return StickyActionBar(
+        expandButton: true,
+        left: BarLabel(
+          value: _fee > 0 ? money(_fee) : 'Free',
+          sub: _fee > 0 ? 'per player' : 'entry',
+          valueSize: 22,
+        ),
+        button: TButton(
+          _busy
+              ? 'Registering…'
+              : needPartner
+                  ? 'Choose partner'
+                  : _fee > 0
+                      ? 'Register & pay'
+                      : 'Register',
+          full: true,
+          height: 54,
+          fontSize: 16,
+          radius: 16,
+          icon: needPartner ? Icons.person_add_alt_rounded : null,
+          onPressed: _busy
+              ? null
+              : needPartner
+                  ? _choosePartner
+                  : _startRegister,
+        ),
+      );
+    }
+
+    // Not in it, can't get in: say why on the Overview, stay out of the way on
+    // the bracket. No waitlist exists to offer instead.
+    if (_tab == 1) return null;
+    final reason = switch (_derivedStatus) {
+      'full' => 'Tournament full',
+      'closed' => 'Registration closed',
+      'upcoming' => _regOpensLabel != null
+          ? 'Registration opens $_regOpensLabel'
+          : 'Registration not open yet',
+      'live' => 'Tournament in progress',
+      'completed' => 'Tournament ended',
+      'cancelled' => 'Tournament cancelled',
+      _ => null,
+    };
+    return reason == null ? null : StickyActionBar(left: BarLabel(value: reason));
+  }
+
+  Map<String, dynamic>? get _myEntry {
+    for (final e in _entries) {
+      if (entryHasPlayer(e, _uid)) return e;
+    }
+    return null;
+  }
+
+  Widget _youreInBar() {
+    final e = _myEntry;
+    final status = e?['status'] as String?;
+    final paidNote = switch (status) {
+      'paid' || 'confirmed' => 'paid',
+      'pending' => 'payment being verified',
+      _ => 'registered',
+    };
+    return StickyActionBar(
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: const BoxDecoration(
+            color: TColors.statusGreenBg, shape: BoxShape.circle),
+        child: const Icon(Icons.check_rounded,
+            size: 20, color: TColors.statusGreenText),
+      ),
+      left: BarLabel(
+        value: "You're in · ${pairNameFor(e, _uid)}",
+        sub: _fee > 0 ? '${money(_fee)} per player · $paidNote' : 'Free entry',
+      ),
+      button: TButton(
+        'Manage',
+        height: 44,
+        fontSize: 14,
+        style: TButtonStyle.outlineQuiet,
+        onPressed: _openManage,
+      ),
+    );
+  }
+
+  Widget? _nextMatchBar() {
+    final next = nextMatchFor(
+        _uid, allRoundsOf(_bracket, doubleElim: _doubleElim));
+    if (next == null) return null;
+
+    final opp = opponentEntry(next, _uid);
+    final String against = opp != null
+        ? 'vs ${pairNameFor(opp, _uid)}'
+        : opponentPlaceholder(next, _uid) != null
+            ? 'vs ${opponentPlaceholder(next, _uid)!.replaceFirst('Winner', 'winner')}'
+            : 'vs TBD';
+    final value = isGroupLabel(next.side)
+        ? against
+        : next.side == 'lb'
+            ? 'Losers ${next.roundLabel.replaceFirst('Round ', 'R')} · $against'
+            : '${next.roundLabel} · $against';
+
+    final submittedBy = next.row?['submitted_by'] as String?;
+    final iSubmitted = (entryHasPlayer(next.e1, _uid) &&
+            entryHasPlayer(next.e1, submittedBy)) ||
+        (entryHasPlayer(next.e2, _uid) && entryHasPlayer(next.e2, submittedBy));
+    final String? resultAction = !next.canAct(_uid)
+        ? null
+        : switch (next.state) {
+            SlotState.ready => 'Enter result',
+            SlotState.disputed => 'Re-enter result',
+            SlotState.pending => iSubmitted ? null : 'Confirm result',
+            _ => null,
+          };
+
+    return StickyActionBar(
+      left: BarLabel(eyebrow: 'YOUR NEXT MATCH', value: value),
+      button: resultAction != null
+          ? TButton(resultAction,
+              height: 48, onPressed: () => _openResult(next.row!))
+          : TButton('Details',
+              height: 48,
+              onPressed: () => setState(() {
+                    _tab = 1;
+                    _selection.showSlot(next);
+                  })),
+    );
+  }
+}
+
+/// The map area on the Venue card: a quiet placeholder, not a real map (venues
+/// have no coordinates, and "Directions" searches on the name).
+class _MapPlaceholderPainter extends CustomPainter {
+  const _MapPlaceholderPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = TColors.paleGreen);
+    final road = Paint()
+      ..color = TColors.mapRoad
+      ..style = PaintingStyle.stroke;
+    final sx = size.width / 390;
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, 70)
+        ..lineTo(120 * sx, 40)
+        ..lineTo(230 * sx, 80)
+        ..lineTo(size.width, 30),
+      road..strokeWidth = 14,
+    );
+    canvas.drawLine(
+        Offset(150 * sx, 0), Offset(170 * sx, size.height), road..strokeWidth = 10);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// The dashed ring on the empty partner slot.
+class _DashedCirclePainter extends CustomPainter {
+  const _DashedCirclePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = TColors.accent
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    final rect = Offset.zero & size;
+    const dashes = 18;
+    const step = 2 * 3.141592653589793 / dashes;
+    for (var i = 0; i < dashes; i++) {
+      canvas.drawArc(rect.deflate(1), i * step, step * 0.6, false, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 /// InstaPay payment step for a paid tournament entry. Pops with
@@ -1552,12 +1552,16 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
       );
     }
 
-    return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      opt('both', 'Both of us', 'Cover the full pair entry.',
-          widget.feePerPlayer * 2),
-      opt('split', 'Just me', 'Your partner pays their share.',
-          widget.feePerPlayer),
-    ]);
+    // IntrinsicHeight is load-bearing: this sits in a scroll view, which gives no
+    // height limit, and `stretch` with no limit breaks layout for the whole sheet.
+    return IntrinsicHeight(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        opt('both', 'Both of us', 'Cover the full pair entry.',
+            widget.feePerPlayer * 2),
+        opt('split', 'Just me', 'Your partner pays their share.',
+            widget.feePerPlayer),
+      ]),
+    );
   }
 
   Widget _copyRow(String label, String value,
