@@ -196,7 +196,7 @@ class _PartnerSheetState extends State<_PartnerSheet> {
             const Divider(height: 1, thickness: 1, color: TColors.divider),
         itemBuilder: (_, i) => PlayerRow(
           player: _players[i],
-          actionLabel: 'Invite',
+          actionLabel: 'Add as partner',
           onAction: () => Navigator.pop(context, _players[i]),
         ),
       ),
