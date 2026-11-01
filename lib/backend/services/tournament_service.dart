@@ -233,6 +233,24 @@ class TournamentService {
     }
   }
 
+  /// The saved Format Builder spec, used to show how many pairs leave a group.
+  /// Its own query so a database without the column can't take the main
+  /// tournament read down with it. Null when there is none.
+  static Future<Map<String, dynamic>?> fetchFormatSpec(String id) async {
+    try {
+      final row = await _db
+          .from('tournaments')
+          .select('format_spec')
+          .eq('id', id)
+          .maybeSingle();
+      final spec = row?['format_spec'];
+      return spec is Map ? Map<String, dynamic>.from(spec) : null;
+    } catch (e) {
+      debugPrint('[TournamentService] fetchFormatSpec: $e');
+      return null;
+    }
+  }
+
   /// A player in the match submits a winner (+ optional score). The other team
   /// then confirms or disputes. Returns an error message or null.
   static Future<String?> submitResult(String matchId, String winnerEntry,
