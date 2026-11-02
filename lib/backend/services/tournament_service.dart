@@ -24,7 +24,17 @@ class TournamentService {
       'entry_fee, prize_pool, description, min_rating, max_rating, format, format_note, best_of, sponsored, '
       'registration_opens, registration_closed, category, '
       'tournament_entries(id, player_id, player_name, partner_id, partner_name, status, '
-      'fee_mode, payer_paid, partner_paid, partner_instapay_sender)';
+      'fee_mode, payer_paid, partner_paid, partner_instapay_sender, paid_amount, '
+      'registered_at, hold_until, proof_resubmitted_at)';
+
+  // The same, for a database without changes/2026-11-02_payment_status.sql. Without
+  // this tier a missing hold_until would also cost every card its entries join.
+  static const _colsNoHold =
+      'id, name, venue_name, status, start_date, end_date, start_time, capacity, organizer_id, '
+      'entry_fee, prize_pool, description, min_rating, max_rating, format, format_note, best_of, sponsored, '
+      'registration_opens, registration_closed, category, '
+      'tournament_entries(id, player_id, player_name, partner_id, partner_name, status, '
+      'fee_mode, payer_paid, partner_paid, partner_instapay_sender, paid_amount, registered_at)';
 
   // Fallback for a pre-migration DB: no entries join, no max_rating — but still
   // selects the display fields (prize, about, best_of) so cards/detail render.
@@ -48,10 +58,18 @@ class TournamentService {
   }) async {
     final region = regionId ?? RegionService.now.id;
     try {
-      var q = _db.from('tournaments').select(_cols);
-      if (region.isNotEmpty) q = q.eq('region_id', region);
-      final rows = await q.order('start_date', ascending: true);
-      return List<Map<String, dynamic>>.from(rows as List);
+      try {
+        var q = _db.from('tournaments').select(_cols);
+        if (region.isNotEmpty) q = q.eq('region_id', region);
+        final rows = await q.order('start_date', ascending: true);
+        return List<Map<String, dynamic>>.from(rows as List);
+      } catch (e) {
+        debugPrint('[TournamentService] fetchTournaments (payment columns): $e');
+        var q = _db.from('tournaments').select(_colsNoHold);
+        if (region.isNotEmpty) q = q.eq('region_id', region);
+        final rows = await q.order('start_date', ascending: true);
+        return List<Map<String, dynamic>>.from(rows as List);
+      }
     } catch (e) {
       debugPrint('[TournamentService] fetchTournaments (region): $e — falling back');
       try {
@@ -59,7 +77,7 @@ class TournamentService {
         // delta has one market anyway, so unfiltered IS that market.
         final rows = await _db
             .from('tournaments')
-            .select(_cols)
+            .select(_colsNoHold)
             .order('start_date', ascending: true);
         return List<Map<String, dynamic>>.from(rows as List);
       } catch (e2) {
@@ -80,9 +98,19 @@ class TournamentService {
 
   static Future<Map<String, dynamic>?> fetchTournament(String id) async {
     try {
-      final row =
-          await _db.from('tournaments').select(_cols).eq('id', id).maybeSingle();
-      return row == null ? null : Map<String, dynamic>.from(row);
+      try {
+        final row =
+            await _db.from('tournaments').select(_cols).eq('id', id).maybeSingle();
+        return row == null ? null : Map<String, dynamic>.from(row);
+      } catch (e) {
+        debugPrint('[TournamentService] fetchTournament (payment columns): $e');
+        final row = await _db
+            .from('tournaments')
+            .select(_colsNoHold)
+            .eq('id', id)
+            .maybeSingle();
+        return row == null ? null : Map<String, dynamic>.from(row);
+      }
     } catch (e) {
       debugPrint('[TournamentService] fetchTournament (rich): $e — falling back');
       try {
@@ -145,6 +173,84 @@ class TournamentService {
     } catch (e) {
       return e.toString();
     }
+  }
+
+  /// What only this player needs: their sending handles, and why they were rejected.
+  /// Fetched apart from the list so every phone doesn't download every player's
+  /// handle. Empty on failure, and on a database without the delta.
+  static Future<Map<String, dynamic>> fetchMyPaymentDetails(String entryId) async {
+    final out = <String, dynamic>{};
+    try {
+      final row = await _db
+          .from('tournament_entries')
+          .select('instapay_sender, partner_instapay_sender')
+          .eq('id', entryId)
+          .maybeSingle();
+      if (row != null) out.addAll(row);
+    } catch (e) {
+      debugPrint('[TournamentService] fetchMyPaymentDetails (entry): $e');
+    }
+    try {
+      final r = await _db
+          .from('tournament_entry_rejections')
+          .select('reason, note')
+          .eq('entry_id', entryId)
+          .maybeSingle();
+      if (r != null) out['rejection'] = r;
+    } catch (e) {
+      debugPrint('[TournamentService] fetchMyPaymentDetails (rejection): $e');
+    }
+    return out;
+  }
+
+  /// Replaces the proof on the same entry, without withdrawing. Error message or null.
+  static Future<String?> resubmitPaymentProof(String entryId,
+      {required String screenshotPath, required String instapayUsername}) async {
+    try {
+      final res = await _db.rpc('resubmit_payment_proof', params: {
+        'p_entry_id': entryId,
+        'p_screenshot_path': screenshotPath,
+        'p_instapay_username': instapayUsername,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Calls [onChange] when a tournament notification lands for this player, which is
+  /// every moment their payment state changes. notifications is already published and
+  /// its RLS is own-rows. tournament_entries isn't, and shouldn't be: everyone can read
+  /// it, and a realtime filter can't say "player or partner".
+  static RealtimeChannel? watchMyTournaments(void Function(String? tournamentId) onChange) {
+    final uid = _uid;
+    if (uid == null) return null;
+    try {
+      return _db
+          .channel('payment-status-$uid-${DateTime.now().microsecondsSinceEpoch}')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'notifications',
+            filter: PostgresChangeFilter(
+                type: PostgresChangeFilterType.eq, column: 'user_id', value: uid),
+            callback: (payload) {
+              if (payload.newRecord['type'] != 'tournament') return;
+              final data = payload.newRecord['data'];
+              onChange(data is Map ? data['tournament_id'] as String? : null);
+            },
+          )
+          .subscribe();
+    } catch (e) {
+      debugPrint('[TournamentService] watchMyTournaments: $e');
+      return null;
+    }
+  }
+
+  static void stopWatching(RealtimeChannel? channel) {
+    if (channel != null) _db.removeChannel(channel);
   }
 
   /// A partner pays their own half of a split entry. Error message or null.

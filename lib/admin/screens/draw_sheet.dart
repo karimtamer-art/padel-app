@@ -3,6 +3,7 @@ import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
 import 'draw_boards.dart';
+import 'reject_payment_sheet.dart';
 import 'match_info_sheet.dart';
 import '../../backend/models/draw_engine.dart';
 import '../../backend/models/format_model.dart';
@@ -37,6 +38,7 @@ Future<void> showDrawSheet(
   required String format,
   required int registeredPairs,
   Map<String, dynamic>? formatSpec,
+  VoidCallback? onVerifyPairs,
 }) {
   return showModalBottomSheet(
     context: context,
@@ -48,6 +50,7 @@ Future<void> showDrawSheet(
       format: format,
       registeredPairs: registeredPairs,
       formatSpec: formatSpec,
+      onVerifyPairs: onVerifyPairs,
     ),
   );
 }
@@ -56,6 +59,9 @@ class DrawSheet extends StatefulWidget {
   final String tournamentId, tournamentName, format;
   final int registeredPairs;
   final Map<String, dynamic>? formatSpec;
+
+  /// Offered when generating would leave pairs under review out of the draw.
+  final VoidCallback? onVerifyPairs;
   const DrawSheet({
     super.key,
     required this.tournamentId,
@@ -63,6 +69,7 @@ class DrawSheet extends StatefulWidget {
     required this.format,
     required this.registeredPairs,
     this.formatSpec,
+    this.onVerifyPairs,
   });
 
   @override
@@ -203,6 +210,15 @@ class _DrawSheetState extends State<DrawSheet> {
 
   Future<void> _generate() async {
     if (_blocked || _busy) return;
+    final go = await confirmUnverifiedPairs(context,
+        tournamentId: widget.tournamentId,
+        onVerify: widget.onVerifyPairs == null
+            ? null
+            : () {
+                Navigator.of(context).pop();
+                widget.onVerifyPairs!();
+              });
+    if (!go || !mounted) return;
     setState(() => _busy = true);
     final err = await AdminService.saveTournamentFormat(widget.tournamentId, _buildSpec()) ??
         await AdminService.generateFromFormat(widget.tournamentId, random: _seed == 'random');

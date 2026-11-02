@@ -506,12 +506,19 @@ class BarLabel extends StatelessWidget {
   final String value;
   final String? sub;
   final double valueSize;
+  final Color subColor;
+
+  /// Shrink a long first line to fit rather than cutting it off. Only the second
+  /// line of a payment bar may truncate.
+  final bool fitValue;
   const BarLabel(
       {super.key,
       this.eyebrow,
       required this.value,
       this.sub,
-      this.valueSize = 16});
+      this.valueSize = 16,
+      this.subColor = TColors.muted,
+      this.fitValue = false});
 
   @override
   Widget build(BuildContext context) => Column(
@@ -522,16 +529,26 @@ class BarLabel extends StatelessWidget {
             Text(eyebrow!,
                 style: tStyle(11, FontWeight.w700,
                     color: TColors.muted, letterSpacing: 1)),
-          Text(value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: tStyle(valueSize,
-                  valueSize > 16 ? FontWeight.w800 : FontWeight.w700)),
+          if (fitValue)
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(value,
+                  maxLines: 1,
+                  style: tStyle(valueSize,
+                      valueSize > 16 ? FontWeight.w800 : FontWeight.w700)),
+            )
+          else
+            Text(value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: tStyle(valueSize,
+                    valueSize > 16 ? FontWeight.w800 : FontWeight.w700)),
           if (sub != null)
             Text(sub!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: tStyle(12.5, FontWeight.w400, color: TColors.muted)),
+                style: tStyle(12.5, FontWeight.w400, color: subColor)),
         ],
       );
 }

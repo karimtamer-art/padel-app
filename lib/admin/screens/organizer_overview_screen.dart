@@ -12,6 +12,7 @@ import '../data/admin_service.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../widgets/organizer_payout_card.dart';
+import 'reject_payment_sheet.dart';
 import '../../backend/services/community_service.dart';
 
 class OrganizerOverviewScreen extends StatefulWidget {
@@ -64,23 +65,33 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
       if (es is! List) continue;
       for (final e in es) {
         if (e is Map && e['status'] == 'pending') {
-          out.add({...Map<String, dynamic>.from(e), '_tournament': t['name']});
+          out.add({
+            ...Map<String, dynamic>.from(e),
+            '_tournament': t['name'],
+            '_fee': t['entry_fee'],
+          });
         }
       }
     }
     return out;
   }
 
-  Future<void> _verifyEntry(String id, bool ok) async {
-    final err = ok
-        ? await AdminService.verifyTournamentEntry(id)
-        : await AdminService.rejectTournamentEntry(id);
+  Future<void> _verifyEntry(String id) async {
+    final err = await AdminService.verifyTournamentEntry(id);
     if (!mounted) return;
     if (err != null) {
       adminToast(context, err, ok: false);
       return;
     }
-    adminToast(context, ok ? 'Payment verified' : 'Entry rejected');
+    adminToast(context, 'Payment verified');
+    _load();
+  }
+
+  Future<void> _rejectEntry(Map<String, dynamic> e) async {
+    final done = await showRejectPaymentSheet(context,
+        entry: e, fee: (e['_fee'] as num?)?.toInt() ?? 0);
+    if (!done || !mounted) return;
+    adminToast(context, 'Rejected. Both players were told why.');
     _load();
   }
 
@@ -304,9 +315,9 @@ class _OrganizerOverviewScreenState extends State<OrganizerOverviewScreen> {
           const SizedBox(width: 8),
         ],
         if (id != null) ...[
-          _miniBtn(Icons.check_rounded, AdminColors.green, () => _verifyEntry(id, true)),
+          _miniBtn(Icons.check_rounded, AdminColors.green, () => _verifyEntry(id)),
           const SizedBox(width: 6),
-          _miniBtn(Icons.close_rounded, AdminColors.danger, () => _verifyEntry(id, false)),
+          _miniBtn(Icons.close_rounded, AdminColors.danger, () => _rejectEntry(e)),
         ],
       ]),
     );

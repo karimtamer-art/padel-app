@@ -7,6 +7,9 @@
 //   ?case=compete for the list, &w=360 to test a narrow phone, and &h=1600 to
 //   see a long screen without scrolling. &extras=1 fills in the optional fields
 //   (court, live, draw time, address), which are null otherwise.
+//   ?case=7&pay=pending|paid|rejected|released|split0|split1|partner_due|partner_sent
+//   shows each payment state; ?case=compete&pay=mix&tap=Registered the cards;
+//   ?case=submitted, ?case=reject and ?case=notifs the rest. &tap=A|B taps text.
 //
 // It renders the REAL screens, so the design cannot drift from
 // what ships. The sample rows are produced by [_Sim], a port of what the SQL
@@ -22,6 +25,9 @@ import 'package:http/http.dart' as http;
 import 'package:padel_clay/admin/screens/admin_tournaments_screen.dart';
 import 'package:padel_clay/admin/screens/draw_sheet.dart';
 import 'package:padel_clay/admin/screens/match_info_sheet.dart';
+import 'package:padel_clay/admin/screens/reject_payment_sheet.dart';
+import 'package:padel_clay/frontend/screens/profile/notifications_screen.dart';
+import 'package:padel_clay/frontend/screens/tournaments/payment_status.dart';
 import 'package:padel_clay/frontend/screens/tournaments/partner_sheet.dart';
 import 'package:padel_clay/frontend/screens/tournaments/tournament_detail_screen.dart';
 import 'package:padel_clay/frontend/screens/tournaments/tournaments_screen.dart';
@@ -32,6 +38,48 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 const _me = '00000000-0000-4000-8000-000000000001';
 
 bool get _extras => Uri.base.queryParameters['extras'] == '1';
+
+String? get _pay => Uri.base.queryParameters['pay'];
+
+/// My own entry on tournament [i], in the state ?pay= asks for.
+Map<String, dynamic>? _myPayEntry(int i) {
+  final state = _pay == 'mix'
+      ? switch (i) { 7 => 'rejected', 1 => 'pending', 2 => 'paid', _ => null }
+      : _pay;
+  final now = DateTime.now();
+  Map<String, dynamic> e(String status,
+          {String mode = 'both', bool payer = false, bool partner = false,
+           bool iAmPartner = false, String? pSender, DateTime? hold}) =>
+      {
+        'id': 'mine',
+        'player_id': iAmPartner ? 'p9' : _me,
+        'player_name': iAmPartner ? 'Omar Hany' : 'Nour Salem',
+        'partner_id': iAmPartner ? _me : 'q9',
+        'partner_name': iAmPartner ? 'Nour Salem' : 'Omar Hany',
+        'status': status,
+        'fee_mode': mode,
+        'payer_paid': payer,
+        'partner_paid': partner,
+        'partner_instapay_sender': pSender,
+        'paid_amount': mode == 'split' ? 500 : 1000,
+        'hold_until': hold?.toUtc().toIso8601String(),
+        'registered_at': now
+            .subtract(const Duration(hours: 2))
+            .toUtc()
+            .toIso8601String(),
+      };
+  return switch (state) {
+    'pending' => e('pending'),
+    'paid' => e('paid', payer: true, partner: true),
+    'rejected' => e('rejected', hold: now.add(const Duration(hours: 20))),
+    'released' => e('withdrawn'),
+    'split0' => e('pending', mode: 'split'),
+    'split1' => e('pending', mode: 'split', payer: true),
+    'partner_due' => e('pending', mode: 'split', payer: true, iAmPartner: true),
+    'partner_sent' => e('pending', mode: 'split', iAmPartner: true, pSender: 'nour.salem@instapay'),
+    _ => null,
+  };
+}
 
 String _jwt() {
   String seg(Map<String, dynamic> m) =>
@@ -350,7 +398,10 @@ Map<String, dynamic> _tournament(int i) {
     'registration_opens': null,
     'registration_closed': !s.open,
     'category': 'open',
-    'tournament_entries': _entries(s.pairs, withMe: !s.open),
+    'tournament_entries': [
+      if (_myPayEntry(i) case final mine?) mine,
+      ..._entries(s.pairs, withMe: !s.open && _pay == null),
+    ],
   };
 }
 
@@ -368,7 +419,8 @@ class _FakeBackend extends http.BaseClient {
           : [
               // A live one and an open one, as the list would show them.
               for (var i = 0; i < _scenarios.length; i++)
-                if (i == 1 || _scenarios[i].open) _tournament(i),
+                if (i == 1 || _scenarios[i].open || (_pay == 'mix' && i == 2))
+                  _tournament(i),
             ];
     } else if (path.endsWith('/tournament_matches')) {
       final rows = _scenarios[idx(q['tournament_id'])].rows();
@@ -417,6 +469,50 @@ class _FakeBackend extends http.BaseClient {
         l('Group B', 2, 'e6', 0, 0, '0-0', true),
         l('Group B', 3, 'e7', 0, 0, '0-0', false),
         l('Group B', 4, 'e4', 0, 1, '0-2', false),
+      ];
+    } else if (path.endsWith('/rpc/tournament_pay_info')) {
+      body = {'handle': 'padelrivals@instapay', 'link': null};
+    } else if (path.endsWith('/tournament_entries')) {
+      body = [
+        {'instapay_sender': 'nour.salem@instapay', 'partner_instapay_sender': null}
+      ];
+    } else if (path.endsWith('/tournament_entry_rejections')) {
+      body = _pay == 'rejected' || _pay == 'released'
+          ? [
+              {
+                'reason': "Amount doesn't match",
+                'note': 'We received EGP 500, the entry is EGP 1,000.',
+              }
+            ]
+          : <Object>[];
+    } else if (path.endsWith('/notifications')) {
+      final at = DateTime.now().subtract(const Duration(minutes: 2)).toIso8601String();
+      body = [
+        {
+          'id': 'n1', 'type': 'tournament', 'read': false, 'created_at': at,
+          'title': "You're confirmed for Rivals Open — Cairo",
+          'body': 'Payment verified. See you Fri 6 Nov, 5:00 PM.',
+          'data': {'tournament_id': 't7'},
+        },
+        {
+          'id': 'n2', 'type': 'tournament', 'read': false, 'created_at': at,
+          'title': "We couldn't verify your payment",
+          'body': "Rivals Open — Cairo: Amount doesn't match. We received EGP 500. "
+              'Your spot is held until Tue 3 Nov, 5:00 PM, send new proof to keep it.',
+          'data': {'tournament_id': 't7'},
+        },
+        {
+          'id': 'n3', 'type': 'tournament', 'read': false, 'created_at': at,
+          'title': "Mina's share is verified",
+          'body': "Mina's share is verified, waiting for yours.",
+          'data': {'tournament_id': 't7'},
+        },
+        {
+          'id': 'n4', 'type': 'tournament', 'read': false, 'created_at': at,
+          'title': 'Mina registered you, payment under review',
+          'body': "You'll be confirmed for Rivals Open — Cairo once an organiser verifies the transfer.",
+          'data': {'tournament_id': 't7'},
+        },
       ];
     } else if (path.contains('/rpc/')) {
       body = null;
@@ -483,7 +579,40 @@ class _PickerState extends State<_Picker> {
     super.initState();
     final q = Uri.base.queryParameters;
     final c = int.tryParse(q['case'] ?? '');
-    if (q['case'] == 'drawsheet') {
+    if (q['tap'] != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await Future<void>.delayed(const Duration(milliseconds: 1800));
+        for (final label in q['tap']!.split('|')) {
+          await _tapText(label);
+          await Future<void>.delayed(const Duration(milliseconds: 700));
+        }
+      });
+    }
+    if (q['case'] == 'submitted') {
+      final kind = PaymentCase.values.byName(q['kind'] ?? 'both');
+      WidgetsBinding.instance.addPostFrameCallback((_) => Navigator.of(context).push(
+          MaterialPageRoute(
+              builder: (_) => PaymentSubmittedScreen(
+                    kind: kind,
+                    tournamentName: 'Rivals Open — Cairo',
+                    amount: kind == PaymentCase.both || kind == PaymentCase.newProof ? 1000 : 500,
+                    from: 'nour.salem@instapay',
+                    to: 'padelrivals@instapay',
+                    partnerFirstName: 'Omar',
+                  ))));
+    } else if (q['case'] == 'reject') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => showRejectPaymentSheet(context,
+          entry: const {
+            'id': 'mine',
+            'player_name': 'Nour Salem',
+            'partner_name': 'Omar Hany',
+            'paid_amount': 1000,
+          },
+          fee: 500));
+    } else if (q['case'] == 'notifs') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const NotificationsScreen())));
+    } else if (q['case'] == 'drawsheet') {
       WidgetsBinding.instance.addPostFrameCallback((_) => showDrawSheet(context,
           tournamentId: 't5',
           tournamentName: 'Rivals Open',

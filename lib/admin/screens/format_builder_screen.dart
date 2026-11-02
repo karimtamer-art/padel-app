@@ -4,6 +4,7 @@
 // → matches, run-time, validation with one-tap Fix), preview, save, and
 // generate the real draw. Adapted from the v9 handoff to this repo's admin_kit.
 // ============================================================================
+import 'reject_payment_sheet.dart';
 import 'package:flutter/material.dart';
 import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
@@ -135,6 +136,8 @@ class _FormatBuilderScreenState extends State<FormatBuilderScreen> {
       adminToast(context, 'Fix the ${_a.errors} problem(s) first.', ok: false);
       return;
     }
+    final go = await confirmUnverifiedPairs(context, tournamentId: _targetId!);
+    if (!go || !mounted) return;
     // Persist the current spec, then build the real matches.
     setState(() => _busy = true);
     await AdminService.saveTournamentFormat(_targetId!, _spec);

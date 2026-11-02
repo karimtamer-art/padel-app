@@ -5,6 +5,7 @@ import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
 import 'draw_sheet.dart';
 import 'match_info_sheet.dart';
+import 'reject_payment_sheet.dart';
 import '../../backend/models/tournament_bracket.dart'
     show composeLocalDateTime, splitLocalDateTime;
 import '../../backend/models/draw_engine.dart' show isReadableScore;
@@ -353,7 +354,9 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         .toList();
     final refundsDue =
         raw.where((e) => e['refund_status'] == 'due').toList();
-    final toVerify = entries.where((e) => e['status'] == 'pending').length;
+    final toVerify = entries
+        .where((e) => e['status'] == 'pending' || e['status'] == 'rejected')
+        .length;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final courtFees = (t['court_fees'] as num?)?.toInt() ?? 0;
@@ -545,9 +548,12 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final partner = (e['partner_name'] as String?)?.trim();
     final status = e['status'] as String? ?? '';
     final method = e['payment_method'] as String?;
-    final pending = status == 'pending';
+    final pending = status == 'pending' || status == 'rejected';
     final (chipColor, chipLabel) = switch (status) {
+      'pending' when e['proof_resubmitted_at'] != null =>
+        (AdminColors.warn, 'New proof'),
       'pending' => (AdminColors.warn, 'Pay: review'),
+      'rejected' => (AdminColors.danger, 'Action needed'),
       'paid' => (AdminColors.success, 'Paid'),
       _ => (AdminColors.inkFaint, ''),
     };
@@ -642,7 +648,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
   /// Verify a pending InstaPay entry (with proof) or process a due refund.
   void _entryAction(Map<String, dynamic> t, Map<String, dynamic> e) {
     final status = e['status'] as String? ?? '';
-    final pending = status == 'pending';
+    final pending = status == 'pending' || status == 'rejected';
+    final rejection = e['tournament_entry_rejections'];
     final refundDue = e['refund_status'] == 'due';
     final feePer = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final split = (e['fee_mode'] as String?) == 'split';
@@ -665,6 +672,31 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       await _load();
       if (mounted) adminToast(context, err ?? okMsg, ok: err == null);
     }
+
+    Future<void> reject() async {
+      final done = await showRejectPaymentSheet(context,
+          entry: e, fee: (t['entry_fee'] as num?)?.toInt() ?? 0);
+      if (!done || !mounted) return;
+      Navigator.pop(context); // entry sheet
+      Navigator.pop(context); // tournament detail sheet
+      await _load();
+      if (mounted) adminToast(context, 'Rejected. Both players were told why.');
+    }
+
+    final rejectionBlock = rejection is Map
+        ? <Widget>[
+            _matchRow(status == 'rejected' ? 'Rejected for' : 'Earlier problem',
+                (rejection['reason'] as String?) ?? '—'),
+            const SizedBox(height: 8),
+            if (((rejection['note'] as String?) ?? '').isNotEmpty) ...[
+              _matchRow('Note', rejection['note'] as String),
+              const SizedBox(height: 8),
+            ],
+            _matchRow('Money arrived',
+                rejection['money_received'] == true ? 'Yes, logged' : 'No'),
+            const SizedBox(height: 14),
+          ]
+        : const <Widget>[];
 
     Widget? footer;
     if (pending && split) {
@@ -691,9 +723,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             full: true,
             height: 46,
             variant: AdminBtn.danger,
-            onPressed: () => act(
-                () => AdminService.rejectTournamentEntry(e['id'] as String),
-                'Entry rejected')),
+            onPressed: reject),
       ];
       footer = Column(mainAxisSize: MainAxisSize.min, children: [
         for (var i = 0; i < btns.length; i++) ...[
@@ -717,9 +747,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         AdminButton('Reject',
             height: 50,
             variant: AdminBtn.danger,
-            onPressed: () => act(
-                () => AdminService.rejectTournamentEntry(e['id'] as String),
-                'Entry rejected')),
+            onPressed: reject),
       ]);
     } else if (refundDue) {
       footer = AdminButton('Mark refunded',
@@ -744,6 +772,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       footer: footer,
       body: split
           ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              ...rejectionBlock,
               _shareBlock("$regName's share", feePer, sender, proof, payerPaid,
                   submitted: true),
               const SizedBox(height: 16),
@@ -751,6 +780,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                   submitted: partnerSubmitted),
             ])
           : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              ...rejectionBlock,
               _matchRow('Amount', _egp(amount)),
               const SizedBox(height: 8),
               _matchRow('Sender username',
@@ -940,8 +970,12 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         tournamentId: tid,
         tournamentName: (t['name'] as String?) ?? '',
         format: format ?? '',
-        registeredPairs: entries.length,
+        // Pairs under review stay out of the draw, so don't size it for them.
+        registeredPairs: entries
+            .where((e) => e['status'] != 'pending' && e['status'] != 'rejected')
+            .length,
         formatSpec: spec is Map ? Map<String, dynamic>.from(spec) : null,
+        onVerifyPairs: () => _detail(t),
       ).then((_) {
         if (mounted) _load();
       });
@@ -958,7 +992,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
       heightFactor: 0.9,
       body: isCustom
           ? _CustomDrawBuilder(tournamentId: tid, entries: entries)
-          : _BracketManager(tournamentId: tid),
+          : _BracketManager(tournamentId: tid, onVerifyPairs: () => _detail(t)),
     );
   }
 
@@ -1856,7 +1890,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
 /// Admin bracket manager: generate/regenerate the draw and record winners.
 class _BracketManager extends StatefulWidget {
   final String tournamentId;
-  const _BracketManager({required this.tournamentId});
+  final VoidCallback? onVerifyPairs;
+  const _BracketManager({required this.tournamentId, this.onVerifyPairs});
   @override
   State<_BracketManager> createState() => _BracketManagerState();
 }
@@ -1893,6 +1928,15 @@ class _BracketManagerState extends State<_BracketManager> {
   }
 
   Future<void> _generate() async {
+    final go = await confirmUnverifiedPairs(context,
+        tournamentId: widget.tournamentId,
+        onVerify: widget.onVerifyPairs == null
+            ? null
+            : () {
+                Navigator.of(context).pop();
+                widget.onVerifyPairs!();
+              });
+    if (!go || !mounted) return;
     setState(() => _busy = true);
     final err = await AdminService.generateDraw(widget.tournamentId);
     if (!mounted) return;

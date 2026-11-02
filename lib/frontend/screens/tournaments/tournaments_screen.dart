@@ -1,3 +1,6 @@
+import 'package:padel_clay/backend/models/tournament_payment.dart';
+import 'bracket_view.dart' show pairNameFor;
+import 'payment_status.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:padel_clay/frontend/theme/tournament_tokens.dart';
@@ -21,12 +24,21 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
   int _tab = 0; // 0 open, 1 registered, 2 past
   String? _category; // null = every category
 
+  RealtimeChannel? _payChannel;
+
   String? get _uid => Supabase.instance.client.auth.currentUser?.id;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _payChannel = TournamentService.watchMyTournaments((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    TournamentService.stopWatching(_payChannel);
+    super.dispose();
   }
 
   @override
@@ -346,6 +358,51 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
     }
 
     final subtitle = [if (venue.isNotEmpty) venue, if (time != null) time];
+    final payment = registered
+        ? EntryPayment.forTournament(t['tournament_entries'] as List?, uid: _uid, fee: fee)
+        : null;
+    final pair = pairNameFor(_myEntryIn(t), _uid);
+
+    // The Registered tab is about where you stand, so it shows the short card.
+    if (_tab == 1 && payment != null) {
+      return Material(
+        color: TColors.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(TRadius.card),
+            side: const BorderSide(color: TColors.border)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: open,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Container(
+              color: TColors.green,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(children: [
+                DateTile(start),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    PaymentChip(payment),
+                    const SizedBox(height: 5),
+                    Text((t['name'] as String?) ?? 'Tournament',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: tStyle(18, FontWeight.w700, color: TColors.white)),
+                    if (subtitle.isNotEmpty)
+                      Text(subtitle.join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: tStyle(13, FontWeight.w400,
+                              color: TColors.onGreenMuted)),
+                  ]),
+                ),
+              ]),
+            ),
+            PaymentCardFooter(payment, pair: pair),
+          ]),
+        ),
+      );
+    }
 
     return Container(
       clipBehavior: Clip.antiAlias,
@@ -369,7 +426,9 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     tournamentStatusChip(ds),
-                    if (registered)
+                    if (payment != null)
+                      PaymentChip(payment)
+                    else if (registered)
                       const InfoChip('Registered', onGreen: true),
                     if (t['sponsored'] == true)
                       Text('SPONSORED',
@@ -392,6 +451,12 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
             ),
           ]),
         ),
+        if (payment != null)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: open,
+            child: PaymentCardFooter(payment, pair: pair),
+          ),
         Padding(
           padding: const EdgeInsets.all(16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -452,6 +517,17 @@ class _TournamentsScreenState extends State<TournamentsScreen> with AutoRefresh<
         ),
       ]),
     );
+  }
+
+  Map<String, dynamic>? _myEntryIn(Map<String, dynamic> t) {
+    for (final e in (t['tournament_entries'] as List?) ?? const []) {
+      final m = Map<String, dynamic>.from(e as Map);
+      if (m['status'] != 'withdrawn' &&
+          (m['player_id'] == _uid || m['partner_id'] == _uid)) {
+        return m;
+      }
+    }
+    return null;
   }
 
   Widget _stat(String label, Widget value) =>

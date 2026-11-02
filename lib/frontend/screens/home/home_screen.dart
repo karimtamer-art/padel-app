@@ -1,3 +1,4 @@
+import 'package:padel_clay/backend/models/tournament_payment.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -136,6 +137,8 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
               _unread++;
               if (payload.newRecord['type'] == 'message') _dmUnread++;
             });
+            // A payment confirmed or rejected: the tournament cards show it.
+            if (payload.newRecord['type'] == 'tournament') _loadData(silent: true);
           },
         )
         .subscribe();
@@ -1415,6 +1418,15 @@ class _TournamentTile extends StatelessWidget {
     final prize = (t['prize_pool'] as num?)?.toInt() ?? 0;
     final fee = (t['entry_fee'] as num?)?.toInt() ?? 0;
     final canRegister = !registered && (ds == 'open' || ds == 'postponed');
+    final payment = registered && fee > 0
+        ? EntryPayment.forTournament(t['tournament_entries'] as List?, uid: uid, fee: fee)
+        : null;
+    final (String? payTag, Color payColor) = switch (payment?.phase) {
+      PaymentPhase.actionNeeded => ('Action needed', AppColors.danger),
+      PaymentPhase.underReview || PaymentPhase.split => ('Payment pending', AppColors.warn),
+      PaymentPhase.confirmed => ('Confirmed', AppColors.success),
+      _ => (null, AppColors.primary),
+    };
     final sc = switch (ds) {
       'open' || 'live' => AppColors.success,
       'full' || 'postponed' || 'upcoming' => AppColors.gold,
@@ -1446,16 +1458,29 @@ class _TournamentTile extends StatelessWidget {
             // Show "Registered" only while the tournament is still pre-start;
             // once it's live/full the status (e.g. Live) is the useful label.
             AppTag(
-                (registered && (ds == 'open' || ds == 'postponed'))
-                    ? 'Registered'
-                    : statusLabel,
-                color: (registered && (ds == 'open' || ds == 'postponed'))
-                    ? AppColors.primary
-                    : sc),
+                payTag ??
+                    ((registered && (ds == 'open' || ds == 'postponed'))
+                        ? 'Registered'
+                        : statusLabel),
+                color: payTag != null
+                    ? payColor
+                    : (registered && (ds == 'open' || ds == 'postponed'))
+                        ? AppColors.primary
+                        : sc),
           ]),
           const SizedBox(height: 6),
           Text(_fmtRange(t['start_date'] as String?, t['end_date'] as String?),
               style: AppText.small().copyWith(fontSize: 12)),
+          if (payment != null && payTag != null) ...[
+            const SizedBox(height: 4),
+            Text(
+                payment.phase == PaymentPhase.confirmed
+                    ? 'Paid · confirmed'
+                    : payment.cardLine(''),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.bodyStrong(payColor).copyWith(fontSize: 12)),
+          ],
           const Spacer(),
           Row(children: [
             Expanded(

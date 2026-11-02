@@ -16,9 +16,12 @@ import 'package:padel_clay/backend/services/region_service.dart' show money;
 import 'package:padel_clay/backend/services/order_service.dart';
 import 'package:padel_clay/backend/models/ranking_scale.dart' show RankingScale;
 import 'package:padel_clay/backend/models/tournament_bracket.dart';
+import 'package:padel_clay/backend/models/tournament_payment.dart';
+import 'package:padel_clay/frontend/widgets/auto_refresh.dart';
 import 'bracket_view.dart';
 import 'match_result_sheet.dart';
 import 'partner_sheet.dart';
+import 'payment_status.dart';
 
 /// Tournament detail — Clay Court prototype parity:
 /// Overview (prize/entry, about, where & when, eligibility, partner picker)
@@ -30,7 +33,8 @@ class TournamentDetailScreen extends StatefulWidget {
   State<TournamentDetailScreen> createState() => _TournamentDetailScreenState();
 }
 
-class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
+class _TournamentDetailScreenState extends State<TournamentDetailScreen>
+    with AutoRefresh<TournamentDetailScreen> {
   int _tab = 0; // 0 overview, 1 bracket
   final _selection = BracketSelection();
   Map<String, dynamic>? _t;
@@ -43,6 +47,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
 
   Map<String, dynamic>? _partner;
   String? _myGender; // for client-side gender-category pre-check
+  Map<String, dynamic> _payDetails = const {};
+  RealtimeChannel? _payChannel;
 
   String? get _uid => Supabase.instance.client.auth.currentUser?.id;
 
@@ -50,7 +56,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   void initState() {
     super.initState();
     _load();
+    // An organiser confirming or rejecting shows up without leaving the screen.
+    _payChannel = TournamentService.watchMyTournaments((id) {
+      if (id == null || id == widget.tournamentId) _load();
+    });
   }
+
+  @override
+  void dispose() {
+    TournamentService.stopWatching(_payChannel);
+    super.dispose();
+  }
+
+  @override
+  Future<void> onAutoRefresh() => _load();
 
   Future<void> _load() async {
     final results = await Future.wait([
@@ -62,8 +81,13 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       TournamentService.fetchStandings(widget.tournamentId),
     ]);
     final myGender = await _fetchMyGender();
+    final mine = _myRawEntry(results[0] as Map<String, dynamic>?);
+    final details = mine != null && _feeOf(results[0] as Map<String, dynamic>?) > 0
+        ? await TournamentService.fetchMyPaymentDetails(mine['id'] as String)
+        : const <String, dynamic>{};
     if (!mounted) return;
     setState(() {
+      _payDetails = details;
       _t = results[0] as Map<String, dynamic>?;
       final courts = results[4] as Map<String, String>;
       _bracket = [
@@ -76,6 +100,33 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       _myGender = myGender;
       _loading = false;
     });
+  }
+
+  static int _feeOf(Map<String, dynamic>? t) => (t?['entry_fee'] as num?)?.toInt() ?? 0;
+
+  /// This player's row, withdrawn included: being released still has a reason to show.
+  /// An active row wins over a withdrawn one.
+  Map<String, dynamic>? _myRawEntry(Map<String, dynamic>? t) {
+    Map<String, dynamic>? withdrawn;
+    for (final e in (t?['tournament_entries'] as List?) ?? const []) {
+      final m = Map<String, dynamic>.from(e as Map);
+      if (m['player_id'] != _uid && m['partner_id'] != _uid) continue;
+      if (m['status'] != 'withdrawn') return m;
+      withdrawn = m;
+    }
+    return withdrawn;
+  }
+
+  /// Null when this player has no entry with anything to say about payment.
+  EntryPayment? get _payment {
+    final raw = _myRawEntry(_t);
+    if (raw == null) return null;
+    return EntryPayment.of({...raw, ..._payDetails}..remove('rejection'),
+        uid: _uid,
+        fee: _fee,
+        rejection: _payDetails['rejection'] == null
+            ? null
+            : Map<String, dynamic>.from(_payDetails['rejection'] as Map));
   }
 
   Future<String?> _fetchMyGender() async {
@@ -178,13 +229,72 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     await _register(
         instapaySender: result['sender'],
         instapayProofUrl: result['proof'],
-        feeMode: result['feeMode'] ?? 'both');
+        feeMode: result['feeMode'] ?? 'both',
+        payTo: result['to']);
+  }
+
+  Future<void> _showSubmitted(PaymentCase kind,
+      {required int amount, String? from, String? to, String? partner}) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => PaymentSubmittedScreen(
+        kind: kind,
+        tournamentName: (_t?['name'] as String?) ?? 'this tournament',
+        amount: amount,
+        from: from ?? '',
+        to: to ?? '',
+        partnerFirstName: partner?.split(' ').first,
+      ),
+    ));
+  }
+
+  /// Replace a screenshot, or send new proof after a rejection: same entry, no
+  /// withdrawing.
+  Future<void> _sendProof(EntryPayment p) async {
+    final raw = _myRawEntry(_t);
+    if (raw == null || !mounted) return;
+    final result = await showModalBottomSheet<Map<String, String?>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _TournamentPaymentSheet(
+        feePerPlayer: _fee,
+        allowSplit: false,
+        resend: true,
+        resendAmount: p.amount,
+        initialUsername: p.sender,
+        tournamentId: widget.tournamentId,
+        tournamentName: (_t?['name'] as String?) ?? 'this tournament',
+        partnerName: null,
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() => _busy = true);
+    final err = await TournamentService.resubmitPaymentProof(
+      raw['id'] as String,
+      screenshotPath: result['proof'] ?? '',
+      instapayUsername: result['sender'] ?? '',
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      _snack(err, color: AppColors.danger);
+      _load();
+      return;
+    }
+    await _load();
+    await _showSubmitted(PaymentCase.newProof,
+        amount: p.amount,
+        from: result['sender'],
+        to: result['to'],
+        partner: p.otherFirstName);
   }
 
   Future<void> _register(
       {String? instapaySender,
       String? instapayProofUrl,
-      String feeMode = 'both'}) async {
+      String feeMode = 'both',
+      String? payTo}) async {
     setState(() => _busy = true);
     final err = await TournamentService.register(
       widget.tournamentId,
@@ -198,12 +308,19 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     setState(() => _busy = false);
     if (err != null) {
       _snack(err, color: AppColors.danger);
+    } else if (_fee > 0) {
+      final partner = _partner?['name'] as String?;
+      setState(() => _partner = null);
+      await _load();
+      await _showSubmitted(
+        feeMode == 'split' ? PaymentCase.ownShare : PaymentCase.both,
+        amount: feeMode == 'split' ? _fee : _fee * 2,
+        from: instapaySender,
+        to: payTo,
+        partner: partner,
+      );
     } else {
-      _snack(_fee > 0
-          ? (feeMode == 'split'
-              ? "Your share is in — we've asked your partner to pay theirs."
-              : "Spot reserved — we'll confirm once your transfer is verified.")
-          : "You're in! See you at ${(_t?['venue_name'] as String?) ?? 'the club'}.");
+      _snack("You're in! See you at ${(_t?['venue_name'] as String?) ?? 'the club'}.");
       _load();
     }
   }
@@ -251,15 +368,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     if (err != null) {
       _snack(err, color: AppColors.danger);
     } else {
-      _snack("Your share is in — the organizer will confirm your spot.");
-      _load();
+      await _load();
+      await _showSubmitted(PaymentCase.partnerShare,
+          amount: _fee,
+          from: result['sender'],
+          to: result['to'],
+          partner: (entry['player_name'] as String?));
     }
   }
 
   Future<void> _withdraw() async {
     final paidEntry = _fee > 0;
     final refundable = TournamentService.refundableNow(_t ?? {});
-    final body = !paidEntry
+    final rejected = _payment?.phase == PaymentPhase.actionNeeded;
+    final body = !paidEntry || rejected
         ? 'Your spot opens for another pair.'
         : refundable
             ? 'Your spot opens up, and your ${money(_fee)} entry fee will be '
@@ -315,7 +437,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     if (err != null) {
       _snack(err, color: AppColors.danger);
     } else {
-      _snack(paidEntry && refundable
+      _snack(paidEntry && refundable && !rejected
           ? 'Withdrawn — your ${money(_fee)} refund will be processed by an admin.'
           : 'You have withdrawn from this tournament.');
       _load();
@@ -575,6 +697,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     final prize = (_t?['prize_pool'] as num?)?.toInt() ?? 0;
     final sections = <Widget>[
       if (_myUnpaidPartnerShare != null) _partnerShareCard(_myUnpaidPartnerShare!),
+      if (_paymentCard() case final card?) card,
       if (prize > 0 || _cap > 0) _prizeCard(prize),
       if (_canRegister) _yourTeam(),
       if (about.isNotEmpty)
@@ -671,6 +794,43 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
             SpotsProgress(filled: _entries.length, capacity: _cap, large: true),
         ]),
       );
+
+  /// The status card at the top of the content. Null when there's nothing to say.
+  Widget? _paymentCard() {
+    final p = _payment;
+    if (p == null) return null;
+    final name = (_t?['name'] as String?) ?? 'this tournament';
+    // Nobody under review is in a draw, so a draw means this pair was left out.
+    final drawIsOut = _bracket.isNotEmpty;
+    return switch (p.phase) {
+      PaymentPhase.free => null,
+      PaymentPhase.underReview => PaymentPendingCard(
+          payment: p,
+          tournamentName: name,
+          drawLabel: _drawAtLabel,
+          drawIsOut: drawIsOut,
+          onReplace: _busy || !p.canSendProof ? null : () => _sendProof(p),
+        ),
+      PaymentPhase.split => PaymentSplitCard(
+          payment: p,
+          tournamentName: name,
+          drawIsOut: drawIsOut,
+          onReplace: _busy || !p.canSendProof ? null : () => _sendProof(p),
+        ),
+      PaymentPhase.confirmed => p.byOrganiser
+          ? null
+          : PaymentConfirmedCard(
+              payment: p,
+              pair: pairNameFor(_myEntry, _uid),
+              drawIsOut: drawIsOut,
+            ),
+      PaymentPhase.actionNeeded || PaymentPhase.released => PaymentRejectedCard(
+          payment: p,
+          tournamentName: name,
+          onSendProof: _busy || !p.canSendProof ? null : () => _sendProof(p),
+        ),
+    };
+  }
 
   // Shown to a partner whose own half of a split entry is still unpaid. The
   // button is the bottom bar's: one terracotta action per screen.
@@ -1074,6 +1234,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: tStyle(20, FontWeight.w800)),
                 const SizedBox(height: 8),
+                if (_payment case final p? when _registered && _fee > 0)
+                  PaymentManageRow(p, pair: pairNameFor(_myEntry, _uid)),
                 item(Icons.ios_share_rounded, 'Share tournament',
                     () => _shareOnWhatsApp(invite: false)),
                 // Only the registrant can withdraw the pair (server rule too).
@@ -1115,6 +1277,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   /// The state machine from the design. Null hides the bar: a dead-end disabled
   /// button is what it replaces.
   Widget? _actionBar() {
+    final payment = _registered ? _payment : null;
+    if (payment?.phase == PaymentPhase.actionNeeded) return _actionNeededBar(payment!);
+
     final share = _myUnpaidPartnerShare;
     if (share != null) {
       return StickyActionBar(
@@ -1131,6 +1296,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       );
     }
 
+    // Under review means not in the draw, so this comes before the next match.
+    if (payment != null && !payment.isSettled) return _youreInBar();
     if (_registered && _bracket.isNotEmpty) return _nextMatchBar();
     if (_registered) return _youreInBar();
 
@@ -1189,26 +1356,35 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     return null;
   }
 
+  Widget _actionNeededBar(EntryPayment p) => StickyActionBar(
+        leading: paymentBarIcon(p),
+        left: BarLabel(
+            value: p.barTitle(''), sub: p.barSub, subColor: paymentBarSubColor(p)),
+        button: p.canSendProof
+            ? TButton(_busy ? '…' : 'Fix it',
+                height: 44,
+                fontSize: 14,
+                onPressed: _busy ? null : () => _sendProof(p))
+            : TButton('Manage',
+                height: 44,
+                fontSize: 14,
+                style: TButtonStyle.outlineQuiet,
+                onPressed: _openManage),
+      );
+
+  /// Spot held, or confirmed. Only confirmed gets the tick or says "You're in".
   Widget _youreInBar() {
-    final e = _myEntry;
-    final status = e?['status'] as String?;
-    final paidNote = switch (status) {
-      'paid' || 'confirmed' => 'paid',
-      'pending' => 'payment being verified',
-      _ => 'registered',
-    };
+    final p = _payment;
+    if (p == null) {
+      return StickyActionBar(left: BarLabel(value: pairNameFor(_myEntry, _uid)));
+    }
     return StickyActionBar(
-      leading: Container(
-        width: 40,
-        height: 40,
-        decoration: const BoxDecoration(
-            color: TColors.statusGreenBg, shape: BoxShape.circle),
-        child: const Icon(Icons.check_rounded,
-            size: 20, color: TColors.statusGreenText),
-      ),
+      leading: paymentBarIcon(p),
       left: BarLabel(
-        value: "You're in · ${pairNameFor(e, _uid)}",
-        sub: _fee > 0 ? '${money(_fee)} per player · $paidNote' : 'Free entry',
+        value: p.barTitle(pairNameFor(_myEntry, _uid)),
+        sub: p.barSub,
+        subColor: paymentBarSubColor(p),
+        fitValue: true,
       ),
       button: TButton(
         'Manage',
@@ -1324,6 +1500,9 @@ class _TournamentPaymentSheet extends StatefulWidget {
   final int feePerPlayer;
   final bool allowSplit; // show the "just me / both of us" choice
   final bool partnerShare; // this is a partner paying their own half
+  final bool resend; // replacing proof on an entry that already exists
+  final int? resendAmount;
+  final String? initialUsername;
   final String tournamentId;
   final String tournamentName;
   final String? partnerName;
@@ -1331,6 +1510,9 @@ class _TournamentPaymentSheet extends StatefulWidget {
     required this.feePerPlayer,
     required this.allowSplit,
     this.partnerShare = false,
+    this.resend = false,
+    this.resendAmount,
+    this.initialUsername,
     required this.tournamentId,
     required this.tournamentName,
     this.partnerName,
@@ -1349,13 +1531,14 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
   String _mode = 'both'; // 'both' (pay 2×) | 'split' (pay own share)
 
   // What the user pays right now.
-  int get _amount => widget.partnerShare
+  int get _amount => widget.resendAmount ?? (widget.partnerShare
       ? widget.feePerPlayer
-      : (_mode == 'split' ? widget.feePerPlayer : widget.feePerPlayer * 2);
+      : (_mode == 'split' ? widget.feePerPlayer : widget.feePerPlayer * 2));
 
   @override
   void initState() {
     super.initState();
+    _sender.text = widget.initialUsername ?? '';
     TournamentService.fetchPayInfo(widget.tournamentId).then((info) {
       if (mounted) {
         setState(() {
@@ -1417,6 +1600,7 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
       'sender': sender,
       'proof': res.path,
       'feeMode': widget.partnerShare ? 'split' : _mode,
+      'to': _handle,
     });
   }
 
@@ -1461,11 +1645,17 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
                           color: AppColors.line,
                           borderRadius: BorderRadius.circular(2))),
                 ),
-                Text(widget.partnerShare ? 'Pay your share' : 'Pay entry fee',
+                Text(widget.resend
+                        ? 'Send new proof'
+                        : widget.partnerShare
+                            ? 'Pay your share'
+                            : 'Pay entry fee',
                     style: AppText.stat(22, AppColors.ink)),
                 const SizedBox(height: 4),
                 Text(
-                    widget.partnerShare
+                    widget.resend
+                        ? 'Attach the screenshot of your transfer. Your spot stays held while it is checked.'
+                        : widget.partnerShare
                         ? 'Transfer your share to the InstaPay account below, then '
                             'enter your sending username so we can match it.'
                         : 'Transfer to the InstaPay account below, then enter your '

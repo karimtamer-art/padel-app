@@ -408,16 +408,26 @@ class AdminService {
   /// own events (the Organizer console view); omit for the full admin list.
   static Future<List<Map<String, dynamic>>> fetchTournaments(
       {String? organizerId}) async {
-    var query = _db
-        .from('tournaments')
-        .select('*, tournament_entries(id, player_id, player_name, '
-            'partner_id, partner_name, status, registered_at, '
-            'payment_method, paid_amount, instapay_sender, instapay_proof_url, '
-            'refund_status, fee_mode, payer_paid, partner_paid, '
-            'partner_instapay_sender, partner_instapay_proof_url)');
-    if (organizerId != null) query = query.eq('organizer_id', organizerId);
-    final res = await query.order('start_date', ascending: false);
-    return List<Map<String, dynamic>>.from(res as List);
+    const base = 'id, player_id, player_name, '
+        'partner_id, partner_name, status, registered_at, '
+        'payment_method, paid_amount, instapay_sender, instapay_proof_url, '
+        'refund_status, fee_mode, payer_paid, partner_paid, '
+        'partner_instapay_sender, partner_instapay_proof_url';
+    Future<List<Map<String, dynamic>>> run(String entryCols) async {
+      var query =
+          _db.from('tournaments').select('*, tournament_entries($entryCols)');
+      if (organizerId != null) query = query.eq('organizer_id', organizerId);
+      final res = await query.order('start_date', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    }
+
+    try {
+      return await run('$base, hold_until, proof_resubmitted_at, '
+          'tournament_entry_rejections(reason, note, money_received)');
+    } catch (_) {
+      // A database without changes/2026-11-02_payment_status.sql.
+      return run(base);
+    }
   }
 
   /// Confirms the REGISTRANT's share of an entry's InstaPay transfer. For a
@@ -442,9 +452,43 @@ class AdminService {
     }
   }
 
-  /// Rejects a pending entry (no money received) — frees the spot.
-  static Future<String?> rejectTournamentEntry(String entryId) =>
-      _updateEntry(entryId, {'status': 'withdrawn', 'refund_status': 'none'});
+  /// Rejects a payment: the reason and note go to both players, and a hold keeps the
+  /// spot while they fix it. See reject_tournament_entry.
+  static Future<String?> rejectTournamentEntry(String entryId,
+      {required String reason,
+      String? note,
+      required bool moneyReceived,
+      required int holdHours}) async {
+    try {
+      final res = await _db.rpc('reject_tournament_entry', params: {
+        'p_entry_id': entryId,
+        'p_reason': reason,
+        'p_note': note,
+        'p_money_received': moneyReceived,
+        'p_hold_hours': holdHours,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Pairs a draw would leave out: their payment isn't verified. 0 on failure, so a
+  /// failed check never blocks a draw.
+  static Future<int> unverifiedPairCount(String tournamentId) async {
+    try {
+      final rows = await _db
+          .from('tournament_entries')
+          .select('id')
+          .eq('tournament_id', tournamentId)
+          .inFilter('status', ['pending', 'rejected']);
+      return (rows as List).length;
+    } catch (_) {
+      return 0;
+    }
+  }
 
   /// Marks a due refund as processed (admin has sent the money back).
   static Future<String?> refundTournamentEntry(String entryId) =>
