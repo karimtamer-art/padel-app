@@ -30,6 +30,7 @@ on conflict (sig) do nothing;
 do $$
 declare
   v_auth text[] := array[
+    'reject_tournament_entry', 'resubmit_payment_proof',
     'add_announcement_comment', 'add_custom_match', 'admin_add_report_recipient',
     'admin_adjust_season_points', 'admin_cancel_match', 'admin_close_season',
     'admin_create_season', 'admin_dashboard_counts', 'admin_delete_banner',

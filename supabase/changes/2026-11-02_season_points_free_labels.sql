@@ -12,10 +12,9 @@
 --
 -- RUN ORDER: with standings, BEFORE the 6 Nov event is finalized. Finalizing first
 -- would lose that event's points for good.
--- ROLLBACK: 2026-11-02_season_points_free_labels_rollback.sql.
--- Safe to re-run, EXCEPT after 2026-11-02_grand_final.sql, which replaces this same
--- function with a version that also handles the grand final. Re-running this then
--- would take the third-place rule back out.
+-- ROLLBACK: supabase/rollbacks/2026-11-02_season_points_free_labels_rollback.sql.
+-- Safe to re-run. The grand final is already on live (checked against the 2 Nov schema
+-- dump), so this version keeps its third-place rule as well.
 
 create or replace function public._award_tournament_season_points(p_tournament_id uuid)
 returns void language plpgsql security definer set search_path = public as $$
@@ -69,7 +68,7 @@ begin
 
   if not v_free then
   -- the final: champion + runner-up
-  select tm.entry1, tm.entry2, tm.winner_entry into f
+  select tm.entry1, tm.entry2, tm.winner_entry, coalesce(tm.bracket, 'wb') as bracket into f
     from public.tournament_matches tm
    where tm.tournament_id = p_tournament_id
      and coalesce(tm.bracket, 'wb') in ('wb', 'gf')
@@ -95,6 +94,24 @@ begin
          lateral (values (e.player_id), (e.partner_id)) as v(pid)
    where e.id = v_runner and v.pid is not null
   on conflict do nothing;
+
+  -- A grand-final event: third place is whoever lost the losers final. Two-pair events
+  -- have no losers final, so nobody. Everything below is the single-elimination rule.
+  if f.bracket = 'gf' then
+    insert into public.season_points (season_id, player_id, rule_code, pts, tournament_id)
+    select v_sid, pid, 'tour_podium', v_podium, p_tournament_id
+      from (select case when lf.winner_entry = lf.entry1 then lf.entry2 else lf.entry1 end as third
+              from public.tournament_matches lf
+             where lf.tournament_id = p_tournament_id and lf.bracket = 'lb'
+               and lf.winner_entry is not null
+             order by lf.round desc
+             limit 1) x
+      join public.tournament_entries e on e.id = x.third,
+           lateral (values (e.player_id), (e.partner_id)) as v(pid)
+     where v.pid is not null
+    on conflict do nothing;
+    return;
+  end if;
 
   -- Free-label draw: the podium is the runner-up plus whoever lost a semi-final in
   -- the same stage. A bye has no loser, so it adds nobody.

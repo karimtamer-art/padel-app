@@ -3,7 +3,7 @@
 --
 -- RUN ORDER: any time after 2026-11-02_finalize_guard.sql. Independent of standings
 -- and the grand final.
--- ROLLBACK: 2026-11-02_match_info_fields_rollback.sql.
+-- ROLLBACK: supabase/rollbacks/2026-11-02_match_info_fields_rollback.sql.
 -- Safe to re-run.
 --
 -- On tournament_matches, not `matches`: a `matches` row only exists once a tournament

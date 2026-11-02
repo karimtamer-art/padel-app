@@ -11,3 +11,9 @@ Not part of the app, and not in pubspec.
 
 The tables are a STUB of the real schema, so this proves logic, not that a delta fits
 the live database. That needs a schema-only dump of live.
+
+With a dump (keep it outside the repo: it can hold webhook tokens):
+
+    node live.mjs <path-to-dump>        # the deltas still to run, then whole tournaments
+    node payment.mjs <path-to-dump>     # every payment state
+    LOCKDOWN=1 node live.mjs <path>     # the same with the lock-down applied first

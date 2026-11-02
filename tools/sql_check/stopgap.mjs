@@ -7,7 +7,7 @@ import { fnText, fresh, makeTournament, repo } from './harness.mjs';
 
 const ch = `${repo}/supabase/changes`;
 const delta = fs.readFileSync(`${ch}/2026-11-02_stopgap_close_helpers.sql`, 'utf8');
-const rollback = fs.readFileSync(`${ch}/2026-11-02_stopgap_close_helpers_rollback.sql`, 'utf8');
+const rollback = fs.readFileSync(`${repo}/supabase/rollbacks/2026-11-02_stopgap_close_helpers_rollback.sql`, 'utf8');
 const migration = fs.readFileSync(`${repo}/supabase/migration_player_app.sql`, 'utf8').replace(/\r\n/g, '\n');
 
 const EIGHT = [

@@ -4,7 +4,7 @@
 --
 -- RUN ORDER: after 2026-11-02_finalize_guard.sql. Must be live and tested by
 -- Wed 4 Nov, or wait until after the 6 Nov event (groups + knockout).
--- ROLLBACK: 2026-11-02_server_standings_rollback.sql. No data changes either way.
+-- ROLLBACK: supabase/rollbacks/2026-11-02_server_standings_rollback.sql. No data changes either way.
 -- Safe to re-run.
 
 -- Sets won by each side of one decided match, oriented using the known winner

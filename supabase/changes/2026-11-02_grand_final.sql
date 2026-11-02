@@ -5,7 +5,7 @@
 -- BEFORE RUNNING: no double-elim event may be mid-play, because this changes how
 -- losers rows are numbered. The check at the end lists any. An in-flight event hits
 -- "Losers bracket seat is taken" rather than being corrupted; regenerate its draw.
--- ROLLBACK: 2026-11-02_grand_final_rollback.sql.
+-- ROLLBACK: supabase/rollbacks/2026-11-02_grand_final_rollback.sql.
 -- Safe to re-run.
 --
 -- Losers routing is now the standard fixed double-elimination bracket. It replaces

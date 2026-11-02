@@ -12,7 +12,7 @@
 -- called them directly.
 --
 -- This is not the full lock-down. See supabase/proposals/2026-11-02_lock_down_functions.sql.
--- ROLLBACK: 2026-11-02_stopgap_close_helpers_rollback.sql (reopens the hole).
+-- ROLLBACK: supabase/rollbacks/2026-11-02_stopgap_close_helpers_rollback.sql (reopens the hole).
 
 do $stopgap$
 declare

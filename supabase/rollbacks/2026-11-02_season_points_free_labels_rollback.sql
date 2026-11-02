@@ -1,5 +1,5 @@
--- ROLLBACK for 2026-11-02_season_points_free_labels.sql. Only run this to undo it, and
--- not after 2026-11-02_grand_final.sql (use that delta's rollback first).
+-- ROLLBACK for 2026-11-02_season_points_free_labels.sql: back to what live ran on 2 Nov,
+-- which has the grand final but gives free-label draws no points.
 -- Points already awarded stay: remove them by hand if you need to.
 
 create or replace function public._award_tournament_season_points(p_tournament_id uuid)
@@ -32,7 +32,7 @@ begin
   if v_final_round is null then return; end if;
 
   -- the final: champion + runner-up
-  select tm.entry1, tm.entry2, tm.winner_entry into f
+  select tm.entry1, tm.entry2, tm.winner_entry, coalesce(tm.bracket, 'wb') as bracket into f
     from public.tournament_matches tm
    where tm.tournament_id = p_tournament_id
      and coalesce(tm.bracket, 'wb') in ('wb', 'gf')
@@ -58,6 +58,24 @@ begin
    where e.id = v_runner and v.pid is not null
   on conflict do nothing;
 
+  -- A grand-final event: third place is whoever lost the losers final. Two-pair events
+  -- have no losers final, so nobody. Everything below is the single-elimination rule.
+  if f.bracket = 'gf' then
+    insert into public.season_points (season_id, player_id, rule_code, pts, tournament_id)
+    select v_sid, pid, 'tour_podium', v_podium, p_tournament_id
+      from (select case when lf.winner_entry = lf.entry1 then lf.entry2 else lf.entry1 end as third
+              from public.tournament_matches lf
+             where lf.tournament_id = p_tournament_id and lf.bracket = 'lb'
+               and lf.winner_entry is not null
+             order by lf.round desc
+             limit 1) x
+      join public.tournament_entries e on e.id = x.third,
+           lateral (values (e.player_id), (e.partner_id)) as v(pid)
+     where v.pid is not null
+    on conflict do nothing;
+    return;
+  end if;
+
   for m in
     select tm.entry1, tm.entry2, tm.winner_entry
       from public.tournament_matches tm
@@ -74,8 +92,5 @@ begin
        and v.pid is not null
     on conflict do nothing;
   end loop;
-end $$;
-
--- VERIFY: must return true.
-select pg_get_functiondef('public._award_tournament_season_points(uuid)'::regprocedure) not like '%v_free%'
-       as season_points_rolled_back;
+end 
+$$;
