@@ -1313,11 +1313,10 @@ end $$;
 -- ============================================================
 -- RPC: record_bracket_winner — admin marks a match winner.
 --   • Winner advances within its bracket.
---   • Double-elim: a winners-bracket loser drops into the losers
---     bracket (paired in arrival order); a losers-bracket loser
---     is out. Single-elim: losers are simply out.
---   • If the next-round slot has no opponent left to come, the
---     admin keeps advancing until the final.
+--   • Double-elim: fixed standard routing (changes/2026-11-02_grand_final.sql):
+--     a winners-bracket loser drops into a set losers seat; a
+--     losers-bracket loser is out; both champions meet in one
+--     grand final. Single-elim: losers are simply out.
 -- ============================================================
 create or replace function public.record_bracket_winner(
   p_match_id uuid, p_winner uuid, p_score text default null)
@@ -1327,9 +1326,7 @@ declare
   m record;
   v_loser uuid;
   v_format text;
-  v_lb_round int;
-  v_lb_slot int;
-  v_open record;
+  v_k int;
 begin
   select * into m from tournament_matches where id = p_match_id for update;
   if not found then return 'Match not found.'; end if;
@@ -1344,39 +1341,30 @@ begin
      set winner_entry = p_winner, score = p_score
    where id = p_match_id;
 
+  -- Single match, no reset: the grand final ends it, nobody advances or drops.
+  if m.bracket = 'gf' then return null; end if;
+
   select format into v_format from tournaments where id = m.tournament_id;
 
-  -- advance the winner (round caps handled by simply creating next rounds;
-  -- the very last match of a bracket just stores its winner)
-  perform public._advance_winner(m.tournament_id, m.bracket, m.round, m.slot, p_winner);
-
-  -- double-elim: drop the WB loser into the losers bracket
-  if v_format = 'double_elim' and m.bracket = 'wb' then
-    -- find an LB match with a free seat, else open a new one
-    select * into v_open
-      from tournament_matches
-     where tournament_id = m.tournament_id and bracket = 'lb'
-       and winner_entry is null and (entry1 is null or entry2 is null)
-     order by round, slot
-     limit 1;
-    if found then
-      if v_open.entry1 is null then
-        update tournament_matches set entry1 = v_loser where id = v_open.id;
-      else
-        update tournament_matches set entry2 = v_loser where id = v_open.id;
-      end if;
-    else
-      select coalesce(max(round), 0) into v_lb_round
-        from tournament_matches
-       where tournament_id = m.tournament_id and bracket = 'lb';
-      select coalesce(max(slot) + 1, 0) into v_lb_slot
-        from tournament_matches
-       where tournament_id = m.tournament_id and bracket = 'lb'
-         and round = greatest(v_lb_round, 1);
-      insert into tournament_matches (tournament_id, bracket, round, slot, entry1)
-      values (m.tournament_id, 'lb', greatest(v_lb_round, 1), v_lb_slot, v_loser);
-    end if;
+  if v_format is distinct from 'double_elim' then
+    -- single elimination: unchanged. The very last match still makes a row for the
+    -- champion; finalize_tournament and the app both know it isn't a match.
+    perform public._advance_winner(m.tournament_id, m.bracket, m.round, m.slot, p_winner);
+    return null;
   end if;
+
+  perform pg_advisory_xact_lock(hashtext(m.tournament_id::text));
+  v_k := public._wb_rounds(m.tournament_id);
+
+  if m.bracket = 'wb' then
+    if m.round < v_k then
+      perform public._advance_winner(m.tournament_id, 'wb', m.round, m.slot, p_winner);
+    end if;
+    perform public._drop_from_winners(m.tournament_id, v_loser, m.round, m.slot);
+  elsif m.bracket = 'lb' then
+    perform public._advance_in_losers(m.tournament_id, p_winner, m.round, m.slot);
+  end if;
+  perform public._open_grand_final(m.tournament_id);
 
   return null;
 end $$;
@@ -6704,7 +6692,7 @@ begin
   if v_final_round is null then return; end if;
 
   -- the final: champion + runner-up
-  select tm.entry1, tm.entry2, tm.winner_entry into f
+  select tm.entry1, tm.entry2, tm.winner_entry, coalesce(tm.bracket, 'wb') as bracket into f
     from public.tournament_matches tm
    where tm.tournament_id = p_tournament_id
      and coalesce(tm.bracket, 'wb') in ('wb', 'gf')
@@ -6729,6 +6717,24 @@ begin
          lateral (values (e.player_id), (e.partner_id)) as v(pid)
    where e.id = v_runner and v.pid is not null
   on conflict do nothing;
+
+  -- A grand-final event: third place is whoever lost the losers final. Two-pair events
+  -- have no losers final, so nobody. Everything below is the single-elimination rule.
+  if f.bracket = 'gf' then
+    insert into public.season_points (season_id, player_id, rule_code, pts, tournament_id)
+    select v_sid, pid, 'tour_podium', v_podium, p_tournament_id
+      from (select case when lf.winner_entry = lf.entry1 then lf.entry2 else lf.entry1 end as third
+              from public.tournament_matches lf
+             where lf.tournament_id = p_tournament_id and lf.bracket = 'lb'
+               and lf.winner_entry is not null
+             order by lf.round desc
+             limit 1) x
+      join public.tournament_entries e on e.id = x.third,
+           lateral (values (e.player_id), (e.partner_id)) as v(pid)
+     where v.pid is not null
+    on conflict do nothing;
+    return;
+  end if;
 
   for m in
     select tm.entry1, tm.entry2, tm.winner_entry
@@ -13703,3 +13709,135 @@ begin
 end $$;
 revoke all on function public.admin_set_match_info(uuid, text, boolean) from public, anon;
 grant execute on function public.admin_set_match_info(uuid, text, boolean) to authenticated;
+
+-- ── Grand final helpers (2026-11-02, changes/2026-11-02_grand_final.sql) ──
+-- Winners rounds in this draw (round 1 has one row per two slots of the draw).
+create or replace function public._wb_rounds(p_tid uuid)
+returns int
+language sql stable security definer set search_path = public as $$
+  select round(log(2, greatest(count(*) * 2, 2)::numeric))::int
+    from tournament_matches
+   where tournament_id = p_tid and bracket = 'wb' and round = 1;
+$$;
+revoke all on function public._wb_rounds(uuid) from public, anon, authenticated;
+
+-- Puts a pair in a losers seat. An occupied seat means the event was drawn under the
+-- old routing: refuse rather than overwrite someone.
+create or replace function public._lb_place(
+  p_tid uuid, p_entry uuid, p_round int, p_slot int, p_first boolean)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v_taken uuid;
+begin
+  insert into tournament_matches (tournament_id, bracket, round, slot)
+  values (p_tid, 'lb', p_round, p_slot)
+  on conflict (tournament_id, bracket, round, slot) do nothing;
+
+  select case when p_first then entry1 else entry2 end into v_taken
+    from tournament_matches
+   where tournament_id = p_tid and bracket = 'lb' and round = p_round and slot = p_slot
+   for update;
+  if v_taken is not null and v_taken <> p_entry then
+    raise exception 'Losers bracket seat is taken (round %, slot %). Regenerate this draw.',
+      p_round, p_slot;
+  end if;
+
+  update tournament_matches
+     set entry1 = case when p_first then p_entry else entry1 end,
+         entry2 = case when p_first then entry2 else p_entry end
+   where tournament_id = p_tid and bracket = 'lb' and round = p_round and slot = p_slot;
+end $$;
+revoke all on function public._lb_place(uuid, uuid, int, int, boolean) from public, anon, authenticated;
+
+-- A losers-bracket winner moves on. The losers final's winner goes to the grand final.
+create or replace function public._advance_in_losers(
+  p_tid uuid, p_winner uuid, p_round int, p_slot int)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v_last int := 2 * (public._wb_rounds(p_tid) - 1);
+begin
+  if p_round >= v_last then return; end if;
+  if p_round % 2 = 1 then
+    perform public._lb_place(p_tid, p_winner, p_round + 1, p_slot, true);
+  else
+    perform public._lb_place(p_tid, p_winner, p_round + 1, p_slot / 2, p_slot % 2 = 0);
+  end if;
+end $$;
+revoke all on function public._advance_in_losers(uuid, uuid, int, int) from public, anon, authenticated;
+
+-- A winners-bracket loser drops down. Later rounds drop into the opposite half, which
+-- delays rematches; they are allowed, just not sought.
+create or replace function public._drop_from_winners(
+  p_tid uuid, p_loser uuid, p_round int, p_slot int)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_k int := public._wb_rounds(p_tid);
+  v_slot int;
+  v_byes int;
+begin
+  if v_k <= 1 then return; end if; -- two pairs: straight to the grand final
+
+  if p_round = 1 then
+    v_slot := p_slot / 2;
+    -- The other half of this seat is a bye, so nobody is coming: walkover.
+    if exists (select 1 from tournament_matches
+                where tournament_id = p_tid and bracket = 'wb' and round = 1
+                  and slot = (p_slot # 1) and winner_entry is not null
+                  and (entry1 is null or entry2 is null)) then
+      perform public._lb_place(p_tid, p_loser, 2, v_slot, true);
+    else
+      perform public._lb_place(p_tid, p_loser, 1, v_slot, p_slot % 2 = 0);
+    end if;
+    return;
+  end if;
+
+  v_slot := (1 << (v_k - p_round)) - 1 - p_slot;
+
+  if p_round = 2 then
+    -- Both feeders of the survivor's side were byes: no survivor exists, walkover.
+    select count(*) into v_byes
+      from tournament_matches
+     where tournament_id = p_tid and bracket = 'wb' and round = 1
+       and slot in (v_slot * 2, v_slot * 2 + 1) and winner_entry is not null
+       and (entry1 is null or entry2 is null);
+    if v_byes = 2 then
+      perform public._advance_in_losers(p_tid, p_loser, 2, v_slot);
+      return;
+    end if;
+  end if;
+
+  perform public._lb_place(p_tid, p_loser, 2 * (p_round - 1), v_slot, false);
+end $$;
+revoke all on function public._drop_from_winners(uuid, uuid, int, int) from public, anon, authenticated;
+
+-- Opens the grand final once both finals are decided. Its round is one past the winners
+-- final, because _award_tournament_season_points finds the champion through max(round).
+-- Idempotent through the unique key.
+create or replace function public._open_grand_final(p_tid uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_k int := public._wb_rounds(p_tid);
+  f record;
+  v_wb uuid;
+  v_lb uuid;
+begin
+  select * into f from tournament_matches
+   where tournament_id = p_tid and bracket = 'wb' and round = v_k and slot = 0;
+  if not found or f.winner_entry is null then return; end if;
+  v_wb := f.winner_entry;
+
+  if v_k <= 1 then
+    v_lb := case when f.winner_entry = f.entry1 then f.entry2 else f.entry1 end;
+  else
+    select winner_entry into v_lb from tournament_matches
+     where tournament_id = p_tid and bracket = 'lb' and round = 2 * (v_k - 1) and slot = 0;
+    if v_lb is null then return; end if;
+  end if;
+
+  insert into tournament_matches (tournament_id, bracket, round, slot, entry1, entry2)
+  values (p_tid, 'gf', v_k + 1, 0, v_wb, v_lb)
+  on conflict (tournament_id, bracket, round, slot) do nothing;
+end $$;
+revoke all on function public._open_grand_final(uuid) from public, anon, authenticated;
