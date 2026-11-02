@@ -6785,7 +6785,8 @@ begin
   end if;
 
   if exists (select 1 from public.tournament_matches
-              where tournament_id = p_tournament_id and winner_entry is null) then
+              where tournament_id = p_tournament_id and winner_entry is null
+                and entry1 is not null and entry2 is not null) then
     return 'Finish all current matches before finalizing.';
   end if;
   if not exists (select 1 from public.tournament_matches
