@@ -1,10 +1,11 @@
 // Tests the three deltas. argv[2]: 'stub' (default) or a path to a schema dump.
 import assert from 'assert';
 import fs from 'fs';
-import { fresh, makeTournament, playOut, repo } from './harness.mjs';
+import { fresh, fnText as fnTextOf, makeTournament, playOut, repo } from './harness.mjs';
 const ch = `${repo}/supabase/changes`;
 const STD = `${ch}/2026-11-02_server_standings.sql`, INFO = `${ch}/2026-11-02_match_info_fields.sql`, GF = `${ch}/2026-11-02_grand_final.sql`;
 const FG = `${ch}/2026-11-02_finalize_guard.sql`;
+const SP = `${ch}/2026-11-02_season_points_free_labels.sql`;
 
 // Deltas end in a VERIFY select: run them, then read every ok column.
 async function applyAndVerify(db, file) {
@@ -18,10 +19,70 @@ async function applyAndVerify(db, file) {
 }
 const db = await fresh();
 
-for (const f of [FG, STD, INFO, GF, STD, INFO, GF]) {
-  const rows = await applyAndVerify(db, f);
-  if (rows[0]?.check_name) console.log(' verify', f.split('/').pop(), rows.filter((r) => r.ok !== false).length + '/' + rows.length, 'ok');
+async function applyAll(files) {
+  for (const f of files) {
+    const rows = await applyAndVerify(db, f);
+    if (rows[0]?.check_name) console.log(' verify', f.split('/').pop(), rows.filter((r) => r.ok !== false).length + '/' + rows.length, 'ok');
+  }
 }
+
+// Season points on a free-label draw: the console's whole path, then finalize.
+async function seasonE2E(label) {
+  const spec2 = JSON.stringify({ stages: [{ kind: 'groups', cfg: { groups: 2, advance: 2 } }, { kind: 'knockout' }] });
+  const { t } = await makeTournament(db, 'custom', 8, spec2);
+  assert.equal((await db.query('select generate_from_format($1) e', [t])).rows[0].e, null);
+  const decide = async () => {
+    const open = (await db.query(`select id, entry1, bracket from tournament_matches where tournament_id=$1 and winner_entry is null and entry1 is not null and entry2 is not null`, [t])).rows;
+    for (const m of open) await db.query(`select set_match_winner($1,$2,'6-3,6-3')`, [m.id, m.entry1]);
+  };
+  for (let i = 0; i < 8; i++) {
+    await decide();
+    if ((await db.query('select advance_stage($1) e', [t])).rows[0].e) break;
+  }
+  const f = (await db.query('select finalize_tournament($1) e', [t])).rows[0].e;
+  assert.match(f, /rated/, f);
+  const final = (await db.query(`select * from tournament_matches where tournament_id=$1 and bracket='Final'`, [t])).rows[0];
+  assert.ok(final?.winner_entry, 'there was a final');
+  const who = async (rule) => (await db.query(`select e.id from season_points sp join tournament_entries e on sp.player_id in (e.player_id,e.partner_id)
+    where sp.tournament_id=$1 and sp.rule_code=$2 group by e.id`, [t, rule])).rows.map((r) => r.id).sort();
+  assert.deepEqual(await who('tour_win'), [final.winner_entry], 'title');
+  const runner = final.winner_entry === final.entry1 ? final.entry2 : final.entry1;
+  const semis = (await db.query(`select * from tournament_matches where tournament_id=$1 and bracket='Semifinal'`, [t])).rows;
+  const losers = semis.map((s) => (s.winner_entry === s.entry1 ? s.entry2 : s.entry1));
+  assert.equal(losers.length, 2);
+  assert.deepEqual(await who('tour_podium'), [runner, ...losers].sort(), 'podium');
+  // Finalizing twice awards nothing more.
+  assert.match((await db.query('select finalize_tournament($1) e', [t])).rows[0].e, /already applied/);
+  console.log(`season points, ${label}: title = final winner, podium = runner-up + semi-final losers`);
+}
+async function seasonEdges() {
+  const spec1 = JSON.stringify({ stages: [{ kind: 'roundRobin', cfg: {} }] });
+  const pts = async (t) => (await db.query(`select count(*)::int c from season_points where tournament_id=$1`, [t])).rows[0].c;
+  // Round robin only: no final, no title, and no error.
+  { const { t, ids } = await makeTournament(db, 'custom', 3, spec1);
+    await db.query(`insert into tournament_matches (tournament_id,bracket,round,slot,entry1,entry2,winner_entry) values ($1,'Round robin',1,0,$2,$3,$2)`, [t, ids[0], ids[1]]);
+    assert.match((await db.query('select finalize_tournament($1) e', [t])).rows[0].e, /rated/);
+    assert.equal(await pts(t), 0); }
+  // Two decided rows labelled Final in one stage: refuse to guess.
+  { const { t, ids } = await makeTournament(db, 'custom', 4);
+    await db.query(`insert into tournament_matches (tournament_id,bracket,round,slot,entry1,entry2,winner_entry) values ($1,'Final',1,0,$2,$3,$2),($1,'Final',1,1,$4,$5,$4)`, [t, ids[0], ids[1], ids[2], ids[3]]);
+    await db.query('select finalize_tournament($1)', [t]);
+    assert.equal(await pts(t), 0); }
+  // A manual draw whose last match is labelled Final, with a lone semi.
+  { const { t, ids } = await makeTournament(db, 'custom', 3);
+    await db.query(`insert into tournament_matches (tournament_id,bracket,round,slot,entry1,entry2,winner_entry) values ($1,'Semifinal',1,0,$2,$3,$2),($1,'Final',1,0,$2,$4,$4)`, [t, ids[0], ids[1], ids[2]]);
+    await db.query('select finalize_tournament($1)', [t]);
+    assert.equal((await db.query(`select count(*)::int c from season_points where tournament_id=$1 and rule_code='tour_win'`, [t])).rows[0].c, 2);
+    assert.equal((await db.query(`select count(*)::int c from season_points where tournament_id=$1 and rule_code='tour_podium'`, [t])).rows[0].c, 4); }
+  console.log('season points: no final or an ambiguous one awards nothing; a manual Final works');
+}
+
+await db.exec(fnTextOf('set_match_winner'));
+await applyAll([FG, STD, SP, INFO, STD, SP, INFO]);
+await seasonE2E('season delta alone');
+await seasonEdges();
+await applyAll([GF, GF]);
+await seasonE2E('with the grand final delta on top');
 
 // ── Structured losers bracket ───────────────────────────────────────────────
 const standardMax = (n) => { let k = 0, s = 1; while (s < n) { s *= 2; k++; } return Math.max(2 * (k - 1), 0); };

@@ -28,7 +28,7 @@ create table tournament_entries (id uuid primary key default gen_random_uuid(), 
 create table tournament_matches (id uuid primary key default gen_random_uuid(), tournament_id uuid not null references tournaments on delete cascade,
   bracket text not null default 'wb', round int not null, slot int not null,
   entry1 uuid references tournament_entries, entry2 uuid references tournament_entries, winner_entry uuid references tournament_entries,
-  score text, stage int not null default 0, result_status text not null default 'open',
+  score text, stage int not null default 0, result_status text not null default 'open', submitted_winner uuid, submitted_score text, submitted_by uuid,
   unique (tournament_id, bracket, round, slot));
 create table matches (id uuid primary key default gen_random_uuid(), status text, match_type text, scheduled_at timestamptz, created_by uuid,
   is_private boolean, min_rating numeric, winner_team text, score_team_a text, rating_applied boolean, invite_code text, tournament_match_id uuid);

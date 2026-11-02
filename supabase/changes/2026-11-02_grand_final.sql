@@ -204,7 +204,7 @@ returns void language plpgsql security definer set search_path = public as $$
 declare
   v_sid uuid; v_frozen boolean; v_title int; v_podium int;
   v_final_round int; f record; m record;
-  v_champ uuid; v_runner uuid; v_region text;
+  v_champ uuid; v_runner uuid; v_region text; v_free boolean := false; v_finals int;
 begin
   -- From the TOURNAMENT's region, not any player's: an event belongs to one
   -- market, and its title must not land in two ladders because a visitor
@@ -226,8 +226,30 @@ begin
    where tm.tournament_id = p_tournament_id
      and coalesce(tm.bracket, 'wb') in ('wb', 'gf')
      and tm.winner_entry is not null;
-  if v_final_round is null then return; end if;
+  -- No wb/gf row: a Format Builder or console draw, which labels its rounds freely.
+  -- The title needs one decided match labelled exactly Final in the last stage that
+  -- has one. Anything else is left unawarded rather than guessed at: points can be
+  -- added by hand, but a wrong champion is worse.
+  if v_final_round is null then
+    select tm.entry1, tm.entry2, tm.winner_entry, tm.bracket, tm.stage into f
+      from public.tournament_matches tm
+     where tm.tournament_id = p_tournament_id
+       and lower(btrim(tm.bracket)) = 'final'
+       and tm.winner_entry is not null
+       and tm.entry1 is not null and tm.entry2 is not null
+     order by tm.stage desc, tm.round desc
+     limit 1;
+    if not found then return; end if;
+    select count(*) into v_finals
+      from public.tournament_matches tm
+     where tm.tournament_id = p_tournament_id
+       and tm.stage = f.stage
+       and lower(btrim(tm.bracket)) = 'final';
+    if v_finals <> 1 then return; end if;
+    v_free := true;
+  end if;
 
+  if not v_free then
   -- the final: champion + runner-up
   select tm.entry1, tm.entry2, tm.winner_entry, coalesce(tm.bracket, 'wb') as bracket into f
     from public.tournament_matches tm
@@ -236,6 +258,7 @@ begin
      and tm.round = v_final_round and tm.winner_entry is not null
    order by tm.slot limit 1;
   if not found then return; end if;
+  end if;
 
   v_champ  := f.winner_entry;
   v_runner := case when f.winner_entry = f.entry1 then f.entry2 else f.entry1 end;
@@ -269,6 +292,25 @@ begin
       join public.tournament_entries e on e.id = x.third,
            lateral (values (e.player_id), (e.partner_id)) as v(pid)
      where v.pid is not null
+    on conflict do nothing;
+    return;
+  end if;
+
+  -- Free-label draw: the podium is the runner-up plus whoever lost a semi-final in
+  -- the same stage. A bye has no loser, so it adds nobody.
+  if v_free then
+    insert into public.season_points (season_id, player_id, rule_code, pts, tournament_id)
+    select v_sid, pid, 'tour_podium', v_podium, p_tournament_id
+      from public.tournament_matches s
+      join public.tournament_entries e
+        on e.id = case when s.winner_entry = s.entry1 then s.entry2 else s.entry1 end,
+           lateral (values (e.player_id), (e.partner_id)) as v(pid)
+     where s.tournament_id = p_tournament_id
+       and s.stage = f.stage
+       and lower(btrim(s.bracket)) like 'semi%'
+       and s.winner_entry is not null
+       and s.entry1 is not null and s.entry2 is not null
+       and v.pid is not null
     on conflict do nothing;
     return;
   end if;
