@@ -14,6 +14,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 List<Map<String, dynamic>> _rows = [];
 final _saved = <Map<String, dynamic>>[];
 
+/// What tournament_standings answers; null makes the call fail.
+List<Map<String, dynamic>>? _standings = [];
+
 Map<String, dynamic> _entry(String id, String name) =>
     {'id': id, 'player_name': name, 'partner_name': null};
 
@@ -37,6 +40,16 @@ class _FakeBackend extends http.BaseClient {
     } else if (request.url.path.endsWith('/rpc/set_match_winner')) {
       _saved.add(jsonDecode((request as http.Request).body) as Map<String, dynamic>);
       body = null;
+    } else if (request.url.path.endsWith('/rpc/tournament_standings')) {
+      if (_standings == null) {
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('{"message":"nope","code":"42501"}')),
+          403,
+          request: request,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      body = _standings;
     }
     return http.StreamedResponse(
       Stream.value(utf8.encode(jsonEncode(body))),
@@ -47,9 +60,11 @@ class _FakeBackend extends http.BaseClient {
   }
 }
 
-Future<void> _open(WidgetTester tester, List<Map<String, dynamic>> rows) async {
+Future<void> _open(WidgetTester tester, List<Map<String, dynamic>> rows,
+    {List<Map<String, dynamic>>? standings = const []}) async {
   _rows = rows;
   _saved.clear();
+  _standings = standings;
   tester.view.physicalSize = const Size(1600, 3000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -156,6 +171,29 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(_saved, isEmpty);
+  });
+
+  group('the standings table is the server\'s', () {
+    Map<String, dynamic> line(int pos, String entry, int won, bool q) => {
+          'grp': 'Group A', 'pos': pos, 'entry_id': entry, 'played': 1, 'won': won,
+          'lost': 1 - won, 'sets_won': won * 2, 'sets_lost': (1 - won) * 2, 'qualifies': q,
+        };
+
+    testWidgets('in its order, even against wins', (tester) async {
+      // a won the match, but the server ranks b first. We don't argue.
+      await _open(tester, [_match('Group A', winner: 'a', score: '6-1, 6-1')],
+          standings: [line(1, 'b', 0, true), line(2, 'a', 1, false)]);
+      final b = tester.getTopLeft(find.text('Basem Two').first).dy;
+      final a = tester.getTopLeft(find.text('Amir One').first).dy;
+      expect(b, lessThan(a));
+      expect(find.text('2–0'), findsOneWidget);
+    });
+
+    testWidgets('hidden, not recomputed, when it can\'t be read', (tester) async {
+      await _open(tester, [_match('Group A', winner: 'a')], standings: null);
+      expect(find.text('Standings are unavailable right now.'), findsOneWidget);
+      expect(find.text('Amir One'), findsNothing);
+    });
   });
 
   test('readable scores', () {
