@@ -1,7 +1,7 @@
 -- Copy only: a partner is no longer told their entry is paid while it is still under
 -- review. Nothing else in register_for_tournament changes. NOT APPLIED.
 -- Superseded by 2026-11-02_payment_status.sql, which keeps the same wording.
--- ROLLBACK: 2026-11-02_partner_notification_copy_rollback.sql
+-- ROLLBACK: supabase/rollbacks/2026-11-02_partner_notification_copy_rollback.sql
 
 create or replace function public.register_for_tournament(
   p_tournament_id      uuid,
