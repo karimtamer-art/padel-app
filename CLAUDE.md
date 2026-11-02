@@ -366,11 +366,6 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   who is registered. Pass `regionId: ''` to deliberately ask across regions.
   Registration is `isParticipant(entries, uid)` — it already existed; don't add a
   second one.
-- **Create match**: `create_match_sheet.dart` → `MatchService.createMatch`
-  (inserts `matches` + `match_players`, creator on team A ONLY) → root scaffold
-  opens `MatchDetailScreen(matchId)` and bumps a key to refresh Home.
-- **Join/leave**: via RPCs (`join_match`, `leave_match`) — capacity, min-ELO
-  and team balance are checked server-side on purpose. Don't move that to Dart.
 - **A named partner is INVITED, never inserted** (2026-08-10, security fix).
   `create_match` / `join_match` / `mm_accept` all take a `p_partner_id`, and all
   three used to insert that person straight into `match_players`. Ticket
@@ -496,231 +491,22 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
   and records winners; players only read it.
 - **Tournaments tab resilience**: `TournamentService.fetchTournaments` has a
   fallback plain query for pre-migration databases. Keep that fallback.
-- **Google sign-in is native first, browser second** (2026-08-10).
-  `AuthService.signInWithGoogle` uses `google_sign_in` 7.x (the v7 API:
-  `GoogleSignIn.instance.initialize()` once, then `authenticate()`) and hands
-  the ID token to `signInWithIdToken` — same shape as the Apple flow, no
-  browser. It falls back to the old `_oauthFlow` Custom Tab whenever the Web
-  client id is missing, on desktop, or on iOS with no iOS client id, so an
-  unconfigured build still signs in. Ids come from
-  `kGoogleWebClientIdFallback` / `kGoogleIosClientIdFallback` in `main.dart`
-  (a `--dart-define` of the same name wins). The **Web** client id must match
-  the one in Supabase → Auth → Google, because that is the audience Supabase
-  validates; Android also needs an **Android** OAuth client for
-  `com.padelegypt.app` + the signing SHA-1 to exist, though its id is never
-  typed anywhere.
-  - **Three SHA-1s, three Android clients** (Google allows one fingerprint
-    each). Registering only the upload key is the trap: with Play App Signing
-    on, Google re-signs the AAB with ITS key, so sign-in works under
-    `flutter run` and fails for everyone installing from Play — which reads as
-    "only happens to some people".
-    - Play App signing — `C2:2F:D9:99:62:92:65:9A:1F:F5:3B:F2:B4:D0:64:CE:CE:2A:DA:65`
-      (Play Console → **Test and release → App integrity → App signing**, under
-      "App signing key certificate" — NOT "Upload key certificate". The
-      `…/app/<id>/keymanagement` URL still lands straight on it. "Protected
-      with Play → Automatic protection" is a DIFFERENT page and shows no
-      fingerprints at all; corrected 2026-08-20 after it wasted a lap.)
-    - Upload key — `5C:7C:C4:B8:65:17:98:EF:05:0C:A0:98:EF:CB:C9:10:C3:58:A7:3B`
-      (`android/upload-keystore.jks`, alias `upload`)
-    - Debug key — `FD:61:85:FB:3C:BA:95:6C:41:BA:5F:60:5F:CD:00:A2:E4:79:1B:C2`
-  - Fingerprints are public identifiers (readable from any APK), not secrets.
-    The Web client **secret** is one, and lives only in Supabase.
-  - **Two Cloud projects, and they are NOT the same one** (verified 2026-08-20).
-    Every OAuth client — the Web one, the three Android ones and the iOS one —
-    lives in project **`260262268929`**, which is the numeric prefix of every
-    client id. Firebase/FCM lives in **`padel-app-a4407`** (number
-    `61629095085`), and `android/app/google-services.json` names THAT one. So
-    its `project_number` deliberately does not match the client ids, and its
-    empty `oauth_client: []` array is normal. Read that as a cross-project
-    misconfiguration and you will spend a day chasing an audience bug that does
-    not exist — the split is real and works.
-  Two Android traps: `google_sign_in_android` forces
-  **minSdk 24**, and the browser fallback only returns because
-  `AndroidManifest.xml` declares `flutter_web_auth_2`'s `CallbackActivity` for
-  the `padelrivals` scheme — iOS needs no such entry (ASWebAuthenticationSession
-  intercepts it), which is exactly why its absence went unnoticed. The scheme
-  is mirrored in `AuthService._redirectUrl`, the manifest and
-  `ios/Runner/Info.plist`; change all three. It was `padelclay` until
-  2026-08-11 — builds older than that still ask Supabase to redirect to
-  `padelclay://…`, so leave those two URLs in the Redirect URLs allow-list
-  until nobody is running one.
-  - **That `padelclay://` entry actually went missing, and on 2026-08-20 it
-    broke Google sign-in on every live iPhone.** Old App Store builds redirect
-    to `padelclay://login-callback/`; with it absent the redirect had nowhere
-    to land and the browser flow spun — reported as "Google keeps looping and
-    redirecting", and it looked like an app bug because newer test builds were
-    fine. Re-adding it under Supabase → Authentication → URL Configuration
-    fixed every installed phone INSTANTLY — no release, no Apple review. Keep
-    all four (`padelrivals`/`padelclay` × `login-callback`/`reset-password`).
-    The warning above was already written and the entry still got removed, so
-    treat that allow-list as load-bearing production config.
-  - **iOS went native on 2026-08-20.** `kGoogleIosClientIdFallback` was empty
-    until then, so `_nativeGoogleAvailable` was false on every iPhone and
-    Google sign-in ALWAYS took the browser fallback. It is the **iOS** OAuth
-    client (bundle `com.padelegypt.app`) — an iOS client has **no SHA-1**, that
-    is Android-only, so don't go hunting for one. Setting the id is half the
-    job: its REVERSED form (`com.googleusercontent.apps.<id>`) must also be a
-    `CFBundleURLSchemes` entry in `ios/Runner/Info.plist`, or the sheet opens
-    and never returns — indistinguishable from the browser loop it replaces.
-    Change one, change the other.
-  - **Diagnose "Google is broken" from the outside before touching any code.**
-    Three checks answer in a minute what symptoms took a day to narrow:
-    `GET /auth/v1/settings` (anon key) says whether the provider is even
-    enabled; the `Location` header of
-    `GET /auth/v1/authorize?provider=google` reveals the client id Supabase is
-    ACTUALLY configured with, so you never have to trust the dashboard; and
-    `select provider, max(last_sign_in_at) from auth.identities group by 1`
-    gives the exact timestamp each method last worked, which turns "it broke
-    recently" into a date you can diff against.
-- **Password reset** (2026-08-10). Three things were wrong: the button fired
-  with no visible feedback (so people tapped until Supabase rate-limited them
-  and nothing arrived), it was offered to Google/Apple accounts that have no
-  password, and there was nowhere to type a new one.
-  - **Only email accounts get it.** Signed in, `AuthService.hasPasswordLogin`
-    reads `user.identities`; signed out, the new `email_login_methods(text)`
-    RPC answers for an email we're not authenticated as. That RPC is an
-    enumeration vector **by the same deliberate choice already made for
-    `email_exists()`** — revisit both together or neither.
-  - **Both entry points have a busy label + 60s cooldown.** Supabase's own
-    limit is invisible to the user, so the client has to be the thing that
-    says "sent, wait". The clock is `AuthService.resetCooldownRemaining`
-    (a static map keyed by email) and **not** widget state — a countdown held
-    in the screen resets when you back out and return, which is two taps away
-    from being no guard at all. `sendPasswordReset` enforces it itself so a
-    screen that forgets to check can't punch through, and it also starts the
-    clock when Supabase answers 429, since that ban is longer than ours and
-    counts sends from other devices.
-  - **The link comes back into the app**: `AuthService.passwordResetUrl` =
-    `padelrivals://reset-password/`, a **different host** from the OAuth callback
-    `padelrivals://login-callback/`. On Android the two are claimed by different
-    activities (MainActivity vs `flutter_web_auth_2.CallbackActivity`) and
-    CallbackActivity used to claim the whole scheme — if both filters match a
-    URL, Android shows an app chooser. Change a host, change the manifest.
-  - `AuthChangeEvent.passwordRecovery` puts `AuthGate` in `_Phase.recovering`
-    → `SetPasswordScreen(recovery: true)` (same screen as the organizer
-    first-login flow, different copy). The recovery branch must be checked
-    BEFORE `signedIn`/`userUpdated`, or saving bounces them out mid-edit.
-  - **Manual step, not in git**: `padelrivals://reset-password/` has to be added
-    to Supabase → Authentication → URL Configuration → **Redirect URLs**, or
-    the link fails with "requested path is invalid".
-- **Money / Reports (P&L)**: the Reports tab is the platform's profit & loss.
-  Money IN = store orders + paid tournament entries + collected repairs + the
-  hand-recorded `income` table (money taken outside the app) + trade-in sales +
-  used racket sales. Money OUT = cost of goods sold (auto, `product_costs.cost`
-  × qty on what sold) + trade-in credit (auto, accepted offers) + trade-in
-  racket cost + used rackets bought + the hand-recorded `expenses` table.
-  All of it is computed server-side in `_finance_core` →
-  `admin_finance_summary` / `admin_weekly_finance`; Dart mirrors the shapes in
-  `lib/admin/data/finance_model.dart` and computes nothing. `LedgerKind` in
-  that file is what lets one card + one sheet serve both hand-kept ledgers.
-  **There is no "stock" expense category on purpose** — inventory is costed per
-  product and hits the P&L as COGS when the item sells; recording a stock
-  purchase too would double the cost. Same trap on the income side: never
-  hand-record a store order or a paid entry. Finance is visible to super admins
-  (and an Analyst holding Reports) via `_can_see_finance()`; only super admins
-  may write to either ledger. See `supabase/changes/2026-08-06_expenses_and_pl.sql`
-  and `2026-08-06_manual_income.sql`.
-- **A trade-in swap carries its own P&L, and is the ONLY place it may be
-  recorded** (2026-08-18, reverses the 2026-08-10 decision). A swap has three
-  prices, all on `trade_requests`, all entered in the console's trade sheet:
-  - `offer_credit` — what we paid for their USED racket (money OUT, unchanged
-    since 2026-08-06)
-  - `given_cost` — what the NEW racket cost us (money OUT, `out.trade_cost`)
-  - `given_price` — what we SOLD the new racket for (money IN, `in.trade_sales`)
-
-  so **deal profit = `given_price − given_cost − offer_credit`**, and it falls
-  out of the P&L with no further work. Counted on `accepted`/`completed` rows
-  only, and only where the figure was actually filled in (`sum` skips nulls),
-  so a plain buy-in — racket in, credit out, nothing handed back — still books
-  credit alone.
-  - **Never also ring a swapped racket up as a store order.** That was the old
-    documented route (the order booked the sale and its COGS automatically) and
-    it is now a double count. `_openTradeMoney` is how the money gets recorded,
-    including on a trade-in the player submitted through the app, which arrives
-    with nothing but their racket.
-  - `paid_amount` is a record of the cash only and is read by **nothing** — it
-    is free to differ from `given_price − offer_credit` (part payment, a
-    haggled number) without moving platform profit.
-  - The console's profit figure (`_recordedProfit` / `_dealProfit` in
-    `admin_requests_screen.dart`) is deliberately the same arithmetic as the
-    SQL, so the trade and Reports can't disagree. Change one, change both.
-  - `_AddTradeSheet` doubles as the editor (`existing:`), so the money fields,
-    the catalogue picker and the profit sum exist once. Editing never re-picks
-    the seller, and only offers the status chips when the row is already
-    `offer_made`/`accepted` — other transitions belong to the trade sheet's
-    own buttons.
-  - See `supabase/changes/2026-08-18_trade_pl.sql`, whose verify block lists
-    every swap now carrying money so it can be checked against the orders list.
-- **Used rackets** (added 2026-08-18): `used_rackets` is the second-hand resale
-  book — one row per RACKET, not per transaction, so both halves of its life sit
-  on one line. `buy_price` is money OUT on `bought_on`; `sell_price` is money IN
-  on `sold_on`; profit is the difference. Its own console section
-  (`admin_used_rackets_screen.dart`, section id **`used_rackets`** — a real RBAC
-  id, so it lives in `kSections` + `_allIds` AND in SQL `_role_default`; super
-  admin by default, grantable).
-  - **A racket on the shelf is a cost with no sale yet, and that is correct** —
-    `used_buy` lands on the purchase date whether or not it has sold, so it runs
-    ahead of `used_sales` for weeks. That is the buying, not a loss. Nothing is
-    depreciated and a racket you never sell simply stays a cost.
-  - **`source` is the double-count guard against trade-ins, and the only reason
-    the column exists.** A racket taken in on a trade-in has ALREADY had its
-    acquisition booked as `out.trade_in` credit. `source='trade_in'` records
-    `buy_price` so the racket's real margin is still visible, but `_finance_core`
-    excludes it from `used_buy`; its SALE still counts. `source='bought'` (the
-    default) is the plain purchase and does count. Enforced in SQL, not Dart.
-  - `used_rackets_sold_chk` refuses a `sell_price` with no `sold_on` — the date
-    is what puts money in a reporting period, so a priced sale without one would
-    land in no week at all. Clearing a sale must clear both.
-  - Don't also ring these up as store orders; same double count as swaps.
-  - See `supabase/changes/2026-08-18_used_rackets.sql`. ⚠️ It redefines
-    `_finance_core` INCLUDING the trade lines, so it must be the LAST of the two
-    2026-08-18 deltas to run — applying `trade_pl` after it silently drops the
-    used-racket lines.
-- **Weekly report as an emailable link** (added 2026-08-06). A week's P&L can
-  be opened without logging in, which is the only way it works from a mail
-  client. `report_links` holds one **permanent, reusable** token per week
-  (partial unique index on `week_start where not revoked` — asking twice returns
-  the same URL). Two Edge Functions, both deployed `--no-verify-jwt`:
-  `weekly-report` renders the read-only HTML page (calls `report_render`, which
-  is granted to **service_role only** — a leaked token is useless against
-  PostgREST), and `weekly-report-send` mails the link via Resend. The sender
-  authorises on either an `x-cron-secret` header (pg_cron) or the caller's own
-  JWT checked against `_is_admin()`. Minting is super-admin-only
-  (`admin_report_link`); `_can_see_finance()` alone is not enough. Secrets
-  (`RESEND_API_KEY`, `REPORT_FROM`, `REPORT_TO`, `CRON_SECRET`) are set with
-  `supabase secrets set` and are never committed. `REPORT_FROM` must be a
-  Resend-verified domain or Gmail spams it. The page recomputes nothing — it
-  reads the same `_finance_core` as the console, so the numbers can't disagree;
-  its category labels mirror `finance_model.dart`. See
-  `supabase/changes/2026-08-06_weekly_report_links.sql`, whose commented
-  pg_cron block is the optional Monday auto-send.
-  **Who receives it is data, not a secret** (2026-08-07): the
-  `report_recipients` table, managed from the weekly card's "Who gets it" row.
-  `REPORT_TO` is now only the fallback for an empty list or an unrun migration.
-  Everyone gets their own copy via Resend's **batch** endpoint, so no recipient
-  sees another's address. The add-a-teammate picker offers only staff who pass
-  `_can_see_finance_of()`; anyone else must be typed in. Adding someone is
-  super-admin-only because the link needs no login — **being on the list IS
-  access to the numbers**. `_access_ids()` was refactored to delegate to the new
-  `_access_ids_of(uuid)` (same logic, so every RLS policy calling it is
-  unaffected). See `supabase/changes/2026-08-07_report_recipients.sql`.
-  **Both Edge Functions are deployed** (2026-08-08, with JWT verification off —
-  a deployed `weekly-report` answers `400 No report requested` to a bare GET,
-  never `401`; a `401` means the JWT toggle got switched back on). Secrets
-  `RESEND_API_KEY` and `REPORT_FROM` are set. What is still missing is the SQL:
-  the functions call `report_link_ensure`, `report_render` and
-  `report_recipients_active`, so nothing sends until deltas 12 and 13 run.
-  **The page MUST be served through Cloudflare, not the Supabase URL**
-  (2026-08-10). Supabase's gateway rewrites an Edge Function's
-  `Content-Type: text/html` to `text/plain` and adds `nosniff` + a
-  `default-src 'none'; sandbox` CSP — deliberate, so `*.supabase.co` can't host
-  phishing pages — so the browser paints the page SOURCE instead of the page.
-  Nothing set inside the function can override it; the rewrite happens after
-  the response leaves the runtime. `functions/report.js` (a Cloudflare **Pages
-  Function**, hence the `functions/` dir at the REPO ROOT, not in `docs/`)
-  proxies the same body back with the right header at
-  `padel-rivals.com/report`, and `REPORT_BASE_URL` points the mailer there.
-  Tokens are unchanged, so links already sent keep working.
+- **Google / Apple sign-in and password reset** — full notes (client ids, the
+  three Android SHA-1s, two Cloud projects, iOS URL scheme, reset flow, how to
+  diagnose from outside) in the **`auth-config` skill**
+  (`.claude/skills/auth-config/SKILL.md`) — read it before touching any of it.
+  ⚠️ The Supabase Redirect URLs allow-list is load-bearing production config:
+  keep all four `padelrivals`/`padelclay` × `login-callback`/`reset-password`
+  entries. Removing `padelclay://` broke Google sign-in on every live iPhone
+  (2026-08-20). The redirect scheme is mirrored in `AuthService._redirectUrl`,
+  `AndroidManifest.xml` and `Info.plist` — change all three.
+- **Money / Reports (P&L), trade-in swap money, used rackets, weekly report
+  links** — full notes in the **`finance-pl` skill**
+  (`.claude/skills/finance-pl/SKILL.md`). Never-break lines: all P&L maths is
+  server-side in `_finance_core` (Dart computes nothing); never hand-record a
+  store order or paid entry in `income`; never ring a trade-in swap or a used
+  racket up as a store order (double count); there is no "stock" expense
+  category; `2026-08-18_used_rackets.sql` must run AFTER `..._trade_pl.sql`.
 - **Payout details live in `payout_accounts`, not on the profile**
   (2026-08-14, `changes/2026-08-14_payout_accounts.sql`). Keyed
   `(player_id, provider)` so a second rail is a ROW, not a migration;
@@ -766,204 +552,37 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     through the existing admin rating tools (rule 2).
   - Player entry is a row under the Home hero, hidden until a center is live
     (`AssessmentService.overview()` returns empty on a DB without the delta).
-- **Web registration on the homepage** (2026-10-20,
-  `changes/2026-10-20_web_registrations.sql`). `docs/index.html` is now the
-  landing page: a pair registers for a tournament **without the app or an
-  account** (`home.js` + `home.css`; the old link hub's links live in the
-  footer). Built because players didn't trust the app enough to download and
-  pay in it.
-  - **The site is `anon`, and anon touches no table.** It calls exactly two
-    SECURITY DEFINER RPCs — `web_open_tournaments()` and `web_register()` — and
-    makes one insert-only upload to the PRIVATE `web-payment-proofs` bucket
-    (no select/update for anon, so it can't list, read or overwrite a proof).
-    `web_register` refuses a proof path that isn't actually in the bucket.
-  - **`web_registrations` is NOT `tournament_entries`**, on purpose: an entry's
-    `player_id` is a real profile and every bracket/ticket/settlement path
-    assumes it. A web pair is a lead staff confirm on WhatsApp, then add to the
-    draw by hand, like any staff-added entry. Capacity counts BOTH tables.
-  - **"Find me a partner"** (2026-10-21): a solo player registers with
-    `needs_partner = true` and no partner fields, pays only their own share
-    (`entry_fee`, not `* 2`), and staff pair two solos by hand on WhatsApp.
-    Capacity counts two solos as one pair (`ceil(solos / 2)`). `web_register`
-    went 11 → 12 args (`p_needs_partner`); the old signature is DROPPED.
-  - **Levels are padel categories** `D Low … A Upper` (`web_levels()`),
-    **derived from the tournament's `min_rating` / `max_rating`** — ONE level
-    setting, the console's eligibility range (2026-10-22,
-    `changes/2026-10-22_one_level_setting.sql`). Categories are the **app's
-    own division bands** — D 0.0–1.9, C 2.0–3.4, B 3.5–4.9, A 5.0–7.0, each
-    split Low / Mid / Upper — so a player is the same "B Mid" in the app and
-    on the site; 2.5–4.5 → C Mid to B Upper. SQL `_web_level_of` mirrors
-    `RankingScale.categoryFor` (`test/ranking_category_test.dart` pins the
-    band edges); `_web_level_from_min` / `_from_max` apply it to a range; the
-    RPCs still OUTPUT `min_category` / `max_category` so `home.js` and
-    `web_register` didn't change. The hand-set `tournaments.min_category` /
-    `max_category` columns briefly existed and were **dropped** — two settings
-    that could disagree. Read-only use of the rating columns (rule 2). The
-    list lives in SQL `web_levels()` and `LEVELS` in `home.js`.
-  - **Players see letters, never metals** (2026-10-22). Bronze / Silver /
-    Gold / Elite are gone from every screen; the third is now "Upper" (was
-    "High"). `Division.metal` and `player_ratings.tier`
-    (`bronze`/`silver`/`gold`/`elite`) are still the INTERNAL keys — colours,
-    season scopes and SQL key off them — so show a stored tier through
-    `RankingScale.tierKeyLabel` ('gold' → 'B'), never raw.
-  - **"Coming soon"** (2026-10-22, `changes/2026-10-22_web_upcoming_tournaments.sql`):
-    an event whose `registration_opens` is still in the future is invisible to
-    `web_open_tournaments()`, which read as "the site isn't connected".
-    `web_upcoming_tournaments()` lists them read-only, with no form. It is a
-    separate function on purpose — `web_register` checks eligibility against
-    `web_open_tournaments()`, so widening that one would open registration early.
-  - **Payment is InstaPay ONLY** (2026-10-21 — no cash at the venue, no
-    gateway, rule 8). A paid event always needs a sender name + screenshot;
-    `web_register` ignores `p_pay_method` and the CHECK allows only
-    `instapay` / `free`. The InstaPay handle, account name and direct WhatsApp
-    number are the `CONFIG` block at the top of `docs/home.js`; while the
-    handle is empty the site refuses paid events (free ones still register).
-    `entry_fee` is per player, so the page and RPC charge `entry_fee * 2`.
-  - Each registration alerts staff as `admin_tournament` (bell + push). Staff
-    read/update rows via `_is_admin()` or `_has_access('tournaments')`.
-  - **Into the draw as REAL players** (2026-10-22,
-    `changes/2026-10-22_web_to_draw.sql`). A guest entry has no profile, and
-    `finalize_tournament` rates only clean 2v2s of four profiles — so a match
-    with a website guest counted for NOBODY in it, app players included.
-    Console → tournament → **Manage entries** lists the website rows; "Add to
-    draw" calls `admin_web_to_draw`, which links each person to an app account
-    by phone (`_profile_by_phone`: last 10 digits, exactly ONE match or
-    nobody) and falls back to a guest. Two solos are paired via `p_pair_with`.
-    `web_registrations.entry_id` marks it done and stops capacity counting the
-    row AND its entry. Gate is `owns_tournament`, same as the entry manager. No
-    money moves (entry goes in `registered`). The website's confirmation tells
-    players to sign up with the number they registered with — so add them
-    close to the draw, after they've had the chance; a pair added as guests
-    stays guests (re-linking a guest later is not built).
-  - **WhatsApp confirmation** (2026-10-23, `changes/2026-10-23_web_whatsapp.sql`,
-    Edge Function `whatsapp-confirm`). After "Add to draw" succeeds the console
-    calls the function, which re-checks `owns_tournament` with the caller's
-    JWT and sends the approved UTILITY template `entry_confirmed` (body in the
-    function header; 5 params: first name, tournament, date, venue, partner)
-    via the WhatsApp Cloud API to the registrant and their partner. Outcome is
-    written to `web_registrations.wa_status/wa_error/wa_sent_at` by the
-    service role only. Secrets `WA_TOKEN`, `WA_PHONE_ID` (+ optional
-    `WA_TEMPLATE`, `WA_LANG`, `WA_API_VERSION`). Unset/undeployed → the
-    console falls back to one-tap `wa.me` links with the text pre-typed, so
-    nothing breaks before Meta setup is finished. A template must be used:
-    free text doesn't reach someone who hasn't messaged the number in 24h.
-    Number used: 01501800943 (the business number on the website).
-  - The anon key in `home.js` is the app's public key — fine to commit.
-- **The domain, the email stack, and the legal site** (set up 2026-08-08).
-  `padel-rivals.com` is registered at GoDaddy but its **DNS lives at
-  Cloudflare** — nameservers were moved, so GoDaddy's DNS panel is now a
-  dead end and every record change happens in Cloudflare.
-  - **Receiving**: Cloudflare **Email Routing** forwards `help@`, `reports@`
-    and `no-reply@` to `Padelrivals@gmail.com`. Aliases are free and
-    unlimited — add more rather than inventing shared mailboxes. A *destination*
-    is the real inbox mail lands in; a *routing rule* is the `@padel-rivals.com`
-    address that forwards there. Putting an `@padel-rivals.com` address in the
-    destination list is circular and silently bounces everything.
-  - **Sending**: **Resend**, free tier (3,000/month, 100/day), root domain
-    verified in `eu-west-1`. Its SPF and bounce MX sit on the `send.`
-    subdomain, which is why they don't collide with Email Routing's records on
-    the apex. **Never add a second SPF or DMARC record** — GoDaddy left a
-    `_dmarc` behind and it was edited, not duplicated.
-  - **Auth email**: Supabase runs on **custom SMTP** (`smtp.resend.com:587`,
-    user `resend`) from `no-reply@padel-rivals.com`. This matters more than it
-    looks: the built-in Supabase mailer is capped at ~2 emails/hour and is
-    testing-only, so signups and password resets would have started failing
-    silently at launch. The rate limit under Authentication → Rate Limits has
-    to be raised by hand — enabling custom SMTP does not lift it.
-  - **Cloudflare Email Address Obfuscation is OFF for this zone, on purpose.**
-    It rewrites every `mailto:` into a JS-decoded blob, which renders the
-    contact address as "[email protected]" to anything that doesn't run
-    JavaScript — including Google Play's automated policy checks against the
-    data-deletion page. Do not turn it back on.
-  - **The legal site** is `docs/`, deployed to Cloudflare **Pages** (project
-    connected to this repo, no build command, output directory `docs`). Every
-    push republishes. Create it from the **Pages** flow, not Workers — the
-    Workers flow has no "build output directory" field and will try to *execute*
-    `docs` as a shell command.
-  - **`docs/privacy.html` and `docs/terms.html` are GENERATED — do not edit
-    them.** `legal/build_pages.py` builds them from the `.docx` files in
-    `legal/`. Edit the Word document, re-run the script. The generator also
-    carries a `PATCHES` list that corrects two paragraphs which the `.docx`
-    files still get wrong (they claim a phone number is never public, which
-    stopped being true when match tickets shipped). It raises and refuses to
-    write if a patched paragraph moves, so the correction cannot silently
-    regress — but **the `.docx` files themselves still need updating**.
-  - URLs for the stores, extensionless because Pages canonicalises to them:
-    `/privacy`, `/terms`, `/delete-account`, and `https://padel-rivals.com` as
-    the support URL. Mirrored in `kPrivacyUrl` / `kTermsUrl` /
-    `kDeleteAccountUrl` (`help_support_screen.dart`), alongside
-    `kSupportEmail = help@padel-rivals.com`.
+- **Web registration on the homepage** (`docs/home.js`, `web_*` RPCs,
+  `admin_web_to_draw`, WhatsApp confirm) — full notes in the
+  **`web-registration` skill** (`.claude/skills/web-registration/SKILL.md`).
+  Never-break lines: the site is `anon` and anon touches NO table — only the
+  SECURITY DEFINER `web_*` RPCs plus an insert-only upload to the private
+  `web-payment-proofs` bucket; `web_registrations` is NOT `tournament_entries`;
+  payment is InstaPay only (rule 8).
+- **Domain, email stack (Cloudflare + Resend) and legal site** — full notes in
+  `docs/CLAUDE.md`. Never-break lines: DNS lives at Cloudflare, not GoDaddy;
+  never add a second SPF or DMARC record; Cloudflare Email Address Obfuscation
+  stays OFF; `docs/privacy.html` / `docs/terms.html` are GENERATED by
+  `legal/build_pages.py` — never edit them by hand.
 - **Moderation lives under Reports, not Requests** (moved 2026-08-06).
   `AdminModerationView` is the player-report queue; Requests is repairs +
   trade-ins only. Its server guard is still `_can_edit('requests')`, so
   `navForAccess` deliberately opens the Reports section to anyone holding
   Requests — otherwise Support would lose the queue. They get the Moderation
   half only; the money stays behind `_can_see_finance()`.
-- **"Please update" is asked of the STORES, not of an admin** (2026-08-21,
-  `changes/2026-08-21_app_update_gate.sql`). Shipping a release is the whole
-  procedure — nothing is typed anywhere afterwards. `AppUpdateService.check`
-  runs at launch and on resume; `UpdateGate` wraps `AuthGate` in `main.dart`
-  and is its only consumer.
-  - **The two stores are not symmetric and neither half is optional.**
-    Android uses **Play's in-app update service** (`in_app_update`, the one new
-    dependency, approved 2026-08-21) — Google publishes no version API at all,
-    so this is the only supported way to ask, and it can install the update
-    without leaving the app. iOS uses **Apple's public lookup endpoint**
-    (`itunes.apple.com/lookup?id=<Apple ID>`), which needs no package and no
-    key but lags a publish by a few hours — harmless for a nudge.
-  - **Play answers only for builds installed FROM Play.** A `flutter run`,
-    sideloaded or other-store build throws, which lands as "no update". So the
-    nudge cannot be tested from a debug build — use an internal-testing track.
-  - Apple's lookup answers `resultCount: 0` for a storefront the app isn't
-    sold in, so `kAppleStorefronts` tries `eg` and then the default (US)
-    rather than pinning us to one country.
-  - **Version NAMES are compared component by component** (`isNewer`), which is
-    the only safe way — `"1.10.0" < "1.9.0"` as a string. That path exists for
-    Apple alone, since Play reports a version CODE and iOS gets no code at all.
-    The block below compares build numbers, never names.
-  - **The hard block stays a human decision.** No store can know that an old
-    build talks to the server wrongly, so `update_min_build_<p>` in
-    `app_settings` is still hand-set, still compared against `kAppBuild`, and
-    still replaces the whole app tree including sign-in. The console confirms
-    the number out loud before saving, because a minimum above what is actually
-    live locks out everybody including the person who typed it — and nothing in
-    the app can check that against the store.
-  - **Every failure path answers "no update".** Offline, a store that won't
-    answer, `1.4.0` typed into a build field, zero, negative — all mean "no
-    rule". A gate that locks players out when Supabase or Play hiccups is worse
-    than no gate.
-  - The store answer is cached for `storeTtl` (6h) so a resume doesn't re-ask
-    Play every time someone switches apps. A resume **while already showing an
-    update prompt** forces a fresh check — that resume is most likely the trip
-    to the store — as does "I've updated" on the block screen.
-  - The nudge waits for `UpdateGate.appReady`, set by `AuthGate` when the app
-    is really on screen — a sheet over the splash or over half-finished
-    onboarding reads as a bug. The block does not wait. Dismissal is remembered
-    for the process only; persisting it means `shared_preferences` and rule #6
-    says ask first.
-  - What is left in the console (**Broadcasts → App update**,
-    `admin/widgets/app_update_card.dart`, not a new RBAC section) is only the
-    minimum build, the optional message, and a `store_url_<p>` override —
-    editable for the same reason the block is: fixing a wrong store link must
-    not require shipping the very release nobody can install. Both defaults
-    work as-is: `?id=com.padelegypt.app` on Play, and
-    `apps.apple.com/app/id6786002098` on Apple. **That number is the app's
-    Apple ID** (App Store Connect → App Information, or the digits after `/id`
-    in any App Store link), NOT the bundle id and NOT the Team ID; it is
-    assigned once and never changes. The URL deliberately carries no country
-    code and no name slug so it resolves for every storefront.
-  - `update_message` is **not tied to a version** — it is one shared string, so
-    a "what's new" line written for 1.4.0 keeps showing on 1.5.0 until someone
-    clears it. The card says so.
+- **"Please update" nudge + hard block** (`AppUpdateService`, `UpdateGate`) —
+  full notes in the **`app-update-gate` skill**
+  (`.claude/skills/app-update-gate/SKILL.md`). Never-break lines: every failure
+  path answers "no update"; `update_min_build_<p>` stays a human decision, and
+  a value above what is actually live locks out everybody.
 
 ## Environment / workflow
 
 - Run `flutter analyze` BEFORE and AFTER changes; fix only what you touched
   plus genuine errors. Don't mass-apply lints across untouched files.
-- `flutter pub get` first if dependencies look stale.
 - The Supabase URL + anon key are in `lib/main.dart` (anon key is public by
   design; do not move it to a .env without being asked).
-- Tests live under `test/` (run `flutter test`). Rating coverage:
+- Rating test coverage:
   `rating_engine_v3f5_test.dart` (golden vectors generated FROM the lab),
   `rating_engine_v3f5_parity_test.dart` (lab ↔ Dart ↔ SQL constants, migration
   guardrails, and a 50-seed convergence guard) and `ranking_lab_test.dart`
