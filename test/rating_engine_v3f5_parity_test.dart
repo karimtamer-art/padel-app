@@ -532,7 +532,7 @@ void main() {
     test('the lab inactivity helper was NOT ported', () {
       // The lab's idle() lowers sigma for a high-uncertainty player. Production
       // must never contain that shape: sigma may rise on inactivity, not fall.
-      final i = sql.lastIndexOf('function public.apply_rating_decay');
+      final i = sql.lastIndexOf('create or replace function public.apply_rating_decay');
       final body = sql.substring(i, sql.indexOf('end \$\$;', i));
       expect(body, contains('greatest(r.sigma'),
           reason: 'inactivity must be monotone in sigma');
@@ -546,7 +546,7 @@ void main() {
       // and something else between them, which is not V3-F5.
       expect(kV3F5.ratingInactivityDecay, isFalse);
 
-      final i = sql.lastIndexOf('function public.apply_rating_decay');
+      final i = sql.lastIndexOf('create or replace function public.apply_rating_decay');
       final body = sql.substring(i, sql.indexOf('end \$\$;', i));
       // the job may only touch sigma
       expect(body.contains('set rating'), isFalse,

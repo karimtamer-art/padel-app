@@ -8266,7 +8266,7 @@ end $$;
 -- EXECUTE to PUBLIC by default, which would let ANY signed-in player read the
 -- platform's finances. Only the guarded wrappers below may reach it (they are
 -- SECURITY DEFINER, so they call it as the owner).
-revoke all on function public._finance_core(date, date) from public;
+revoke all on function public._finance_core(date, date) from public, anon, authenticated;
 
 -- One period's full picture. Null dates = all time.
 create or replace function public.admin_finance_summary(
@@ -8651,7 +8651,7 @@ begin
   );
 end $$;
 -- Raw numbers, no guard of its own — only the guarded wrappers may reach it.
-revoke all on function public._finance_core(date, date) from public;
+revoke all on function public._finance_core(date, date) from public, anon, authenticated;
 
 notify pgrst, 'reload schema';
 
@@ -9214,7 +9214,6 @@ begin
           jsonb_build_object('match_id', p_match, 'invite_id', v_invite,
                              'action', 'partner_invite'));
 end $$;
-grant execute on function public._invite_partner(uuid, uuid, text) to authenticated;
 
 -- ── answering an invite ───────────────────────────────────────────────────
 
@@ -11249,7 +11248,6 @@ begin
       where engine_version is null or engine_version = 'v2');
 end $$;
 
-grant execute on function public._settle_rating(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 9. Existing players are NOT reset.
@@ -11408,7 +11406,6 @@ end $$;
 --     so the discrepancy is a decision on the record rather than an oversight.
 -- ---------------------------------------------------------------------------
 
-grant execute on function public._settle_rating(uuid)       to authenticated;
 grant execute on function public.admin_set_rating(uuid, numeric, numeric, boolean, text) to authenticated;
 
 -- ── v1 ELO removal (2026-08-14) ──────────────────────────
@@ -13559,3 +13556,15 @@ exception when others then null; end $$;
 -- ── verify ──────────────────────────────────────────────────────────────────
 -- select name, phone, wa_status, wa_error, wa_sent_at
 --   from public.web_registrations order by created_at desc limit 10;
+
+-- Internal helpers: closed to every client role (changes/2026-11-02_stopgap_close_helpers.sql).
+-- A revoke from public alone leaves Supabase's own grants to anon and authenticated. These
+-- sit at the end so that a re-run can't reopen them, and a fresh database starts closed.
+revoke all on function public._finance_core(date, date) from public, anon, authenticated;
+revoke all on function public._advance_winner(uuid, text, int, int, uuid) from public, anon, authenticated;
+revoke all on function public.apply_rating_decay() from public, anon, authenticated;
+revoke all on function public._award_tournament_season_points(uuid) from public, anon, authenticated;
+revoke all on function public._award_season_points(uuid) from public, anon, authenticated;
+revoke all on function public._settle_rating(uuid) from public, anon, authenticated;
+revoke all on function public._invite_partner(uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public._seed_season_defaults(uuid) from public, anon, authenticated;
