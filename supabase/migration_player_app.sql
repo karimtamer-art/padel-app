@@ -5787,20 +5787,9 @@ begin
   if v_kind = 'groups' then
     v_adv := coalesce((v_stages->v_cur_stage->'cfg'->>'advance')::int, 2);
     quals := array(
-      select pid from (
-        select bracket, pid, row_number() over (partition by bracket order by wins desc) rn
-          from (
-            select bracket, pid, count(*) filter (where won) wins from (
-              select bracket, entry1 pid, (winner_entry = entry1) won
-                from public.tournament_matches
-               where tournament_id = p_tournament_id and stage = v_cur_stage and entry1 is not null
-              union all
-              select bracket, entry2 pid, (winner_entry = entry2) won
-                from public.tournament_matches
-               where tournament_id = p_tournament_id and stage = v_cur_stage and entry2 is not null
-            ) u group by bracket, pid
-          ) s
-      ) r where rn <= v_adv order by rn, bracket);
+      select s.entry_id from public._stage_standings(p_tournament_id, v_cur_stage, true) s
+       where s.pos <= v_adv
+       order by s.pos, s.grp);
     if v_cur_stage + 1 >= jsonb_array_length(v_stages) then
       return 'Groups done — add a knockout stage to the format to continue.';
     end if;
@@ -5810,15 +5799,9 @@ begin
   elsif v_kind in ('roundRobin', 'swiss') then
     v_adv := coalesce((v_stages->v_cur_stage->'cfg'->>'advance')::int, 4);
     quals := array(
-      select pid from (
-        select pid, count(*) filter (where won) wins from (
-          select entry1 pid, (winner_entry = entry1) won from public.tournament_matches
-           where tournament_id = p_tournament_id and stage = v_cur_stage and entry1 is not null
-          union all
-          select entry2 pid, (winner_entry = entry2) won from public.tournament_matches
-           where tournament_id = p_tournament_id and stage = v_cur_stage and entry2 is not null
-        ) u group by pid order by wins desc
-      ) s limit v_adv);
+      select s.entry_id from public._stage_standings(p_tournament_id, v_cur_stage, false) s
+       where s.pos <= v_adv
+       order by s.pos);
     if v_cur_stage + 1 >= jsonb_array_length(v_stages) then
       return 'Stage done — add a knockout stage to the format to continue.';
     end if;
@@ -13559,3 +13542,125 @@ exception when others then null; end $$;
 -- ── verify ──────────────────────────────────────────────────────────────────
 -- select name, phone, wa_status, wa_error, wa_sent_at
 --   from public.web_registrations order by created_at desc limit 10;
+
+-- ── Server standings (2026-11-02, changes/2026-11-02_server_standings.sql) ──
+-- Sets won by each side of one decided match, oriented using the known winner
+-- ("6-3, 6-4" and "3-6, 4-6" read the same). Scores are free text from players, so
+-- anything that isn't clearly sets counts as (0, 0): it must not break standings.
+-- Mirrors orientedSets() in lib/backend/models/tournament_bracket.dart.
+create or replace function public._match_set_counts(p_score text, p_entry1_won boolean)
+returns table (sets_a int, sets_b int)
+language sql immutable set search_path = public as $$
+  with parsed as (
+    select r[1]::int as x, r[2]::int as y
+      from regexp_matches(coalesce(p_score, ''), '(\d{1,3})\s*[-–—:]\s*(\d{1,3})', 'g') r
+     where regexp_replace(coalesce(p_score, ''), '(\d{1,3})\s*[-–—:]\s*(\d{1,3})', '', 'g') !~ '\d'
+  ),
+  counted as (
+    select count(*) filter (where x > y)::int as first_wins,
+           count(*) filter (where y > x)::int as second_wins
+      from parsed
+  )
+  select case when first_wins = second_wins or (first_wins > second_wins) = p_entry1_won
+              then first_wins else second_wins end,
+         case when first_wins = second_wins or (first_wins > second_wins) = p_entry1_won
+              then second_wins else first_wins end
+    from counted;
+$$;
+revoke all on function public._match_set_counts(text, boolean) from public, anon, authenticated;
+
+-- The one ranking. p_by_group = false pools the whole stage (round robin, swiss).
+-- p_stage null means every group-labelled row, which is what a manual draw has.
+-- Head-to-head counts wins among the pairs still level, so a three-way tie has an
+-- answer too; a dead-even cycle falls through to entry id, so the order is stable
+-- and the app can never disagree with what advance_stage did.
+create or replace function public._stage_standings(
+  p_tid uuid, p_stage int default null, p_by_group boolean default true)
+returns table (
+  grp text, pos int, entry_id uuid, played int, won int, lost int,
+  sets_won int, sets_lost int
+)
+language sql stable security definer set search_path = public as $$
+  with m as (
+    select tm.id, tm.entry1, tm.entry2, tm.winner_entry, tm.score,
+           case when p_by_group then tm.bracket else '' end as g
+      from tournament_matches tm
+     where tm.tournament_id = p_tid
+       and tm.entry1 is not null and tm.entry2 is not null
+       and case when p_stage is null
+                then tm.bracket like 'Group %' or tm.bracket = 'Round robin'
+                else tm.stage = p_stage end
+  ),
+  sides as (
+    select m.g, m.id, m.entry1 as entry, m.entry2 as opp, m.winner_entry as w, c.sets_a as sf, c.sets_b as sa
+      from m left join lateral public._match_set_counts(m.score, m.winner_entry = m.entry1) c on true
+    union all
+    select m.g, m.id, m.entry2, m.entry1, m.winner_entry, c.sets_b, c.sets_a
+      from m left join lateral public._match_set_counts(m.score, m.winner_entry = m.entry1) c on true
+  ),
+  totals as (
+    select g, entry,
+           count(*) filter (where w is not null)::int as played,
+           count(*) filter (where w = entry)::int as won,
+           count(*) filter (where w is not null and w <> entry)::int as lost,
+           coalesce(sum(sf) filter (where w is not null), 0)::int as sets_won,
+           coalesce(sum(sa) filter (where w is not null), 0)::int as sets_lost
+      from sides
+     group by g, entry
+  ),
+  tiers as (
+    select t.*, dense_rank() over (partition by g order by won desc, sets_won - sets_lost desc) as tier
+      from totals t
+  ),
+  h2h as (
+    select a.g, a.entry, count(*)::int as wins
+      from sides s
+      join tiers a on a.g = s.g and a.entry = s.entry
+      join tiers b on b.g = s.g and b.entry = s.opp and b.tier = a.tier
+     where s.w = s.entry
+     group by a.g, a.entry
+  )
+  select t.g, row_number() over (
+           partition by t.g
+           order by t.won desc, t.sets_won - t.sets_lost desc,
+                    coalesce(h.wins, 0) desc, t.entry)::int,
+         t.entry, t.played, t.won, t.lost, t.sets_won, t.sets_lost
+    from tiers t
+    left join h2h h on h.g = t.g and h.entry = t.entry;
+$$;
+revoke all on function public._stage_standings(uuid, int, boolean) from public, anon, authenticated;
+
+-- What the app reads, and the only one of these a client may call. It runs as
+-- definer so it can use the helpers above, which means RLS doesn't filter it for
+-- the caller: the WHERE below repeats who may read public.tournaments
+-- ("tournaments: read all", "tournaments: admin write", "tournaments: organizer
+-- write own"). Change those policies and this must change too; the check at the end
+-- of this file prints the live ones to compare.
+--
+-- `qualifies` comes from the saved format with advance_stage's own defaults (2 per
+-- group, 4 from a round robin); false for everyone when the format ends at this
+-- stage, so nobody is told they advance to nothing.
+create or replace function public.tournament_standings(p_tournament_id uuid)
+returns table (
+  grp text, pos int, entry_id uuid, played int, won int, lost int,
+  sets_won int, sets_lost int, qualifies boolean
+)
+language sql stable security definer set search_path = public as $$
+  with spec as (
+    select coalesce(t.format_spec->'stages', '[]'::jsonb) as stages
+      from tournaments t
+     where t.id = p_tournament_id
+       and auth.uid() is not null
+       and (t.status <> 'cancelled'
+            or public._is_admin()
+            or (t.organizer_id = auth.uid() and public.current_admin_role() = 'organizer'))
+  )
+  select s.grp, s.pos, s.entry_id, s.played, s.won, s.lost, s.sets_won, s.sets_lost,
+         (jsonb_array_length(spec.stages) <> 1)
+         and s.pos <= coalesce((spec.stages->0->'cfg'->>'advance')::int,
+                               case when s.grp = 'Round robin' then 4 else 2 end)
+    from spec, public._stage_standings(p_tournament_id) s
+   order by s.grp, s.pos;
+$$;
+revoke all on function public.tournament_standings(uuid) from public, anon;
+grant execute on function public.tournament_standings(uuid) to authenticated;

@@ -1,7 +1,11 @@
--- PROPOSAL, NOT APPLIED. One ranking, on the server: wins, then set difference,
--- then head-to-head. advance_stage and the app both read it, so a pair shown above
--- the cut is a pair that advances.
--- Re-runnable: only create-or-replace.
+-- 2026-11-02: one ranking, on the server. Wins, then set difference, then
+-- head-to-head. advance_stage and every screen read it, so a pair shown above the
+-- cut is a pair that advances.
+--
+-- RUN ORDER: after 2026-11-02_finalize_guard.sql. Must be live and tested by
+-- Wed 4 Nov, or wait until after the 6 Nov event (groups + knockout).
+-- ROLLBACK: 2026-11-02_server_standings_rollback.sql. No data changes either way.
+-- Safe to re-run.
 
 -- Sets won by each side of one decided match, oriented using the known winner
 -- ("6-3, 6-4" and "3-6, 4-6" read the same). Scores are free text from players, so
@@ -26,6 +30,7 @@ language sql immutable set search_path = public as $$
               then second_wins else first_wins end
     from counted;
 $$;
+revoke all on function public._match_set_counts(text, boolean) from public, anon, authenticated;
 
 -- The one ranking. p_by_group = false pools the whole stage (round robin, swiss).
 -- p_stage null means every group-labelled row, which is what a manual draw has.
@@ -86,10 +91,18 @@ language sql stable security definer set search_path = public as $$
     from tiers t
     left join h2h h on h.g = t.g and h.entry = t.entry;
 $$;
+revoke all on function public._stage_standings(uuid, int, boolean) from public, anon, authenticated;
 
--- What the app reads. `qualifies` comes from the saved format with advance_stage's
--- own defaults (2 per group, 4 from a round robin); false for everyone when the
--- format ends at this stage, so nobody is told they advance to nothing.
+-- What the app reads, and the only one of these a client may call. It runs as
+-- definer so it can use the helpers above, which means RLS doesn't filter it for
+-- the caller: the WHERE below repeats who may read public.tournaments
+-- ("tournaments: read all", "tournaments: admin write", "tournaments: organizer
+-- write own"). Change those policies and this must change too; the check at the end
+-- of this file prints the live ones to compare.
+--
+-- `qualifies` comes from the saved format with advance_stage's own defaults (2 per
+-- group, 4 from a round robin); false for everyone when the format ends at this
+-- stage, so nobody is told they advance to nothing.
 create or replace function public.tournament_standings(p_tournament_id uuid)
 returns table (
   grp text, pos int, entry_id uuid, played int, won int, lost int,
@@ -97,16 +110,22 @@ returns table (
 )
 language sql stable security definer set search_path = public as $$
   with spec as (
-    select coalesce(format_spec->'stages', '[]'::jsonb) as stages
-      from tournaments where id = p_tournament_id
+    select coalesce(t.format_spec->'stages', '[]'::jsonb) as stages
+      from tournaments t
+     where t.id = p_tournament_id
+       and auth.uid() is not null
+       and (t.status <> 'cancelled'
+            or public._is_admin()
+            or (t.organizer_id = auth.uid() and public.current_admin_role() = 'organizer'))
   )
   select s.grp, s.pos, s.entry_id, s.played, s.won, s.lost, s.sets_won, s.sets_lost,
          (jsonb_array_length(spec.stages) <> 1)
          and s.pos <= coalesce((spec.stages->0->'cfg'->>'advance')::int,
                                case when s.grp = 'Round robin' then 4 else 2 end)
-    from public._stage_standings(p_tournament_id) s, spec
+    from spec, public._stage_standings(p_tournament_id) s
    order by s.grp, s.pos;
 $$;
+revoke all on function public.tournament_standings(uuid) from public, anon;
 grant execute on function public.tournament_standings(uuid) to authenticated;
 
 -- advance_stage: the two ranking queries become reads of _stage_standings. Nothing
@@ -167,3 +186,26 @@ begin
     return null;
   end if;
 end $$;
+
+-- VERIFY: every `ok` must be true. Compare `detail` on the policy row with the WHERE
+-- in tournament_standings above; if the live policies say something else, stop.
+select * from (values
+  ('helper _match_set_counts closed to clients',
+   not has_function_privilege('anon', 'public._match_set_counts(text,boolean)', 'execute')
+   and not has_function_privilege('authenticated', 'public._match_set_counts(text,boolean)', 'execute'), ''),
+  ('helper _stage_standings closed to clients',
+   not has_function_privilege('anon', 'public._stage_standings(uuid,int,boolean)', 'execute')
+   and not has_function_privilege('authenticated', 'public._stage_standings(uuid,int,boolean)', 'execute'), ''),
+  ('tournament_standings: signed-in only',
+   has_function_privilege('authenticated', 'public.tournament_standings(uuid)', 'execute')
+   and not has_function_privilege('anon', 'public.tournament_standings(uuid)', 'execute'), ''),
+  ('advance_stage reads the shared ranking',
+   pg_get_functiondef('public.advance_stage(uuid)'::regprocedure) like '%_stage_standings%', ''),
+  ('set counting reads either side the same',
+   (select sets_a = 0 and sets_b = 2 from public._match_set_counts('6-3, 6-4', false))
+   and (select sets_a = 0 and sets_b = 2 from public._match_set_counts('3-6, 4-6', false)), ''),
+  ('live read policies on tournaments, compare by eye', true,
+   (select string_agg(policyname || ': ' || coalesce(qual, '(none)'), ' | ' order by policyname)
+      from pg_policies
+     where schemaname = 'public' and tablename = 'tournaments' and cmd in ('SELECT', 'ALL')))
+) as v(check_name, ok, detail);
