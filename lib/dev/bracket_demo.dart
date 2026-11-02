@@ -19,6 +19,9 @@ import 'dart:convert';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:padel_clay/admin/screens/admin_tournaments_screen.dart';
+import 'package:padel_clay/admin/screens/draw_sheet.dart';
+import 'package:padel_clay/admin/screens/match_info_sheet.dart';
 import 'package:padel_clay/frontend/screens/tournaments/partner_sheet.dart';
 import 'package:padel_clay/frontend/screens/tournaments/tournament_detail_screen.dart';
 import 'package:padel_clay/frontend/screens/tournaments/tournaments_screen.dart';
@@ -276,6 +279,33 @@ final _scenarios = <_Scenario>[
       () => [], open: true, bracket: false),
   _Scenario('Overview · registered, before the draw',
       "You're in, with Manage.", 'double_elim', 8, () => [], bracket: false),
+  _Scenario('Double elimination · grand final', 'Both champions meet once.',
+      'double_elim', 4, () {
+    final es = _entries(4);
+    Map<String, dynamic> r(String b, int round, int a, int c,
+            {int? w, String? score}) =>
+        {
+          'id': '$b-$round',
+          'bracket': b,
+          'round': round,
+          'slot': 0,
+          'winner_entry': w == null ? null : es[w]['id'],
+          'score': score,
+          'result_status': 'open',
+          'submitted_winner': null,
+          'submitted_by': null,
+          'e1': es[a],
+          'e2': es[c],
+        };
+    return [
+      {...r('wb', 1, 0, 3, w: 0, score: '6-3,6-4'), 'id': 'wb-1-0'},
+      {...r('wb', 1, 1, 2, w: 1, score: '6-2,6-2'), 'id': 'wb-1-1', 'slot': 1},
+      r('wb', 2, 0, 1, w: 0, score: '7-5,6-4'),
+      r('lb', 1, 3, 2, w: 2, score: '6-4,6-4'),
+      r('lb', 2, 2, 1, w: 1, score: '6-1,6-3'),
+      r('gf', 3, 0, 1),
+    ];
+  }),
 ];
 
 Map<String, dynamic> _tournament(int i) {
@@ -369,6 +399,25 @@ class _FakeBackend extends http.BaseClient {
                 : {'rating': 0.8 + i * 0.5, 'level': 0.8 + i * 0.5, 'tier': 'bronze'},
           }
       ];
+    } else if (path.endsWith('/rpc/tournament_standings')) {
+      // Scenario 5's Group A and B; the real order is the server's to decide.
+      Map<String, dynamic> l(String g, int pos, String e, int w, int lost,
+              String sets, bool q) =>
+          {
+            'grp': g, 'pos': pos, 'entry_id': e, 'played': w + lost, 'won': w,
+            'lost': lost, 'sets_won': int.parse(sets[0]),
+            'sets_lost': int.parse(sets[2]), 'qualifies': q,
+          };
+      body = [
+        l('Group A', 1, 'e0', 1, 0, '2-0', true),
+        l('Group A', 2, 'e3', 1, 0, '2-0', true),
+        l('Group A', 3, 'e1', 0, 1, '0-2', false),
+        l('Group A', 4, 'e2', 0, 1, '0-2', false),
+        l('Group B', 1, 'e5', 1, 0, '2-0', true),
+        l('Group B', 2, 'e6', 0, 0, '0-0', true),
+        l('Group B', 3, 'e7', 0, 0, '0-0', false),
+        l('Group B', 4, 'e4', 0, 1, '0-2', false),
+      ];
     } else if (path.contains('/rpc/')) {
       body = null;
     }
@@ -434,7 +483,28 @@ class _PickerState extends State<_Picker> {
     super.initState();
     final q = Uri.base.queryParameters;
     final c = int.tryParse(q['case'] ?? '');
-    if (q['case'] == 'compete') {
+    if (q['case'] == 'drawsheet') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => showDrawSheet(context,
+          tournamentId: 't5',
+          tournamentName: 'Rivals Open',
+          format: 'group_knockout',
+          registeredPairs: 8,
+          formatSpec: const {
+            'stages': [
+              {
+                'kind': 'groups',
+                'cfg': {'groups': 2, 'advance': 2}
+              },
+              {'kind': 'knockout'},
+            ]
+          }));
+    } else if (q['case'] == 'matchinfo') {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => showMatchInfoSheet(context, tournamentId: 't5'));
+    } else if (q['case'] == 'admin') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const Scaffold(body: AdminTournamentsScreen()))));
+    } else if (q['case'] == 'compete') {
       WidgetsBinding.instance.addPostFrameCallback((_) => _openCompete());
     } else if (q['case'] == 'partner') {
       WidgetsBinding.instance.addPostFrameCallback(

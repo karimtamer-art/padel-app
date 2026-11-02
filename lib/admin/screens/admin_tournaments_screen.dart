@@ -4,6 +4,9 @@ import '../theme/admin_colors.dart';
 import '../data/admin_service.dart';
 import '../widgets/admin_kit.dart';
 import 'draw_sheet.dart';
+import 'match_info_sheet.dart';
+import '../../backend/models/tournament_bracket.dart'
+    show composeLocalDateTime, splitLocalDateTime;
 import 'tournament_entries_sheet.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/community_service.dart';
@@ -973,6 +976,11 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
     final isNew = t == null;
     final nameC = TextEditingController(text: t?['name'] ?? '');
     final venueC = TextEditingController(text: t?['venue_name'] ?? '');
+    final addressC = TextEditingController(text: t?['venue_address'] ?? '');
+    final existingDraw =
+        splitLocalDateTime(DateTime.tryParse((t?['draw_at'] as String?) ?? ''));
+    final drawDateC = TextEditingController(text: existingDraw.date);
+    final drawTimeC = TextEditingController(text: existingDraw.time);
     final startC = TextEditingController(text: t?['start_date'] ?? '');
     final endC = TextEditingController(text: t?['end_date'] ?? '');
     final startTimeC = TextEditingController(text: t?['start_time'] ?? '');
@@ -1043,6 +1051,12 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
             adminToast(context, 'Pick a start time.', ok: false);
             return;
           }
+          final hasDrawDate = drawDateC.text.trim().isNotEmpty;
+          final hasDrawTime = drawTimeC.text.trim().isNotEmpty;
+          if (hasDrawDate != hasDrawTime) {
+            adminToast(context, 'Pick both a draw date and a draw time, or neither.', ok: false);
+            return;
+          }
           saving = true;
           final data = <String, dynamic>{
             'name': nameC.text.trim(),
@@ -1073,14 +1087,34 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
                 : null,
           };
           if (!isNew) data['id'] = t['id'];
-          final err = await AdminService.upsertTournament(data);
+          final saved = await AdminService.upsertTournamentReturningId(data);
+          final err = saved.error;
+          // Only touched when they changed, so saving an event on a database
+          // without these columns still works as long as nobody fills them in.
+          String? extrasErr;
+          final drawAt = composeLocalDateTime(drawDateC.text, drawTimeC.text);
+          final drawChanged =
+              drawDateC.text != existingDraw.date || drawTimeC.text != existingDraw.time;
+          final addressChanged =
+              addressC.text.trim() != ((t?['venue_address'] as String?) ?? '');
+          if (err == null && saved.id != null && (drawChanged || addressChanged)) {
+            extrasErr = await AdminService.saveTournamentExtras(saved.id!,
+                drawAt: drawAt, venueAddress: addressC.text);
+          }
           if (!mounted) return;
           Navigator.pop(context);
           await _load();
           if (mounted) {
-            adminToast(context, err != null
-                ? 'Error: $err'
-                : isNew ? '"${nameC.text.trim()}" created' : 'Tournament updated');
+            adminToast(
+                context,
+                err != null
+                    ? 'Error: $err'
+                    : extrasErr != null
+                        ? "Saved, but the draw time and address weren't: $extrasErr"
+                        : isNew
+                            ? '"${nameC.text.trim()}" created'
+                            : 'Tournament updated',
+                ok: err == null && extrasErr == null);
           }
         },
       ),
@@ -1093,6 +1127,8 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
           _courtPicker(venueC),
         ],
         const SizedBox(height: 14),
+        _field('Venue address', addressC, hint: 'Optional. Shown on the venue card'),
+        const SizedBox(height: 14),
         Row(children: [
           Expanded(child: _dateField('Start date', startC)),
           const SizedBox(width: 12),
@@ -1100,6 +1136,15 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         ]),
         const SizedBox(height: 14),
         _timeField('Start time', startTimeC),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(child: _dateField('Draw date', drawDateC)),
+          const SizedBox(width: 12),
+          Expanded(child: _timeField('Draw time', drawTimeC)),
+        ]),
+        const SizedBox(height: 6),
+        Text('Optional. Players see it until the draw is published.',
+            style: AdminText.small(AdminColors.inkFaint)),
         const SizedBox(height: 14),
         _dateField('Registration opens', regOpensC),
         const SizedBox(height: 6),
@@ -1596,7 +1641,7 @@ class _AdminTournamentsScreenState extends State<AdminTournamentsScreen> {
         style: AdminText.body(),
         decoration: InputDecoration(
           isDense: true,
-          hintText: 'Tap to pick a start time',
+          hintText: 'Tap to pick a time',
           suffixIcon: const Icon(Icons.schedule_rounded,
               size: 16, color: AdminColors.inkFaint),
           filled: true,
@@ -1921,6 +1966,16 @@ class _BracketManagerState extends State<_BracketManager> {
       byBracket.putIfAbsent(m['bracket'] as String? ?? 'wb', () => []).add(m);
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (_matches.isNotEmpty) ...[
+        AdminButton('Courts & live',
+            full: true,
+            height: 42,
+            variant: AdminBtn.ghost,
+            icon: Icons.sports_tennis_rounded,
+            onPressed: () =>
+                showMatchInfoSheet(context, tournamentId: widget.tournamentId)),
+        const SizedBox(height: 10),
+      ],
       AdminButton(
           _busy
               ? 'Working…'

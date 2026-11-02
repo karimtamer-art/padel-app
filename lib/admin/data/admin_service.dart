@@ -659,6 +659,91 @@ class AdminService {
     }
   }
 
+  /// [upsertTournament], but also answers with the row's id, which a new
+  /// tournament only has once it's saved.
+  static Future<({String? id, String? error})> upsertTournamentReturningId(
+      Map<String, dynamic> data) async {
+    try {
+      final row = await _db
+          .from('tournaments')
+          .upsert(data, onConflict: 'id')
+          .select('id')
+          .single();
+      return (id: row['id'] as String?, error: null);
+    } on PostgrestException catch (e) {
+      return (id: null, error: e.message);
+    } catch (e) {
+      return (id: null, error: e.toString());
+    }
+  }
+
+  /// Draw time and venue address. Saved apart from the main form so a database
+  /// without these columns can't stop a tournament being saved. Error or null.
+  static Future<String?> saveTournamentExtras(String id,
+      {required DateTime? drawAt, required String venueAddress}) async {
+    try {
+      await _db.from('tournaments').update({
+        'draw_at': drawAt?.toUtc().toIso8601String(),
+        'venue_address': venueAddress.trim().isEmpty ? null : venueAddress.trim(),
+      }).eq('id', id);
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// The server's group standings; see TournamentService.fetchStandings.
+  static Future<List<Map<String, dynamic>>?> fetchStandings(
+      String tournamentId) async {
+    try {
+      final rows = await _db.rpc('tournament_standings',
+          params: {'p_tournament_id': tournamentId});
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Rows for the Courts & live sheet. Null when they can't be read.
+  static Future<List<Map<String, dynamic>>?> fetchMatchInfo(
+      String tournamentId) async {
+    try {
+      final rows = await _db
+          .from('tournament_matches')
+          .select('id, bracket, round, slot, court, result_status, winner_entry, '
+              'e1:tournament_entries!tournament_matches_entry1_fkey(id, player_name, partner_name), '
+              'e2:tournament_entries!tournament_matches_entry2_fkey(id, player_name, partner_name)')
+          .eq('tournament_id', tournamentId)
+          .order('bracket', ascending: true)
+          .order('round', ascending: true)
+          .order('slot', ascending: true);
+      return [
+        for (final r in rows as List) Map<String, dynamic>.from(r as Map),
+      ];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Sets a match's court and LIVE state. Error or null.
+  static Future<String?> setMatchInfo(String matchId,
+      {required String court, required bool live}) async {
+    try {
+      final res = await _db.rpc('admin_set_match_info', params: {
+        'p_match_id': matchId,
+        'p_court': court,
+        'p_live': live,
+      });
+      return res as String?;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   static Future<void> deleteTournament(String id) async {
     await _db.from('tournaments').delete().eq('id', id);
   }

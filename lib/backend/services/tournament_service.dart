@@ -251,6 +251,20 @@ class TournamentService {
     }
   }
 
+  /// Group standings, in the server's order: wins, set difference, head-to-head.
+  /// `advance_stage` uses the same ranking, so nothing here recomputes it. Null
+  /// when they can't be read; screens then hide the table rather than guess.
+  static Future<List<Map<String, dynamic>>?> fetchStandings(String id) async {
+    try {
+      final rows = await _db
+          .rpc('tournament_standings', params: {'p_tournament_id': id});
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (e) {
+      debugPrint('[TournamentService] fetchStandings: $e');
+      return null;
+    }
+  }
+
   /// Optional display fields (`draw_at`, `venue_address`). Their own query, like
   /// [fetchFormatSpec]: adding them to the main select would make a database
   /// without the columns fall back to the plain tier and lose the entries join.

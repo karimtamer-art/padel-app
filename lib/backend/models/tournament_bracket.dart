@@ -197,6 +197,7 @@ String _roundLabel(int round, int total, int size) {
 
 String _slotCode(String label, int slot) => switch (label) {
       'Final' => 'Final',
+      'WB Final' => 'WB Final',
       'Semis' => 'SF ${slot + 1}',
       'Quarters' => 'QF ${slot + 1}',
       _ => '$label ${slot + 1}',
@@ -209,9 +210,13 @@ class KnockoutBracket {
   bool get isEmpty => rounds.isEmpty;
 }
 
-/// The whole winners bracket from `wb` rows, future rounds included. A `gf` row
-/// (only old data has one; nothing writes them now) is shown as a last round.
-KnockoutBracket buildWinners(List<BracketRow> rows, {required bool doubleElim}) {
+/// The whole winners bracket from `wb` rows, future rounds included.
+///
+/// In double elimination the winners final doesn't decide the title, so
+/// [champion] waits for the grand final. [finished] covers events completed before
+/// grand finals existed, whose winners-final winner was their champion.
+KnockoutBracket buildWinners(List<BracketRow> rows,
+    {required bool doubleElim, bool finished = false}) {
   final wb = rows.where((r) => r['bracket'] == 'wb').toList();
   if (wb.isEmpty) return const KnockoutBracket([], null);
 
@@ -228,7 +233,8 @@ KnockoutBracket buildWinners(List<BracketRow> rows, {required bool doubleElim}) 
   };
   final labels = [
     for (var round = 1; round <= total; round++)
-      _roundLabel(round, total, size),
+      // In double elimination the Final is the grand final.
+      doubleElim && round == total ? 'WB Final' : _roundLabel(round, total, size),
   ];
 
   final rounds = <BracketRound>[];
@@ -251,6 +257,8 @@ KnockoutBracket buildWinners(List<BracketRow> rows, {required bool doubleElim}) 
             ? 'Winner → $to · Loser → Losers bracket'
             : 'Winner → $to';
       } else {
+        // Silent about the winner: it's a grand final or the title depending on
+        // whether the server has grand finals yet, and this reads true for both.
         next = doubleElim ? 'Loser → Losers bracket' : null;
       }
       slots.add(BracketSlot(
@@ -269,33 +277,46 @@ KnockoutBracket buildWinners(List<BracketRow> rows, {required bool doubleElim}) 
     rounds.add(BracketRound('wb$round', label, slots));
   }
 
-  for (final r in rows.where((r) => r['bracket'] == 'gf')) {
-    rounds.add(BracketRound('gf', 'Grand final', [
-      BracketSlot(
-        row: r,
-        side: 'gf',
-        roundId: 'gf',
-        roundLabel: 'Grand final',
-        code: 'Grand final',
-        e1: _entry(r, 'e1'),
-        e2: _entry(r, 'e2'),
-      ),
-    ]));
+  // The champion: the grand final's winner, or the winners final's where that is
+  // the end of the event.
+  BracketRow? champion;
+  BracketRow? winnerOf(BracketRow? m) {
+    final w = m?['winner_entry'] as String?;
+    if (w == null) return null;
+    final a = _entry(m, 'e1');
+    return a != null && a['id'] == w ? a : _entry(m, 'e2');
   }
 
-  // The final's winner, or failing that the row `_advance_winner` made for them.
-  BracketRow? champion;
-  final finalRow = at[(total, 0)];
-  final w = finalRow?['winner_entry'] as String?;
-  if (w != null) {
-    final a = _entry(finalRow, 'e1');
-    champion = a != null && a['id'] == w ? a : _entry(finalRow, 'e2');
+  final gf = rows.where((r) => r['bracket'] == 'gf').toList();
+  if (gf.isNotEmpty) {
+    champion = winnerOf(gf.first);
+  } else if (!doubleElim || finished) {
+    champion = winnerOf(at[(total, 0)]);
   }
   return KnockoutBracket(rounds, champion);
 }
 
-/// The losers bracket. Its size can't be known ahead: `record_bracket_winner`
-/// fills it in arrival order, so only rounds that exist are shown.
+/// The one grand-final round, once the server has opened it.
+BracketRound? buildGrandFinal(List<BracketRow> rows) {
+  final gf = rows.where((r) => r['bracket'] == 'gf').toList();
+  if (gf.isEmpty) return null;
+  return BracketRound('gf', 'Grand final', [
+    BracketSlot(
+      row: gf.first,
+      side: 'gf',
+      roundId: 'gf',
+      roundLabel: 'Grand final',
+      code: 'Grand final',
+      e1: _entry(gf.first, 'e1'),
+      e2: _entry(gf.first, 'e2'),
+      next: 'One match decides the title',
+    ),
+  ]);
+}
+
+/// The losers bracket: the rounds that exist so far. A draw of 2^k has 2(k-1) of
+/// them, the last being the LB Final. Events drawn before fixed routing can run
+/// past that, and then simply keep their numbers.
 List<BracketRound> buildLosers(List<BracketRow> rows) {
   final lb = rows.where((r) => r['bracket'] == 'lb').toList();
   if (lb.isEmpty) return const [];
@@ -322,9 +343,14 @@ List<BracketRound> buildLosers(List<BracketRow> rows) {
     }
   }
 
+  final firstRoundWb = rows.where((r) => r['bracket'] == 'wb' && r['round'] == 1).length;
+  final lastLb = 2 * (roundsForSize(firstRoundWb * 2) - 1);
+  final standard = keys.isNotEmpty && keys.last <= lastLb;
+  String labelOf(int k) => standard && k == lastLb ? 'LB Final' : 'Round $k';
+
   return [
     for (final k in keys)
-      BracketRound('lb$k', 'Round $k', [
+      BracketRound('lb$k', labelOf(k), [
         for (final r in (byRound[k]!
           ..sort((a, b) =>
               (a['slot'] as num).toInt().compareTo((b['slot'] as num).toInt()))))
@@ -332,11 +358,15 @@ List<BracketRound> buildLosers(List<BracketRow> rows) {
             row: r,
             side: 'lb',
             roundId: 'lb$k',
-            roundLabel: 'Round $k',
-            code: 'Losers R$k · ${(r['slot'] as num).toInt() + 1}',
+            roundLabel: labelOf(k),
+            code: labelOf(k) == 'LB Final'
+                ? 'LB Final'
+                : 'Losers R$k · ${(r['slot'] as num).toInt() + 1}',
             e1: _entry(r, 'e1'),
             e2: _entry(r, 'e2'),
-            next: 'Loser is out · Winner → Losers R${k + 1}',
+            next: labelOf(k) == 'LB Final'
+                ? 'Loser is out'
+                : 'Loser is out · Winner → Losers R${k + 1}',
           ),
       ]),
   ];
@@ -439,84 +469,42 @@ List<BracketRound> buildFreeKnockout(List<BracketRow> rows) {
   return _labelledRounds(labels, rows);
 }
 
+/// One line of a group's standings, in the order the server ranked them. The
+/// server is the only place pairs are ranked: `advance_stage` promotes on the same
+/// ranking, so a line above the cut is a pair that advances.
 class StandingLine {
   final BracketRow entry;
-  int played = 0, won = 0, lost = 0, setsWon = 0, setsLost = 0;
-  StandingLine(this.entry);
-  String get id => entry['id'] as String;
-  int get setDiff => setsWon - setsLost;
+  final int played, won, lost, setsWon, setsLost;
+  final bool qualifies;
+  const StandingLine(this.entry, this.played, this.won, this.lost, this.setsWon,
+      this.setsLost, this.qualifies);
 }
 
-/// Standings for a group: wins, then set difference, then head-to-head. Wins come
-/// first because that's what `advance_stage` promotes on, so a line above the cut
-/// isn't contradicted by the server. Two pairs level on wins are broken by the
-/// server arbitrarily; this ordering is the display's best answer.
-List<StandingLine> standingsFor(BracketRound group) {
-  final lines = <String, StandingLine>{};
-  StandingLine line(BracketRow e) =>
-      lines.putIfAbsent(e['id'] as String, () => StandingLine(e));
-
+/// The `tournament_standings` lines for [group], with each pair's entry resolved
+/// from the group's own matches.
+List<StandingLine> standingsFromServer(
+    List<Map<String, dynamic>> rows, BracketRound group) {
+  final entries = <String, BracketRow>{};
   for (final s in group.slots) {
-    if (s.e1 != null) line(s.e1!);
-    if (s.e2 != null) line(s.e2!);
-    if (s.winner == null || !s.bothSet) continue;
-    final a = line(s.e1!), b = line(s.e2!);
-    a.played++;
-    b.played++;
-    final aWon = s.winner == a.id;
-    (aWon ? a : b).won++;
-    (aWon ? b : a).lost++;
-    for (final set in s.sets ?? const <SetScore>[]) {
-      if (set.a > set.b) {
-        a.setsWon++;
-        b.setsLost++;
-      } else if (set.b > set.a) {
-        b.setsWon++;
-        a.setsLost++;
-      }
+    for (final e in [s.e1, s.e2]) {
+      if (e != null) entries[e['id'] as String] = e;
     }
   }
-
-  int headToHead(StandingLine x, StandingLine y) {
-    for (final s in group.slots) {
-      final ids = {s.e1?['id'], s.e2?['id']};
-      if (s.winner != null && ids.contains(x.id) && ids.contains(y.id)) {
-        return s.winner == x.id ? -1 : 1;
-      }
-    }
-    return 0;
-  }
-
-  String nameOf(StandingLine l) =>
-      ((l.entry['player_name'] as String?) ?? '').toLowerCase();
-
-  return lines.values.toList()
-    ..sort((x, y) {
-      var c = y.won.compareTo(x.won);
-      if (c != 0) return c;
-      c = y.setDiff.compareTo(x.setDiff);
-      if (c != 0) return c;
-      c = headToHead(x, y);
-      if (c != 0) return c;
-      return nameOf(x).compareTo(nameOf(y));
-    });
-}
-
-/// How many pairs leave the first stage, from `tournaments.format_spec`, using
-/// `advance_stage`'s own defaults: 2 per group, 4 from a round robin.
-int advanceCountFrom(Map<String, dynamic>? spec, {bool roundRobin = false}) {
-  final fallback = roundRobin ? 4 : 2;
-  final stages = spec?['stages'];
-  if (stages is List && stages.isNotEmpty) {
-    final s = stages.first;
-    if (s is Map) {
-      final cfg = s['cfg'];
-      final n = cfg is Map ? cfg['advance'] : null;
-      final v = n is num ? n.toInt() : int.tryParse('$n');
-      if (v != null && v > 0) return v;
-    }
-  }
-  return fallback;
+  final own = rows.where((r) => r['grp'] == group.id).toList()
+    ..sort((a, b) => (a['pos'] as num).compareTo(b['pos'] as num));
+  return [
+    for (final r in own)
+      if (entries[r['entry_id']] case final e?)
+        StandingLine(
+          e,
+          (r['played'] as num).toInt(),
+          (r['won'] as num).toInt(),
+          (r['lost'] as num).toInt(),
+          (r['sets_won'] as num).toInt(),
+          (r['sets_lost'] as num).toInt(),
+          r['qualifies'] == true,
+        ),
+  ];
 }
 
 /// False only when the saved format ends with this stage, so nobody "advances".
@@ -548,3 +536,32 @@ BracketRow? opponentEntry(BracketSlot slot, String? uid) =>
 
 String? opponentPlaceholder(BracketSlot slot, String? uid) =>
     entryHasPlayer(slot.e1, uid) ? slot.e2Placeholder : slot.e1Placeholder;
+
+// ── Console: date + time fields <-> a moment ────────────────────────────────
+
+/// A local moment from the console's date ('2026-11-06') and time ('5:00 PM' or
+/// '17:00') fields. Null when either is blank or unreadable.
+DateTime? composeLocalDateTime(String date, String time) {
+  final d = DateTime.tryParse(date.trim());
+  final m = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)?$', caseSensitive: false)
+      .firstMatch(time.trim());
+  if (d == null || m == null) return null;
+  var hour = int.parse(m.group(1)!);
+  final minute = int.parse(m.group(2)!);
+  final ap = m.group(3)?.toUpperCase();
+  if (ap == 'PM' && hour < 12) hour += 12;
+  if (ap == 'AM' && hour == 12) hour = 0;
+  return DateTime(d.year, d.month, d.day, hour, minute);
+}
+
+/// The reverse, for filling the fields: blank when there's no moment.
+({String date, String time}) splitLocalDateTime(DateTime? at) {
+  if (at == null) return (date: '', time: '');
+  final l = at.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  final h = l.hour % 12 == 0 ? 12 : l.hour % 12;
+  return (
+    date: '${l.year}-${two(l.month)}-${two(l.day)}',
+    time: '$h:${two(l.minute)} ${l.hour < 12 ? 'AM' : 'PM'}',
+  );
+}

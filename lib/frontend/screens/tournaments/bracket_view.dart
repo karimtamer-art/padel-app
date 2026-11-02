@@ -22,20 +22,21 @@ List<BracketRound> allRoundsOf(List<Map<String, dynamic>> rows,
         ? [
             ...buildWinners(rows, doubleElim: doubleElim).rounds,
             ...buildLosers(rows),
+            if (buildGrandFinal(rows) case final gf?) gf,
           ]
         : [...buildGroups(rows), ...buildFreeKnockout(rows)];
 
 /// What the bracket tab has selected. Lives on the detail screen so it survives
 /// switching tabs, and so the bottom bar's "Details" can jump to a match.
 class BracketSelection {
-  int side = 0; // 0 winners, 1 losers
+  int side = 0; // 0 winners, 1 losers, 2 grand final
   String? roundId; // null = the current round
   int? stage; // 0 groups, 1 knockout; null = whichever is in play
   String? group; // null = the player's own, else the first
 
   /// Points the tab at the round [slot] sits in.
   void showSlot(BracketSlot slot) {
-    side = slot.side == 'lb' ? 1 : 0;
+    side = switch (slot.side) { 'lb' => 1, 'gf' => 2, _ => 0 };
     if (isGroupLabel(slot.side)) {
       stage = 0;
       group = slot.side;
@@ -53,6 +54,12 @@ class BracketView extends StatelessWidget {
   final bool doubleElim;
   final Map<String, dynamic>? formatSpec;
 
+  /// The server's standings; null when they can't be read.
+  final List<Map<String, dynamic>>? standings;
+
+  /// The event is over, for events with no grand final to name a champion.
+  final bool finished;
+
   /// "Fri, Nov 6 at 5:00 PM" when a future draw time is set.
   final String? drawAtLabel;
   final BracketSelection selection;
@@ -67,6 +74,8 @@ class BracketView extends StatelessWidget {
     required this.uid,
     required this.doubleElim,
     required this.formatSpec,
+    required this.standings,
+    this.finished = false,
     this.drawAtLabel,
     required this.selection,
     required this.onSelectionChanged,
@@ -85,7 +94,12 @@ class BracketView extends StatelessWidget {
     if (rows.isEmpty) {
       children = _noDraw(context);
     } else if (isLegacyDraw(rows)) {
-      children = selection.side == 1 && doubleElim ? _losers() : _winners();
+      final grandFinal = doubleElim ? buildGrandFinal(rows) : null;
+      children = selection.side == 2 && grandFinal != null
+          ? _grandFinal(grandFinal)
+          : selection.side == 1 && doubleElim
+              ? _losers()
+              : _winners();
     } else {
       children = _freeFormat();
     }
@@ -157,6 +171,10 @@ class BracketView extends StatelessWidget {
           card(0, 'Lose twice', "You're out. Min. 2 matches"),
         ]),
       ),
+      const SizedBox(height: 8),
+      Text(
+          'The final is one match, so the Winners champion can lose it and finish second.',
+          style: tStyle(12.5, FontWeight.w400, color: TColors.muted, height: 1.35)),
     ]);
   }
 
@@ -243,7 +261,11 @@ class BracketView extends StatelessWidget {
           if (doubleElim)
             CreamSegmented(
               compact: true,
-              labels: const ['Winners', 'Losers'],
+              // "Final" arrives with the match itself. Showing it before then
+              // would promise one on a server that doesn't open them yet.
+              labels: buildGrandFinal(rows) != null
+                  ? const ['Winners', 'Losers', 'Final']
+                  : const ['Winners', 'Losers'],
               index: selection.side,
               onChanged: (i) => _select(() {
                 selection.side = i;
@@ -254,7 +276,8 @@ class BracketView extends StatelessWidget {
       );
 
   List<Widget> _winners() {
-    final winners = buildWinners(rows, doubleElim: doubleElim);
+    final winners =
+        buildWinners(rows, doubleElim: doubleElim, finished: finished);
     final losers = doubleElim ? buildLosers(rows) : const <BracketRound>[];
     final rounds = winners.rounds;
     final selected = _selectedRound(rounds);
@@ -268,6 +291,15 @@ class BracketView extends StatelessWidget {
       if (winners.champion != null) _championCard(winners.champion!),
       if (_contextBanner(winners, losers) case final banner?) banner,
       for (final s in selected.slots) _slotCard(s),
+    ];
+  }
+
+  List<Widget> _grandFinal(BracketRound round) {
+    final winners = buildWinners(rows, doubleElim: true, finished: finished);
+    return [
+      _titleRow(),
+      if (winners.champion != null) _championCard(winners.champion!),
+      _slotCard(round.slots.single),
     ];
   }
 
@@ -304,7 +336,11 @@ class BracketView extends StatelessWidget {
 
   /// Where the player stands. Null when they aren't in this draw.
   Widget? _contextBanner(KnockoutBracket winners, List<BracketRound> losers) {
-    final all = [...winners.rounds, ...losers];
+    final all = [
+      ...winners.rounds,
+      ...losers,
+      if (buildGrandFinal(rows) case final gf?) gf,
+    ];
     final inDraw = all.any((r) => r.slots.any((s) => s.involves(uid)));
     if (!inDraw) return null;
     final mine = rows
@@ -325,6 +361,8 @@ class BracketView extends StatelessWidget {
     final where = next.side == 'lb'
         ? 'the Losers bracket'
         : switch (next.roundLabel) {
+            'Grand final' => 'the Grand final',
+            'WB Final' => 'the Winners final',
             'Final' => 'the Final',
             'Semis' => 'the Semifinals',
             'Quarters' => 'the Quarterfinals',
@@ -371,7 +409,7 @@ class BracketView extends StatelessWidget {
   // ── Knockout, losers ──────────────────────────────────────────────────────
 
   List<Widget> _losers() {
-    final winners = buildWinners(rows, doubleElim: true);
+    final winners = buildWinners(rows, doubleElim: true, finished: finished);
     final rounds = buildLosers(rows);
     return [
       _titleRow(),
@@ -534,9 +572,7 @@ class BracketView extends StatelessWidget {
       (g) => g.id == selection.group,
       orElse: () => groups.firstWhere(mine, orElse: () => groups.first),
     );
-    final isRoundRobin = selected.id == 'Round robin';
-    final advance = advanceCountFrom(formatSpec, roundRobin: isRoundRobin);
-    final cut = hasLaterStage(formatSpec) ? advance : 0;
+    final server = standings;
 
     // The match needing the player goes first, then the rest as drawn.
     final slots = selected.slots.toList()
@@ -555,11 +591,16 @@ class BracketView extends StatelessWidget {
               onTap: () => _select(() => selection.group = g.id),
             ),
         ]),
-      _StandingsTable(
-        lines: standingsFor(selected),
-        uid: uid,
-        cut: cut,
-      ),
+      if (server == null)
+        const EmptyStateCard(
+          title: 'Standings are on their way',
+          body: "They'll appear here shortly. The matches below are up to date.",
+        )
+      else
+        _StandingsTable(
+          lines: standingsFromServer(server, selected),
+          uid: uid,
+        ),
       Text('${selected.id} matches', style: tStyle(18, FontWeight.w800)),
       for (final s in slots) _slotCard(s),
     ];
@@ -748,11 +789,10 @@ class _GroupPill extends StatelessWidget {
 class _StandingsTable extends StatelessWidget {
   final List<StandingLine> lines;
   final String? uid;
+  const _StandingsTable({required this.lines, required this.uid});
 
-  /// How many lines qualify; 0 hides the cut and the legend.
-  final int cut;
-  const _StandingsTable(
-      {required this.lines, required this.uid, required this.cut});
+  /// How many lines the server says qualify; 0 hides the cut and the legend.
+  int get cut => lines.where((l) => l.qualifies).length;
 
   static const _num = 26.0;
   static const _sets = 44.0;
@@ -831,7 +871,7 @@ class _StandingsTable extends StatelessWidget {
   Widget _line(int i) {
     final l = lines[i];
     final you = entryHasPlayer(l.entry, uid);
-    final qualifies = i < cut;
+    final qualifies = l.qualifies;
     return Container(
       color: you ? TColors.accentTint : null,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

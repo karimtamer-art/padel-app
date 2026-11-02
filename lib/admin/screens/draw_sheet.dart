@@ -3,6 +3,7 @@ import '../theme/admin_colors.dart';
 import '../widgets/admin_kit.dart';
 import '../data/admin_service.dart';
 import 'draw_boards.dart';
+import 'match_info_sheet.dart';
 import '../../backend/models/draw_engine.dart';
 import '../../backend/models/format_model.dart';
 
@@ -71,6 +72,7 @@ class DrawSheet extends StatefulWidget {
 class _DrawSheetState extends State<DrawSheet> {
   bool _loading = true, _busy = false, _forceSetup = false;
   List<Map<String, dynamic>> _matches = [];
+  List<Map<String, dynamic>>? _standings;
   int _groups = 3, _advance = 2, _view = 0; // view: 0 groups · 1 knockout
   String _seed = 'level'; // level | random
   late final _Fmt _fmt;
@@ -122,10 +124,15 @@ class _DrawSheetState extends State<DrawSheet> {
   }
 
   Future<void> _load() async {
-    final rows = await AdminService.fetchBracket(widget.tournamentId);
+    final results = await Future.wait([
+      AdminService.fetchBracket(widget.tournamentId),
+      AdminService.fetchStandings(widget.tournamentId),
+    ]);
     if (!mounted) return;
+    final rows = results[0]!;
     setState(() {
       _matches = rows;
+      _standings = results[1];
       _loading = false;
       _view = hasKnockout(rows) ? 1 : 0;
     });
@@ -673,7 +680,25 @@ class _DrawSheetState extends State<DrawSheet> {
   }
 
   // ── draw ─────────────────────────────────────────────────────────────────
-  Widget _drawBody() {
+  Widget _drawBody() => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AdminButton('Courts & live',
+              full: true,
+              height: 42,
+              variant: AdminBtn.ghost,
+              icon: Icons.sports_tennis_rounded,
+              onPressed: () =>
+                  showMatchInfoSheet(context, tournamentId: widget.tournamentId)),
+          const SizedBox(height: 12),
+          _boards(),
+        ],
+      );
+
+  List<StandingRow>? _serverStandings(DrawGroup g) =>
+      _standings == null ? null : standingsFromServer(_standings!, g);
+
+  Widget _boards() {
     switch (_fmt) {
       case _Fmt.rr:
         final g = parseRoundRobin(_matches);
@@ -681,7 +706,7 @@ class _DrawSheetState extends State<DrawSheet> {
         return Column(children: [
           _hintBar('Tap a cell to set the row pair’s result. Standings update live.'),
           const SizedBox(height: 12),
-          CrosstabBoard(group: g, onSet: _setWinner),
+          CrosstabBoard(group: g, onSet: _setWinner, standings: _serverStandings(g)),
         ]);
       case _Fmt.single:
         return _bracketView();
@@ -711,7 +736,12 @@ class _DrawSheetState extends State<DrawSheet> {
       _hintBar('Tap a fixture to set its winner — standings update live.'),
       const SizedBox(height: 12),
       for (var gi = 0; gi < groups.length; gi++) ...[
-        _GroupCard(group: groups[gi], tone: _tone(gi), advance: _advance, onCycle: _cycle),
+        _GroupCard(
+            group: groups[gi],
+            tone: _tone(gi),
+            advance: _advance,
+            standings: _serverStandings(groups[gi]),
+            onCycle: _cycle),
         if (gi < groups.length - 1) const SizedBox(height: 14),
       ],
     ]);
@@ -770,11 +800,19 @@ class _GroupCard extends StatelessWidget {
   final Color tone;
   final int advance;
   final void Function(DrawFixture) onCycle;
-  const _GroupCard({required this.group, required this.tone, required this.advance, required this.onCycle});
+
+  /// The server's standings for this group; null when they can't be read.
+  final List<StandingRow>? standings;
+  const _GroupCard(
+      {required this.group,
+      required this.tone,
+      required this.advance,
+      required this.standings,
+      required this.onCycle});
 
   @override
   Widget build(BuildContext context) {
-    final st = standingsOf(group);
+    final st = standings;
     return Container(
       decoration: BoxDecoration(
           color: AdminColors.surface,
@@ -801,7 +839,13 @@ class _GroupCard extends StatelessWidget {
               _hCell('P'), _hCell('W'), _hCell('PTS'),
             ]),
             const SizedBox(height: 4),
-            for (var i = 0; i < st.length; i++) _stRow(i, st[i]),
+            if (st == null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text('Standings are unavailable right now.', style: AdminText.small()),
+              )
+            else
+              for (var i = 0; i < st.length; i++) _stRow(i, st[i]),
           ]),
         ),
         Padding(
@@ -817,7 +861,7 @@ class _GroupCard extends StatelessWidget {
   Widget _hCell(String s) => SizedBox(width: 28, child: Center(child: Text(s, style: AdminText.kicker())));
 
   Widget _stRow(int i, StandingRow r) {
-    final qual = i < advance;
+    final qual = r.qualifies;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(children: [

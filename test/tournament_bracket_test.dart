@@ -87,6 +87,14 @@ void main() {
     });
   });
 
+  test('double elimination calls its last winners round the WB Final', () {
+    final b = buildWinners(freshDraw(2), doubleElim: true);
+    expect(b.rounds.map((r) => r.label), ['Semis', 'WB Final']);
+    expect(b.rounds.last.slots.single.code, 'WB Final');
+    expect(b.rounds.first.slots.first.next,
+        'Winner → WB Final · Loser → Losers bracket');
+  });
+
   group('byes', () {
     test('are not matches, and do not count towards progress', () {
       final a = entry('a');
@@ -266,52 +274,127 @@ void main() {
     });
   });
 
-  group('standings', () {
-    test('wins, then set difference, then head-to-head', () {
-      final a = entry('a'), b = entry('b'), c = entry('c');
+  group('standings come from the server', () {
+    Map<String, dynamic> line(String grp, int pos, String entry,
+            {int won = 0, bool qualifies = false}) =>
+        {
+          'grp': grp, 'pos': pos, 'entry_id': entry, 'played': 1, 'won': won,
+          'lost': 1 - won, 'sets_won': 2, 'sets_lost': 0, 'qualifies': qualifies,
+        };
+
+    test('in the order it sent, not recomputed', () {
       final group = buildGroups([
-        // a and b both end on one win; a's is the more emphatic.
-        row('Group A', 1, 0, a, c, winner: 'a', score: '6-0,6-0'),
-        row('Group A', 1, 1, b, a, winner: 'b', score: '6-4,4-6,10-8'),
-        row('Group A', 1, 2, c, b, winner: 'c', score: '6-4,6-4'),
+        row('Group A', 1, 0, entry('a'), entry('b'), winner: 'a'),
       ]).single;
-      final lines = standingsFor(group);
-      // Everyone is on one win; set difference decides.
-      expect(lines.map((l) => l.id), ['a', 'c', 'b']);
-      expect(lines.first.setsWon, 3);
-      expect(lines.first.setsLost, 2);
-      expect(lines.first.played, 2);
+      // The loser first, as a server tie-break could rank them. We don't argue.
+      final lines = standingsFromServer([
+        line('Group A', 2, 'a', won: 1),
+        line('Group A', 1, 'b', qualifies: true),
+      ], group);
+      expect(lines.map((l) => l.entry['id']), ['b', 'a']);
+      expect(lines.first.qualifies, isTrue);
+      expect(lines.last.qualifies, isFalse);
     });
 
-    test('head-to-head breaks a tie on wins and sets', () {
-      final a = entry('a'), b = entry('b');
-      final group = buildGroups([
-        row('Group A', 1, 0, a, b, winner: 'b'), // no score: sets stay level
-      ]).single;
-      expect(standingsFor(group).first.id, 'b');
-    });
-
-    test('pairs with no results are still listed', () {
+    test('only this group\'s lines', () {
       final group = buildGroups([
         row('Group A', 1, 0, entry('a'), entry('b')),
       ]).single;
-      expect(standingsFor(group).length, 2);
+      final lines = standingsFromServer([
+        line('Group A', 1, 'a'),
+        line('Group B', 1, 'x'),
+      ], group);
+      expect(lines.single.entry['id'], 'a');
     });
   });
 
-  test('advance count comes from the format, default 2', () {
-    expect(advanceCountFrom(null), 2);
-    expect(advanceCountFrom({'stages': []}), 2);
-    expect(
-        advanceCountFrom({
-          'stages': [
-            {
-              'kind': 'groups',
-              'cfg': {'groups': 4, 'advance': 3}
-            }
-          ]
-        }),
-        3);
+  group('grand final', () {
+    final a = entry('a'), b = entry('b');
+    final wbFinal = row('wb', 1, 0, a, b, winner: 'a');
+
+    test('none until the server opens one', () {
+      expect(buildGrandFinal([wbFinal]), isNull);
+    });
+
+    test('the winners final does not crown a double-elim champion', () {
+      expect(buildWinners([wbFinal], doubleElim: true).champion, isNull);
+    });
+
+    test('an event finished before grand finals keeps its champion', () {
+      expect(
+          buildWinners([wbFinal], doubleElim: true, finished: true).champion?['id'],
+          'a');
+    });
+
+    test('its winner is the champion, whoever won the winners final', () {
+      final rows = [wbFinal, row('gf', 2, 0, a, b, winner: 'b')];
+      expect(buildWinners(rows, doubleElim: true).champion?['id'], 'b');
+      expect(buildGrandFinal(rows)!.slots.single.code, 'Grand final');
+    });
+
+    test('players cannot report it: the organiser records it', () {
+      final me = entry('m', player: 'me');
+      final gf = buildGrandFinal([row('gf', 2, 0, me, b)])!.slots.single;
+      expect(gf.involves('me'), isTrue);
+      expect(gf.canAct('me'), isFalse);
+    });
+
+    test('it is a round the next-match logic can find', () {
+      final me = entry('m', player: 'me');
+      final gf = buildGrandFinal([row('gf', 2, 0, me, b)])!;
+      expect(nextMatchFor('me', [gf])?.side, 'gf');
+    });
+  });
+
+  group('losers round names', () {
+    test('the last round of a standard bracket is the LB Final', () {
+      final rows = [
+        for (var i = 0; i < 4; i++) row('wb', 1, i, entry('w$i'), entry('x$i')),
+        row('lb', 1, 0, entry('a'), entry('b')),
+        row('lb', 4, 0, entry('c'), entry('d')),
+      ];
+      final rounds = buildLosers(rows);
+      expect(rounds.map((r) => r.label), ['Round 1', 'LB Final']);
+      expect(rounds.last.slots.single.code, 'LB Final');
+      expect(rounds.last.slots.single.next, 'Loser is out');
+    });
+
+    test('an older event that ran past that keeps plain numbers', () {
+      final rows = [
+        row('wb', 1, 0, entry('w'), entry('x')),
+        row('wb', 1, 1, entry('y'), entry('z')),
+        row('lb', 5, 0, entry('a'), entry('b')),
+      ];
+      expect(buildLosers(rows).single.label, 'Round 5');
+    });
+  });
+
+  group('console date and time fields', () {
+    test('12-hour and 24-hour times', () {
+      expect(composeLocalDateTime('2026-11-06', '5:00 PM'),
+          DateTime(2026, 11, 6, 17));
+      expect(composeLocalDateTime('2026-11-06', '12:30 AM'),
+          DateTime(2026, 11, 6, 0, 30));
+      expect(composeLocalDateTime('2026-11-06', '12:30 PM'),
+          DateTime(2026, 11, 6, 12, 30));
+      expect(composeLocalDateTime('2026-11-06', '17:05'),
+          DateTime(2026, 11, 6, 17, 5));
+    });
+
+    test('blank or unreadable is no moment', () {
+      expect(composeLocalDateTime('', '5:00 PM'), isNull);
+      expect(composeLocalDateTime('2026-11-06', ''), isNull);
+      expect(composeLocalDateTime('soon', 'later'), isNull);
+    });
+
+    test('round trips, and blank when unset', () {
+      final at = DateTime(2026, 11, 6, 17, 5);
+      final s = splitLocalDateTime(at);
+      expect(s.date, '2026-11-06');
+      expect(s.time, '5:05 PM');
+      expect(composeLocalDateTime(s.date, s.time), at);
+      expect(splitLocalDateTime(null).date, '');
+    });
   });
 
   group('free-label rounds', () {

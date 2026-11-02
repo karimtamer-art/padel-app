@@ -36,6 +36,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
   Map<String, dynamic>? _t;
   Map<String, dynamic>? _formatSpec;
   Map<String, dynamic> _extras = const {};
+  List<Map<String, dynamic>>? _standings;
   List<Map<String, dynamic>> _bracket = [];
   bool _loading = true;
   bool _busy = false;
@@ -58,6 +59,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       TournamentService.fetchFormatSpec(widget.tournamentId),
       TournamentService.fetchTournamentExtras(widget.tournamentId),
       TournamentService.fetchMatchCourts(widget.tournamentId),
+      TournamentService.fetchStandings(widget.tournamentId),
     ]);
     final myGender = await _fetchMyGender();
     if (!mounted) return;
@@ -70,6 +72,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       ];
       _formatSpec = results[2] as Map<String, dynamic>?;
       _extras = results[3] as Map<String, dynamic>;
+      _standings = results[5] as List<Map<String, dynamic>>?;
       _myGender = myGender;
       _loading = false;
     });
@@ -965,6 +968,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
             uid: _uid,
             doubleElim: _doubleElim,
             formatSpec: _formatSpec,
+            standings: _standings,
+            finished: _derivedStatus == 'completed',
             drawAtLabel: _drawAtLabel,
             selection: _selection,
             onSelectionChanged: () => setState(() {}),
@@ -1229,7 +1234,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     final value = isGroupLabel(next.side)
         ? against
         : next.side == 'lb'
-            ? 'Losers ${next.roundLabel.replaceFirst('Round ', 'R')} · $against'
+            ? next.roundLabel == 'LB Final'
+                ? 'LB Final · $against'
+                : 'Losers ${next.roundLabel.replaceFirst('Round ', 'R')} · $against'
             : '${next.roundLabel} · $against';
 
     final submittedBy = next.row?['submitted_by'] as String?;
