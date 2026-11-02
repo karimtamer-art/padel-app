@@ -1552,12 +1552,16 @@ class _TournamentPaymentSheetState extends State<_TournamentPaymentSheet> {
       );
     }
 
-    return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      opt('both', 'Both of us', 'Cover the full pair entry.',
-          widget.feePerPlayer * 2),
-      opt('split', 'Just me', 'Your partner pays their share.',
-          widget.feePerPlayer),
-    ]);
+    // IntrinsicHeight is load-bearing: this sits in a scroll view, which gives no
+    // height limit, and `stretch` with no limit breaks layout for the whole sheet.
+    return IntrinsicHeight(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        opt('both', 'Both of us', 'Cover the full pair entry.',
+            widget.feePerPlayer * 2),
+        opt('split', 'Just me', 'Your partner pays their share.',
+            widget.feePerPlayer),
+      ]),
+    );
   }
 
   Widget _copyRow(String label, String value,
