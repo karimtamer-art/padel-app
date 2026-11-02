@@ -1745,9 +1745,11 @@ begin
                                  'action', 'pay_share'));
     else
       insert into public.notifications (user_id, type, title, body, data)
-      values (p_partner_id, 'tournament', 'You''re in — your entry is paid',
-              coalesce(v_my_name, 'Your partner') || ' paid your entry for ' ||
-                coalesce(v_tname, 'a tournament') || '. You''re registered together!',
+      values (p_partner_id, 'tournament',
+              coalesce(split_part(v_my_name, ' ', 1), 'Your partner') ||
+                ' registered you, payment under review',
+              'You''ll be confirmed for ' || coalesce(v_tname, 'the tournament') ||
+                ' once an organiser verifies the transfer.',
               jsonb_build_object('tournament_id', p_tournament_id, 'entry_id', v_eid));
     end if;
   end if;
