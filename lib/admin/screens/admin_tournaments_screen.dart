@@ -6,7 +6,8 @@ import '../widgets/admin_kit.dart';
 import 'draw_sheet.dart';
 import 'match_info_sheet.dart';
 import '../../backend/models/tournament_bracket.dart'
-    show composeLocalDateTime, isReadableScore, splitLocalDateTime;
+    show composeLocalDateTime, splitLocalDateTime;
+import '../../backend/models/draw_engine.dart' show isReadableScore;
 import 'tournament_entries_sheet.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/community_service.dart';

@@ -238,3 +238,13 @@ DrawPair? pairOf(dynamic e) {
   ].join(' / ');
   return DrawPair(id, name.isEmpty ? 'Pair' : name);
 }
+
+/// Empty (the score is optional) or readable as sets, as in the player flow's
+/// "6-4, 6-3". Anything else would count as no sets at all in the server's standings,
+/// without saying so.
+bool isReadableScore(String? score) {
+  final s = score?.trim() ?? '';
+  if (s.isEmpty) return true;
+  final set = RegExp(r'(\d+)\s*[-–—:]\s*(\d+)');
+  return set.hasMatch(s) && !s.replaceAll(set, '').contains(RegExp(r'\d'));
+}

@@ -6,7 +6,6 @@ import 'draw_boards.dart';
 import 'match_info_sheet.dart';
 import '../../backend/models/draw_engine.dart';
 import '../../backend/models/format_model.dart';
-import '../../backend/models/tournament_bracket.dart' show isReadableScore;
 
 // Configurable "Draw & results" for Groups → Knockout, Single elimination and
 // Round robin. Setup: configure + Generate (server builds real matches). Draw:
@@ -232,73 +231,17 @@ class _DrawSheetState extends State<DrawSheet> {
     final a = pairOf(row?['e1']), b = pairOf(row?['e2']);
     if (row == null || a == null || b == null) return;
     final current = row['winner_entry'] as String?;
-    var pick = suggested ?? current;
-    final scoreC = TextEditingController(text: (row['score'] as String?) ?? '');
-    String? problem;
-
-    final action = await showDialog<String>(
+    final result = await showDialog<({String? winner, String? score})>(
       context: context,
-      builder: (c) => StatefulBuilder(builder: (c, setD) {
-        Widget side(DrawPair p) => InkWell(
-              onTap: () => setD(() => pick = p.entryId),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Row(children: [
-                  Icon(
-                      pick == p.entryId
-                          ? Icons.radio_button_checked_rounded
-                          : Icons.radio_button_off_rounded,
-                      size: 20,
-                      color: pick == p.entryId ? AdminColors.primary : AdminColors.inkFaint),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text(p.name, style: AdminText.sans(13.5, FontWeight.w700, AdminColors.ink))),
-                ]),
-              ),
-            );
-        return AlertDialog(
-          backgroundColor: AdminColors.surface,
-          title: Text('Who won?', style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            side(a),
-            side(b),
-            const SizedBox(height: 8),
-            TextField(
-              controller: scoreC,
-              style: AdminText.body(),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Score (optional), e.g. 6-4, 6-3',
-                errorText: problem,
-              ),
-            ),
-          ]),
-          actions: [
-            if (current != null)
-              TextButton(onPressed: () => Navigator.pop(c, 'clear'), child: const Text('Clear result')),
-            TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
-            TextButton(
-              onPressed: () {
-                if (pick == null) {
-                  setD(() => problem = 'Pick the winning pair.');
-                } else if (!isReadableScore(scoreC.text)) {
-                  setD(() => problem = 'Write it as sets, e.g. 6-4, 6-3');
-                } else {
-                  Navigator.pop(c, 'save');
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      }),
+      builder: (_) => _ResultDialog(
+        a: a,
+        b: b,
+        current: current,
+        pick: suggested ?? current,
+        score: (row!['score'] as String?) ?? '',
+      ),
     );
-    final score = scoreC.text.trim();
-    scoreC.dispose();
-    if (action == 'clear') {
-      await _saveResult(matchId, null, null);
-    } else if (action == 'save') {
-      await _saveResult(matchId, pick, score.isEmpty ? null : score);
-    }
+    if (result != null) await _saveResult(matchId, result.winner, result.score);
   }
 
   Future<void> _saveResult(String matchId, String? winnerEntry, String? score) async {
@@ -869,6 +812,95 @@ class _DrawSheetState extends State<DrawSheet> {
       child: btn,
     );
   }
+}
+
+// ── result entry ─────────────────────────────────────────────────────────────
+/// Pops with the result to save (a null winner clears it), or null if cancelled.
+/// Its own widget so the score field's controller lives exactly as long as the field,
+/// which is longer than the pop: the closing animation still draws it.
+class _ResultDialog extends StatefulWidget {
+  final DrawPair a, b;
+  final String? current, pick;
+  final String score;
+  const _ResultDialog(
+      {required this.a,
+      required this.b,
+      required this.current,
+      required this.pick,
+      required this.score});
+
+  @override
+  State<_ResultDialog> createState() => _ResultDialogState();
+}
+
+class _ResultDialogState extends State<_ResultDialog> {
+  late final _score = TextEditingController(text: widget.score);
+  late String? _pick = widget.pick;
+  String? _problem;
+
+  @override
+  void dispose() {
+    _score.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (_pick == null) {
+      setState(() => _problem = 'Pick the winning pair.');
+    } else if (!isReadableScore(_score.text)) {
+      setState(() => _problem = 'Write it as sets, e.g. 6-4, 6-3');
+    } else {
+      final score = _score.text.trim();
+      Navigator.pop(context, (winner: _pick, score: score.isEmpty ? null : score));
+    }
+  }
+
+  Widget _side(DrawPair p) => InkWell(
+        onTap: () => setState(() => _pick = p.entryId),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(children: [
+            Icon(
+                _pick == p.entryId
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_off_rounded,
+                size: 20,
+                color: _pick == p.entryId ? AdminColors.primary : AdminColors.inkFaint),
+            const SizedBox(width: 10),
+            Expanded(child: Text(p.name, style: AdminText.sans(13.5, FontWeight.w700, AdminColors.ink))),
+          ]),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        backgroundColor: AdminColors.surface,
+        title: Text('Who won?', style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          _side(widget.a),
+          _side(widget.b),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _score,
+            style: AdminText.body(),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Score (optional), e.g. 6-4, 6-3',
+              errorText: _problem,
+            ),
+          ),
+        ]),
+        actions: [
+          if (widget.current != null)
+            TextButton(
+              onPressed: () => Navigator.pop(
+                  context, (winner: null as String?, score: null as String?)),
+              child: const Text('Clear result'),
+            ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: _save, child: const Text('Save')),
+        ],
+      );
 }
 
 // ── group standings card ─────────────────────────────────────────────────────

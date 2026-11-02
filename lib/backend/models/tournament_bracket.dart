@@ -74,12 +74,6 @@ List<SetScore>? orientedSets(String? score, {required bool? entry1Won}) {
   ];
 }
 
-/// Empty (the score is optional) or readable as sets, the same as the player flow's
-/// "6-4, 6-3". Anything else would count as no sets at all in the standings, without
-/// saying so.
-bool isReadableScore(String? score) =>
-    (score?.trim() ?? '').isEmpty || _parseSets(score) != null;
-
 // ── Slots and rounds ────────────────────────────────────────────────────────
 
 enum SlotState { done, bye, ready, live, pending, disputed, waiting }
