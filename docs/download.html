@@ -118,6 +118,7 @@
   }
   footer a { color: var(--muted); }
   footer a:hover { color: var(--ink); }
+  .opening { margin: 18px 0 0; font-size: 15px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -126,6 +127,7 @@
   <p class="kicker">PADEL RIVALS</p>
   <h1>Padel tournaments, ranked.</h1>
   <p class="lead">Pair up, win the bracket and climb the season ladder. Get the app, then join the group for tournament news.</p>
+  <p class="opening" id="opening" hidden></p>
 
   <div class="buttons" id="stores">
     <a class="btn" id="ios" href="https://apps.apple.com/app/id6786002098" rel="noopener">
@@ -152,8 +154,11 @@
   </footer>
 </main>
 <script>
-  // Put the visitor's own store first and highlight it. Without JS both
-  // buttons still show, in the default order.
+  // Put the visitor's own store first and highlight it, then send a phone
+  // straight to its store. replace() keeps this page out of history, so Back
+  // from the store doesn't bounce them here again. ?stay shows the page
+  // without redirecting (for sharing or checking it). Desktop and no-JS
+  // visitors just see both buttons.
   (function () {
     var ua = navigator.userAgent || '';
     var isIOS = /iPhone|iPad|iPod/i.test(ua) ||
@@ -168,6 +173,12 @@
     } else if (isIOS) {
       ios.classList.add('primary');
     }
+    var store = isAndroid ? android : isIOS ? ios : null;
+    if (!store || /[?&]stay\b/.test(location.search)) return;
+    var opening = document.getElementById('opening');
+    opening.textContent = 'Opening ' + (isAndroid ? 'Google Play' : 'the App Store') + '…';
+    opening.hidden = false;
+    setTimeout(function () { location.replace(store.href); }, 400);
   })();
 </script>
 </body>

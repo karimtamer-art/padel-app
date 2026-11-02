@@ -552,13 +552,16 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     through the existing admin rating tools (rule 2).
   - Player entry is a row under the Home hero, hidden until a center is live
     (`AssessmentService.overview()` returns empty on a DB without the delta).
-- **Web registration on the homepage** (`docs/home.js`, `web_*` RPCs,
+- **Web registration at `/register`** (`docs/register/index.html`, `docs/home.js`,
+  `web_*` RPCs,
   `admin_web_to_draw`, WhatsApp confirm) — full notes in the
   **`web-registration` skill** (`.claude/skills/web-registration/SKILL.md`).
   Never-break lines: the site is `anon` and anon touches NO table — only the
   SECURITY DEFINER `web_*` RPCs plus an insert-only upload to the private
   `web-payment-proofs` bucket; `web_registrations` is NOT `tournament_entries`;
   payment is InstaPay only (rule 8).
+  `docs/index.html` is the link-in-bio page; the registration page's asset paths are
+  root-relative (`/home.css`, `/home.js`, `/logo.jpg`), so keep them that way.
 - **Domain, email stack (Cloudflare + Resend) and legal site** — full notes in
   `docs/CLAUDE.md`. Never-break lines: DNS lives at Cloudflare, not GoDaddy;
   never add a second SPF or DMARC record; Cloudflare Email Address Obfuscation
