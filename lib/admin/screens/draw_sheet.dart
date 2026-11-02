@@ -212,10 +212,35 @@ class _DrawSheetState extends State<DrawSheet> {
     adminToast(context, 'Draw generated');
   }
 
-  Future<void> _setWinner(String matchId, String? winnerEntry) async {
+  /// Who won and, optionally, the score: the same "6-4, 6-3" the player flow takes.
+  /// A score is what lets set difference separate pairs level on wins. [suggested]
+  /// is the pair that was tapped.
+  Future<void> _setWinner(String matchId, String? suggested) async {
+    if (_busy) return;
+    Map<String, dynamic>? row;
+    for (final m in _matches) {
+      if (m['id'] == matchId) row = m;
+    }
+    final a = pairOf(row?['e1']), b = pairOf(row?['e2']);
+    if (row == null || a == null || b == null) return;
+    final current = row['winner_entry'] as String?;
+    final result = await showDialog<({String? winner, String? score})>(
+      context: context,
+      builder: (_) => _ResultDialog(
+        a: a,
+        b: b,
+        current: current,
+        pick: suggested ?? current,
+        score: (row!['score'] as String?) ?? '',
+      ),
+    );
+    if (result != null) await _saveResult(matchId, result.winner, result.score);
+  }
+
+  Future<void> _saveResult(String matchId, String? winnerEntry, String? score) async {
     if (_busy) return;
     setState(() => _busy = true);
-    final err = await AdminService.setMatchWinner(matchId, winnerEntry);
+    final err = await AdminService.setMatchWinner(matchId, winnerEntry, score: score);
     if (!mounted) return;
     if (err != null) adminToast(context, err, ok: false);
     await _load();
@@ -223,12 +248,7 @@ class _DrawSheetState extends State<DrawSheet> {
   }
 
   void _cycle(DrawFixture f) {
-    final next = f.winnerId == f.a.entryId
-        ? f.b.entryId
-        : f.winnerId == f.b.entryId
-            ? null
-            : f.a.entryId;
-    _setWinner(f.id, next);
+    _setWinner(f.id, f.winnerId);
   }
 
   Future<void> _advanceDraw() async {
@@ -679,7 +699,7 @@ class _DrawSheetState extends State<DrawSheet> {
         final g = parseRoundRobin(_matches);
         if (g == null) return _emptyNote('No round-robin matches — regenerate the draw.');
         return Column(children: [
-          _hintBar('Tap a cell to set the row pair’s result. Standings update live.'),
+          _hintBar('Tap a cell to enter the result and score. Standings update live.'),
           const SizedBox(height: 12),
           CrosstabBoard(group: g, onSet: _setWinner),
         ]);
@@ -698,7 +718,7 @@ class _DrawSheetState extends State<DrawSheet> {
           : 'No bracket yet — regenerate the draw.');
     }
     return Column(children: [
-      _hintBar('Tap the winning pair to advance them. Advance the draw for the next round.'),
+      _hintBar('Tap a pair to enter the result and score. Advance the draw for the next round.'),
       const SizedBox(height: 14),
       BracketBoard(data: bd, onPick: _setWinner),
     ]);
@@ -708,7 +728,7 @@ class _DrawSheetState extends State<DrawSheet> {
     final groups = parseGroups(_matches);
     if (groups.isEmpty) return _emptyNote('No group matches yet — regenerate the draw.');
     return Column(children: [
-      _hintBar('Tap a fixture to set its winner — standings update live.'),
+      _hintBar('Tap a fixture to enter its result and score. Standings update live.'),
       const SizedBox(height: 12),
       for (var gi = 0; gi < groups.length; gi++) ...[
         _GroupCard(group: groups[gi], tone: _tone(gi), advance: _advance, onCycle: _cycle),
@@ -762,6 +782,95 @@ class _DrawSheetState extends State<DrawSheet> {
       child: btn,
     );
   }
+}
+
+// ── result entry ─────────────────────────────────────────────────────────────
+/// Pops with the result to save (a null winner clears it), or null if cancelled.
+/// Its own widget so the score field's controller lives exactly as long as the field,
+/// which is longer than the pop: the closing animation still draws it.
+class _ResultDialog extends StatefulWidget {
+  final DrawPair a, b;
+  final String? current, pick;
+  final String score;
+  const _ResultDialog(
+      {required this.a,
+      required this.b,
+      required this.current,
+      required this.pick,
+      required this.score});
+
+  @override
+  State<_ResultDialog> createState() => _ResultDialogState();
+}
+
+class _ResultDialogState extends State<_ResultDialog> {
+  late final _score = TextEditingController(text: widget.score);
+  late String? _pick = widget.pick;
+  String? _problem;
+
+  @override
+  void dispose() {
+    _score.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (_pick == null) {
+      setState(() => _problem = 'Pick the winning pair.');
+    } else if (!isReadableScore(_score.text)) {
+      setState(() => _problem = 'Write it as sets, e.g. 6-4, 6-3');
+    } else {
+      final score = _score.text.trim();
+      Navigator.pop(context, (winner: _pick, score: score.isEmpty ? null : score));
+    }
+  }
+
+  Widget _side(DrawPair p) => InkWell(
+        onTap: () => setState(() => _pick = p.entryId),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(children: [
+            Icon(
+                _pick == p.entryId
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_off_rounded,
+                size: 20,
+                color: _pick == p.entryId ? AdminColors.primary : AdminColors.inkFaint),
+            const SizedBox(width: 10),
+            Expanded(child: Text(p.name, style: AdminText.sans(13.5, FontWeight.w700, AdminColors.ink))),
+          ]),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        backgroundColor: AdminColors.surface,
+        title: Text('Who won?', style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          _side(widget.a),
+          _side(widget.b),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _score,
+            style: AdminText.body(),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Score (optional), e.g. 6-4, 6-3',
+              errorText: _problem,
+            ),
+          ),
+        ]),
+        actions: [
+          if (widget.current != null)
+            TextButton(
+              onPressed: () => Navigator.pop(
+                  context, (winner: null as String?, score: null as String?)),
+              child: const Text('Clear result'),
+            ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: _save, child: const Text('Save')),
+        ],
+      );
 }
 
 // ── group standings card ─────────────────────────────────────────────────────
