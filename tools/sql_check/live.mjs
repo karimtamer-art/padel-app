@@ -21,6 +21,7 @@ const applied = [
   `${ch}/2026-11-02_entries_no_self_write.sql`,
   `${ch}/2026-11-02_season_points_free_labels.sql`,
   `${ch}/2026-11-02_payment_status.sql`,
+  `${ch}/2026-11-02_season_overview_shape.sql`,
 ];
 for (const f of applied) {
   const rows = (await db.exec(read(f))).at(-1).rows;
@@ -51,7 +52,7 @@ const asAdmin = async (sql, params) => {
 
 // A live season, made the way the console makes one.
 const s = (await asAdmin(`select public.admin_create_season('Season 1', '2026-01-01', '2026-12-31', null, 'EG') r`))[0].r;
-await db.exec(`update public.seasons set status = 'live'`);
+await db.exec(`update public.seasons set status = 'live', published = true`);
 console.log('season ready:', JSON.stringify(s)?.slice(0, 60));
 
 const event = async (format, pairs, spec) => {
@@ -139,6 +140,18 @@ const open = async (t) => (await db.query(`select id, entry1, entry2, bracket fr
   assert.match(f, /rated/, f);
   assert.equal((await who(t, 'tour_win')).length, 1);
   console.log('console knockout: title awarded');
+}
+
+// ── The season screen: what the app parses ────────────────────────────────
+{
+  const o = (await asAdmin('select public.season_overview() o'))[0].o;
+  assert.ok(o, 'a live season answers');
+  assert.equal(typeof o.season, 'object', 'nested, as SeasonOverview.fromJson reads it');
+  assert.ok(o.season.id && o.season.name, 'season fields');
+  assert.ok(Array.isArray(o.board) && o.board.length > 0, 'board has the players who scored');
+  assert.ok(Array.isArray(o.rules) && o.rules.length > 0, 'rules');
+  assert.ok(Array.isArray(o.brackets), 'brackets');
+  console.log(`season_overview: nested season, ${o.board.length} on the board, ${o.rules.length} rules`);
 }
 
 console.log('ALL PASSED');
