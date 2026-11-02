@@ -659,6 +659,19 @@ class AdminService {
     }
   }
 
+  /// The server's group standings, the ranking advance_stage promotes on. Null when
+  /// they can't be read; the console then hides the table rather than guess.
+  static Future<List<Map<String, dynamic>>?> fetchStandings(
+      String tournamentId) async {
+    try {
+      final rows = await _db.rpc('tournament_standings',
+          params: {'p_tournament_id': tournamentId});
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<void> deleteTournament(String id) async {
     await _db.from('tournaments').delete().eq('id', id);
   }

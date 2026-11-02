@@ -222,7 +222,11 @@ class _ChampionNode extends StatelessWidget {
 class CrosstabBoard extends StatelessWidget {
   final DrawGroup group;
   final void Function(String matchId, String? winnerEntry) onSet;
-  const CrosstabBoard({super.key, required this.group, required this.onSet});
+
+  /// The server's standings for this group; null when they can't be read.
+  final List<StandingRow>? standings;
+  const CrosstabBoard(
+      {super.key, required this.group, required this.onSet, required this.standings});
 
   @override
   Widget build(BuildContext context) {
@@ -233,7 +237,7 @@ class CrosstabBoard extends StatelessWidget {
     for (final f in group.fixtures) {
       fx[_key(f.a.entryId, f.b.entryId)] = f;
     }
-    final st = standingsOf(group);
+    final st = standings;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       SingleChildScrollView(
@@ -245,6 +249,9 @@ class CrosstabBoard extends StatelessWidget {
       const SizedBox(height: 18),
       Text('STANDINGS', style: AdminText.kicker()),
       const SizedBox(height: 8),
+      if (st == null)
+        Text('Standings are unavailable right now.', style: AdminText.small())
+      else
       Container(
         decoration: BoxDecoration(
             color: AdminColors.surface,

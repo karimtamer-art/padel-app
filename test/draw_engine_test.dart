@@ -37,51 +37,26 @@ void main() {
     });
   });
 
-  group('standingsOf', () {
-    test('ranks by wins, then win-diff, and counts points as wins*2', () {
-      // 3-pair group: a beats b and c; b beats c. a=2w, b=1w, c=0w.
-      final rows = [
-        row('m1', 'Group A', 'a', 'b', winner: 'a'),
-        row('m2', 'Group A', 'a', 'c', winner: 'a'),
-        row('m3', 'Group A', 'b', 'c', winner: 'b'),
-      ];
-      final g = parseGroups(rows).single;
-      expect(g.complete, isTrue);
-      final st = standingsOf(g);
-      expect(st.map((r) => r.pair.entryId).toList(), ['a', 'b', 'c']);
-      expect(st[0].won, 2);
-      expect(st[0].points, 4);
-      expect(st[0].played, 2);
-      expect(st[1].won, 1);
-      expect(st[2].won, 0);
-      expect(st[2].lost, 2);
+  group('standingsFromServer', () {
+    const a = DrawPair('a', 'A'), b = DrawPair('b', 'B');
+    const g = DrawGroup(label: 'Group A', pairs: [a, b], fixtures: []);
+    Map<String, dynamic> line(String grp, int pos, String entry, {bool q = false}) => {
+          'grp': grp, 'pos': pos, 'entry_id': entry, 'played': 1, 'won': 1,
+          'lost': 0, 'sets_won': 2, 'sets_lost': 1, 'qualifies': q,
+        };
+
+    test('keeps the server order and its qualifiers', () {
+      final st = standingsFromServer(
+          [line('Group A', 2, 'a'), line('Group A', 1, 'b', q: true)], g);
+      expect(st.map((r) => r.pair.entryId), ['b', 'a']);
+      expect(st.first.qualifies, isTrue);
+      expect(st.first.setsWon, 2);
     });
 
-    test('unplayed fixtures do not count; group not complete', () {
-      final rows = [
-        row('m1', 'Group A', 'a', 'b', winner: 'a'),
-        row('m2', 'Group A', 'a', 'c'), // unplayed
-        row('m3', 'Group A', 'b', 'c'), // unplayed
-      ];
-      final g = parseGroups(rows).single;
-      expect(g.complete, isFalse);
-      expect(g.playedCount, 1);
-      final st = standingsOf(g);
-      expect(st.first.pair.entryId, 'a');
-      expect(st.first.won, 1);
-      expect(st.first.played, 1);
-    });
-
-    test('win-diff breaks a wins tie', () {
-      // a and d both 1 win, but a has no losses recorded vs d's loss → a first.
-      final rows = [
-        row('m1', 'Group A', 'a', 'b', winner: 'a'), // a +1
-        row('m2', 'Group A', 'd', 'a', winner: 'd'), // d +1, a -1
-        row('m3', 'Group A', 'd', 'b', winner: 'd'), // d +1 → d has 2 wins
-      ];
-      final g = parseGroups(rows).single;
-      final st = standingsOf(g);
-      expect(st.first.pair.entryId, 'd'); // 2 wins tops
+    test('ignores other groups and pairs it does not know', () {
+      final st = standingsFromServer(
+          [line('Group B', 1, 'a'), line('Group A', 1, 'zzz')], g);
+      expect(st, isEmpty);
     });
   });
 
@@ -100,8 +75,6 @@ void main() {
       final g = parseRoundRobin(rows)!;
       expect(g.pairs.map((p) => p.entryId).toSet(), {'a', 'b', 'c'});
       expect(g.fixtures.length, 3);
-      final st = standingsOf(g);
-      expect(st.first.pair.entryId, 'a');
     });
 
     test('null when there are no round-robin rows', () {

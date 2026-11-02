@@ -4,9 +4,8 @@
 // unit-testable. Pass 1 covers the Groups → Knockout group stage; the bracket /
 // round-robin views land in Pass 2.
 //
-// Ranking is wins-first to match the server's qualifier logic (advance_stage
-// takes top-N per group by win count), so the highlighted qualifiers on screen
-// are exactly who the backend advances.
+// Nothing here ranks pairs. The server does (tournament_standings), with the same
+// ranking advance_stage promotes on, so a highlighted qualifier is one who advances.
 // ============================================================================
 
 /// A registered pair as it appears in the draw ("A. Hassan / R. Samir").
@@ -47,51 +46,35 @@ class DrawGroup {
   int get playedCount => fixtures.where((f) => f.decided).length;
 }
 
-/// A live standings line for one pair in a group.
+/// One line of a group's standings, as the server ranked it.
 class StandingRow {
   final DrawPair pair;
-  final int played, won, lost;
-  const StandingRow(this.pair, this.played, this.won, this.lost);
+  final int played, won, lost, setsWon, setsLost;
+  final bool qualifies;
+  const StandingRow(this.pair, this.played, this.won, this.lost,
+      {this.setsWon = 0, this.setsLost = 0, this.qualifies = false});
   int get points => won * 2;
-  int get diff => won - lost;
 }
 
-/// Standings for a group, ranked wins → win-diff → name. Wins-first mirrors the
-/// server (advance_stage), so "top N advance" highlights the real qualifiers.
-List<StandingRow> standingsOf(DrawGroup g) {
-  final played = <String, int>{};
-  final won = <String, int>{};
-  final lost = <String, int>{};
-  for (final p in g.pairs) {
-    played[p.entryId] = 0;
-    won[p.entryId] = 0;
-    lost[p.entryId] = 0;
-  }
-  for (final f in g.fixtures) {
-    final w = f.winnerId;
-    if (w == null) continue;
-    played[f.a.entryId] = (played[f.a.entryId] ?? 0) + 1;
-    played[f.b.entryId] = (played[f.b.entryId] ?? 0) + 1;
-    if (w == f.a.entryId) {
-      won[f.a.entryId] = (won[f.a.entryId] ?? 0) + 1;
-      lost[f.b.entryId] = (lost[f.b.entryId] ?? 0) + 1;
-    } else if (w == f.b.entryId) {
-      won[f.b.entryId] = (won[f.b.entryId] ?? 0) + 1;
-      lost[f.a.entryId] = (lost[f.a.entryId] ?? 0) + 1;
-    }
-  }
-  final rows = [
-    for (final p in g.pairs)
-      StandingRow(p, played[p.entryId]!, won[p.entryId]!, lost[p.entryId]!)
+/// The lines of `tournament_standings` that belong to [g], in the server's order.
+List<StandingRow> standingsFromServer(
+    List<Map<String, dynamic>> rows, DrawGroup g) {
+  final pairs = {for (final p in g.pairs) p.entryId: p};
+  final own = rows.where((r) => r['grp'] == g.label).toList()
+    ..sort((a, b) => (a['pos'] as num).compareTo(b['pos'] as num));
+  return [
+    for (final r in own)
+      if (pairs[r['entry_id']] case final pair?)
+        StandingRow(
+          pair,
+          (r['played'] as num).toInt(),
+          (r['won'] as num).toInt(),
+          (r['lost'] as num).toInt(),
+          setsWon: (r['sets_won'] as num?)?.toInt() ?? 0,
+          setsLost: (r['sets_lost'] as num?)?.toInt() ?? 0,
+          qualifies: r['qualifies'] == true,
+        ),
   ];
-  rows.sort((x, y) {
-    final w = y.won.compareTo(x.won);
-    if (w != 0) return w;
-    final d = y.diff.compareTo(x.diff);
-    if (d != 0) return d;
-    return x.pair.name.toLowerCase().compareTo(y.pair.name.toLowerCase());
-  });
-  return rows;
 }
 
 /// Parse fetchBracket rows into groups. Only rows whose `bracket` label starts
@@ -134,7 +117,7 @@ bool hasKnockout(List<Map<String, dynamic>> matchRows) =>
     matchRows.any((m) => !((m['bracket'] as String?) ?? '').startsWith('Group '));
 
 /// Parse the round-robin matches (bracket 'Round robin') into a single group
-/// so [standingsOf] can rank the whole field. null if there are none.
+/// so its fixtures can be shown together. null if there are none.
 DrawGroup? parseRoundRobin(List<Map<String, dynamic>> matchRows) {
   final rr = matchRows
       .where((m) => ((m['bracket'] as String?) ?? '') == 'Round robin')
