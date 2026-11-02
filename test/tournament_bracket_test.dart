@@ -176,6 +176,15 @@ void main() {
       expect(orientedSets('6-4', entry1Won: null), [(a: 6, b: 4)]);
     });
 
+    test('the console accepts blank or sets, and nothing else', () {
+      expect(isReadableScore(''), isTrue);
+      expect(isReadableScore(null), isTrue);
+      expect(isReadableScore('6-4, 6-3'), isTrue);
+      expect(isReadableScore('6-4,3-6,10-8'), isTrue);
+      expect(isReadableScore('6-4 6'), isFalse);
+      expect(isReadableScore('walkover'), isFalse);
+    });
+
     test('anything else is not sets', () {
       expect(orientedSets('walkover', entry1Won: true), isNull);
       expect(orientedSets('6-4 6', entry1Won: true), isNull);

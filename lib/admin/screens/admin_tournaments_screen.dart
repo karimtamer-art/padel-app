@@ -6,7 +6,7 @@ import '../widgets/admin_kit.dart';
 import 'draw_sheet.dart';
 import 'match_info_sheet.dart';
 import '../../backend/models/tournament_bracket.dart'
-    show composeLocalDateTime, splitLocalDateTime;
+    show composeLocalDateTime, isReadableScore, splitLocalDateTime;
 import 'tournament_entries_sheet.dart';
 import 'package:padel_clay/backend/services/tournament_service.dart';
 import 'package:padel_clay/backend/services/community_service.dart';
@@ -1937,6 +1937,10 @@ class _BracketManagerState extends State<_BracketManager> {
       ),
     );
     if (winner == null || !mounted) return;
+    if (!isReadableScore(scoreC.text)) {
+      adminToast(context, 'Write the score as sets, e.g. 6-4, 6-3', ok: false);
+      return;
+    }
     setState(() => _busy = true);
     final err = await AdminService.recordBracketWinner(
         m['id'] as String, winner,

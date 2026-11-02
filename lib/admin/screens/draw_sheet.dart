@@ -6,6 +6,7 @@ import 'draw_boards.dart';
 import 'match_info_sheet.dart';
 import '../../backend/models/draw_engine.dart';
 import '../../backend/models/format_model.dart';
+import '../../backend/models/tournament_bracket.dart' show isReadableScore;
 
 // Configurable "Draw & results" for Groups → Knockout, Single elimination and
 // Round robin. Setup: configure + Generate (server builds real matches). Draw:
@@ -219,10 +220,91 @@ class _DrawSheetState extends State<DrawSheet> {
     adminToast(context, 'Draw generated');
   }
 
-  Future<void> _setWinner(String matchId, String? winnerEntry) async {
+  /// Who won and, optionally, the score: the same "6-4, 6-3" the player flow takes.
+  /// A score is what lets set difference separate pairs level on wins. [suggested]
+  /// is the pair that was tapped.
+  Future<void> _setWinner(String matchId, String? suggested) async {
+    if (_busy) return;
+    Map<String, dynamic>? row;
+    for (final m in _matches) {
+      if (m['id'] == matchId) row = m;
+    }
+    final a = pairOf(row?['e1']), b = pairOf(row?['e2']);
+    if (row == null || a == null || b == null) return;
+    final current = row['winner_entry'] as String?;
+    var pick = suggested ?? current;
+    final scoreC = TextEditingController(text: (row['score'] as String?) ?? '');
+    String? problem;
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (c) => StatefulBuilder(builder: (c, setD) {
+        Widget side(DrawPair p) => InkWell(
+              onTap: () => setD(() => pick = p.entryId),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(children: [
+                  Icon(
+                      pick == p.entryId
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_off_rounded,
+                      size: 20,
+                      color: pick == p.entryId ? AdminColors.primary : AdminColors.inkFaint),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(p.name, style: AdminText.sans(13.5, FontWeight.w700, AdminColors.ink))),
+                ]),
+              ),
+            );
+        return AlertDialog(
+          backgroundColor: AdminColors.surface,
+          title: Text('Who won?', style: AdminText.sans(16, FontWeight.w800, AdminColors.ink)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            side(a),
+            side(b),
+            const SizedBox(height: 8),
+            TextField(
+              controller: scoreC,
+              style: AdminText.body(),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Score (optional), e.g. 6-4, 6-3',
+                errorText: problem,
+              ),
+            ),
+          ]),
+          actions: [
+            if (current != null)
+              TextButton(onPressed: () => Navigator.pop(c, 'clear'), child: const Text('Clear result')),
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () {
+                if (pick == null) {
+                  setD(() => problem = 'Pick the winning pair.');
+                } else if (!isReadableScore(scoreC.text)) {
+                  setD(() => problem = 'Write it as sets, e.g. 6-4, 6-3');
+                } else {
+                  Navigator.pop(c, 'save');
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      }),
+    );
+    final score = scoreC.text.trim();
+    scoreC.dispose();
+    if (action == 'clear') {
+      await _saveResult(matchId, null, null);
+    } else if (action == 'save') {
+      await _saveResult(matchId, pick, score.isEmpty ? null : score);
+    }
+  }
+
+  Future<void> _saveResult(String matchId, String? winnerEntry, String? score) async {
     if (_busy) return;
     setState(() => _busy = true);
-    final err = await AdminService.setMatchWinner(matchId, winnerEntry);
+    final err = await AdminService.setMatchWinner(matchId, winnerEntry, score: score);
     if (!mounted) return;
     if (err != null) adminToast(context, err, ok: false);
     await _load();
@@ -230,12 +312,7 @@ class _DrawSheetState extends State<DrawSheet> {
   }
 
   void _cycle(DrawFixture f) {
-    final next = f.winnerId == f.a.entryId
-        ? f.b.entryId
-        : f.winnerId == f.b.entryId
-            ? null
-            : f.a.entryId;
-    _setWinner(f.id, next);
+    _setWinner(f.id, f.winnerId);
   }
 
   Future<void> _advanceDraw() async {
@@ -704,7 +781,7 @@ class _DrawSheetState extends State<DrawSheet> {
         final g = parseRoundRobin(_matches);
         if (g == null) return _emptyNote('No round-robin matches — regenerate the draw.');
         return Column(children: [
-          _hintBar('Tap a cell to set the row pair’s result. Standings update live.'),
+          _hintBar('Tap a cell to enter the result and score. Standings update live.'),
           const SizedBox(height: 12),
           CrosstabBoard(group: g, onSet: _setWinner, standings: _serverStandings(g)),
         ]);
@@ -723,7 +800,7 @@ class _DrawSheetState extends State<DrawSheet> {
           : 'No bracket yet — regenerate the draw.');
     }
     return Column(children: [
-      _hintBar('Tap the winning pair to advance them. Advance the draw for the next round.'),
+      _hintBar('Tap a pair to enter the result and score. Advance the draw for the next round.'),
       const SizedBox(height: 14),
       BracketBoard(data: bd, onPick: _setWinner),
     ]);
@@ -733,7 +810,7 @@ class _DrawSheetState extends State<DrawSheet> {
     final groups = parseGroups(_matches);
     if (groups.isEmpty) return _emptyNote('No group matches yet — regenerate the draw.');
     return Column(children: [
-      _hintBar('Tap a fixture to set its winner — standings update live.'),
+      _hintBar('Tap a fixture to enter its result and score. Standings update live.'),
       const SizedBox(height: 12),
       for (var gi = 0; gi < groups.length; gi++) ...[
         _GroupCard(
@@ -837,6 +914,7 @@ class _GroupCard extends StatelessWidget {
               const SizedBox(width: 22),
               Expanded(child: Text('PAIR', style: AdminText.kicker())),
               _hCell('P'), _hCell('W'), _hCell('PTS'),
+              SizedBox(width: 38, child: Center(child: Text('SETS', style: AdminText.kicker()))),
             ]),
             const SizedBox(height: 4),
             if (st == null)
@@ -888,6 +966,7 @@ class _GroupCard extends StatelessWidget {
         SizedBox(width: 28, child: Center(child: Text('${r.played}', style: AdminText.mono(12, FontWeight.w600, AdminColors.inkSoft)))),
         SizedBox(width: 28, child: Center(child: Text('${r.won}', style: AdminText.mono(12, FontWeight.w700, AdminColors.ink)))),
         SizedBox(width: 28, child: Center(child: Text('${r.points}', style: AdminText.mono(12, FontWeight.w800, AdminColors.ink)))),
+        SizedBox(width: 38, child: Center(child: Text('${r.setsWon}–${r.setsLost}', style: AdminText.mono(12, FontWeight.w600, AdminColors.inkSoft)))),
       ]),
     );
   }
