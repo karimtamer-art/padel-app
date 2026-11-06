@@ -815,13 +815,19 @@ The app is mid-pivot to **tournament-first and multi-region**. Read this before
     `web_upcoming_tournaments()` lists them read-only, with no form. It is a
     separate function on purpose — `web_register` checks eligibility against
     `web_open_tournaments()`, so widening that one would open registration early.
-  - **Payment is InstaPay ONLY** (2026-10-21 — no cash at the venue, no
-    gateway, rule 8). A paid event always needs a sender name + screenshot;
-    `web_register` ignores `p_pay_method` and the CHECK allows only
-    `instapay` / `free`. The InstaPay handle, account name and direct WhatsApp
-    number are the `CONFIG` block at the top of `docs/home.js`; while the
-    handle is empty the site refuses paid events (free ones still register).
-    `entry_fee` is per player, so the page and RPC charge `entry_fee * 2`.
+  - **Payment is InstaPay or cash at the venue** (InstaPay-only from
+    2026-10-21; cash added 2026-11-06, `changes/2026-11-06_web_cash.sql`; no
+    gateway, rule 8). InstaPay needs a sender name + screenshot; cash needs
+    nothing and is paid at the desk on the day. `web_register` reads
+    `p_pay_method`: `'cash'` → cash, anything else on a paid event →
+    InstaPay (so an old cached page still works); the CHECK allows
+    `instapay` / `cash` / `free`. `admin_web_registrations` does NOT return
+    `pay_method`, so the console tells cash apart as "paid with no proof" —
+    InstaPay can't exist without one. The InstaPay handle, account name and
+    direct WhatsApp number are the `CONFIG` block at the top of
+    `docs/home.js`; while the handle is empty the InstaPay choice is hidden
+    and paid events take cash only. `entry_fee` is per player, so the page
+    and RPC charge `entry_fee * 2`.
   - Each registration alerts staff as `admin_tournament` (bell + push). Staff
     read/update rows via `_is_admin()` or `_has_access('tournaments')`.
   - **Into the draw as REAL players** (2026-10-22,

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Padel Rivals — Register for a tournament</title>
-<meta name="description" content="Register your pair for the next Padel Rivals tournament in Egypt. No app needed — pay by InstaPay and we confirm you on WhatsApp.">
+<meta name="description" content="Register your pair for the next Padel Rivals tournament in Egypt. No app needed — pay by InstaPay or cash and we confirm you on WhatsApp.">
 <meta property="og:title" content="Padel Rivals — Tournament registration">
 <meta property="og:description" content="Register your pair in two minutes. No app needed.">
 <meta property="og:type" content="website">
@@ -143,6 +143,19 @@
         <span id="due-names"></span>
       </div>
 
+      <fieldset id="pay-choice" class="seg" hidden>
+        <legend class="sr-only">How will you pay?</legend>
+        <label class="option" id="pay-ip-option">
+          <input type="radio" name="paymethod" value="instapay" checked>
+          <span><strong>InstaPay</strong><small>Pay now and upload a screenshot.</small></span>
+        </label>
+        <label class="option">
+          <input type="radio" name="paymethod" value="cash">
+          <span><strong>Cash</strong><small>Pay at the venue on the day.</small></span>
+        </label>
+      </fieldset>
+      <p id="cash-note" class="note" hidden>Bring the exact amount in cash and pay at the desk before your first match. Your spot is held once we confirm you on WhatsApp.</p>
+
       <div id="instapay-box" hidden>
         <div class="payto">
           <span>Send the fee to our official InstaPay</span>
@@ -201,7 +214,7 @@
     <h2>How registration works</h2>
     <div class="cols">
       <div class="stepcard"><b>01</b><h3>Fill in the form</h3><p>Your details and your partner's — that's all we need.</p></div>
-      <div class="stepcard"><b>02</b><h3>Pay by InstaPay</h3><p>Send the fee to our official InstaPay and upload a screenshot of the transfer.</p></div>
+      <div class="stepcard"><b>02</b><h3>Pay by InstaPay or cash</h3><p>Send the fee to our official InstaPay and upload a screenshot, or choose cash and pay at the venue.</p></div>
       <div class="stepcard"><b>03</b><h3>Get confirmed</h3><p>Our team messages you on WhatsApp, then sends the draw before the event.</p></div>
     </div>
   </div>

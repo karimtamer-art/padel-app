@@ -433,7 +433,13 @@ class _EntriesSheetState extends State<_EntriesSheet> {
         Text(
             [
               'WhatsApp ${w['phone'] ?? '—'}',
-              due > 0 ? 'EGP ${due.toStringAsFixed(0)} InstaPay' : 'Free entry',
+              due <= 0
+                  ? 'Free entry'
+                  // web_register demands a proof for InstaPay, so a paid
+                  // row without one chose cash at the venue.
+                  : (proof == null || proof.isEmpty)
+                      ? 'EGP ${due.toStringAsFixed(0)} cash at the venue'
+                      : 'EGP ${due.toStringAsFixed(0)} InstaPay',
               if (sender != null && sender.isNotEmpty) 'from $sender',
             ].join(' · '),
             style: AdminText.small(AdminColors.inkSoft)),

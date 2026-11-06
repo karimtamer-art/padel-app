@@ -13061,7 +13061,7 @@ create table if not exists public.web_registrations (
   partner_name    text,
   partner_phone   text,
   partner_level   text,
-  pay_method      text not null,            -- instapay | free
+  pay_method      text not null,            -- instapay | cash | free
   amount_due      numeric(10,2) not null default 0,
   instapay_sender text,
   proof_path      text,                     -- object name in web-payment-proofs
@@ -13084,7 +13084,7 @@ exception when others then null; end $$;
 do $$ begin
   alter table public.web_registrations drop constraint if exists web_registrations_pay_chk;
   alter table public.web_registrations add constraint web_registrations_pay_chk
-    check (pay_method in ('instapay', 'free'));
+    check (pay_method in ('instapay', 'cash', 'free'));  -- cash: paid at the venue (2026-11-06)
   alter table public.web_registrations drop constraint if exists web_registrations_status_chk;
   alter table public.web_registrations add constraint web_registrations_status_chk
     check (status in ('pending', 'confirmed', 'rejected', 'cancelled'));
@@ -13247,10 +13247,14 @@ begin
 
   -- entry_fee is per player: a pair pays two, a solo player their own share
   v_due := coalesce(v_t.entry_fee, 0) * case when v_solo then 1 else 2 end;
+  -- A paid entry is InstaPay (proof now) or cash at the venue (2026-11-06).
+  -- Anything else, including an older page sending nothing, means InstaPay.
   if v_due <= 0 then
     v_pay := 'free';
+  elsif p_pay_method = 'cash' then
+    v_pay := 'cash';
   else
-    v_pay := 'instapay';                       -- InstaPay only; p_pay_method is ignored
+    v_pay := 'instapay';
   end if;
 
   if v_pay = 'instapay' then
@@ -13284,11 +13288,13 @@ begin
   select uid, 'admin_tournament',
          case when v_solo then 'Website entry — needs a partner'
               when v_pay = 'instapay' then 'Website entry — payment to verify'
+              when v_pay = 'cash' then 'Website entry — cash at the venue'
               else 'New website entry' end,
          case when v_solo then v_name || ' (' || p_level || ', no partner yet)'
               else v_name || ' & ' || v_pname end
            || ' · ' || coalesce(v_t.name, 'tournament')
            || ' · ' || case v_pay when 'instapay' then 'InstaPay EGP ' || v_due::text
+                                  when 'cash' then 'cash EGP ' || v_due::text || ' at the venue'
                                   else 'free entry' end
            || ' · WhatsApp ' || btrim(p_phone),
          jsonb_build_object('tournament_id', p_tournament, 'web_registration_id', v_id, 'admin', true)
